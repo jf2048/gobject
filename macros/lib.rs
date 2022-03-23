@@ -6,6 +6,7 @@ mod property;
 mod signal;
 mod type_definition;
 mod util;
+mod validations;
 mod virtual_method;
 
 #[proc_macro_attribute]

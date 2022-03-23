@@ -48,6 +48,24 @@ where
     }
 }
 
+#[inline]
+pub(crate) fn push_error<T: std::fmt::Display>(
+    errors: &mut Vec<darling::Error>,
+    span: proc_macro2::Span,
+    message: T
+) {
+    errors.push(syn::Error::new(span, message).into());
+}
+
+#[inline]
+pub(crate) fn push_error_spanned<T: quote::ToTokens, U: std::fmt::Display>(
+    errors: &mut Vec<darling::Error>,
+    tokens: T,
+    message: U
+) {
+    errors.push(syn::Error::new_spanned(tokens, message).into());
+}
+
 pub(crate) fn is_valid_name(name: &str) -> bool {
     let mut iter = name.chars();
     if let Some(c) = iter.next() {
@@ -84,4 +102,15 @@ pub(crate) fn crate_ident() -> syn::Ident {
     };
 
     syn::Ident::new(&crate_name, proc_macro2::Span::call_site())
+}
+
+#[inline]
+pub(crate) fn make_attrs(tokens: TokenStream) -> Vec<syn::Attribute> {
+    struct OuterAttrs(Vec<syn::Attribute>);
+    impl Parse for OuterAttrs {
+        fn parse(input: ParseStream) -> syn::Result<Self> {
+            Ok(Self(syn::Attribute::parse_outer(input)?))
+        }
+    }
+    parse::<OuterAttrs>(tokens, &mut vec![]).unwrap().0
 }

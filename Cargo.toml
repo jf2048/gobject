@@ -8,7 +8,7 @@ path = "lib.rs"
 
 [dependencies]
 glib = { git = "https://github.com/gtk-rs/gtk-rs-core", version = "0.16" }
-gobject-macros = { path = "gobject-macros" }
+gobject-macros = { path = "macros" }
 
 [workspace]
-members = ["gobject-macros"]
+members = ["macros", "core"]
