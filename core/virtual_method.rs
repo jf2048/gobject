@@ -8,18 +8,15 @@ pub struct VirtualMethod {
 }
 
 impl VirtualMethod {
-    pub fn many_from_items(
+    pub(crate) fn many_from_items(
         items: &mut Vec<syn::ImplItem>,
         errors: &mut Vec<darling::Error>,
     ) -> Vec<Self> {
         let mut virtual_method_names = HashSet::new();
-        let mut virtual_methods = Vec::<VirtualMethod>::new();
+        let mut virtual_methods = Vec::new();
 
         let mut index = 0;
-        loop {
-            if index >= items.len() {
-                break;
-            }
+        while index < items.len() {
             let mut method_attr = None;
             if let syn::ImplItem::Method(method) = &mut items[index] {
                 let method_index = method
@@ -126,7 +123,7 @@ impl VirtualMethod {
         }
         args
     }
-    pub fn prototype(&self) -> TokenStream {
+    pub(crate) fn prototype(&self) -> TokenStream {
         let syn::ImplItemMethod {
             attrs,
             vis,
@@ -138,7 +135,7 @@ impl VirtualMethod {
             #(#attrs)* #vis #defaultness #sig
         }
     }
-    pub fn definition(&self, ty: &syn::Type, is_interface: bool, glib: &TokenStream) -> TokenStream {
+    pub(crate) fn definition(&self, ty: &syn::Type, is_interface: bool, glib: &TokenStream) -> TokenStream {
         let proto = self.prototype();
         let ident = &self.method.sig.ident;
         let args = self.external_args();
@@ -174,7 +171,7 @@ impl VirtualMethod {
         }));
         sig
     }
-    pub fn default_definition(&self, ty: &syn::Type) -> TokenStream {
+    pub(crate) fn default_definition(&self, ty: &syn::Type) -> TokenStream {
         let syn::ImplItemMethod {
             attrs,
             vis,
@@ -190,7 +187,7 @@ impl VirtualMethod {
             }
         }
     }
-    pub fn parent_prototype(&self, ty: &syn::Type) -> TokenStream {
+    pub(crate) fn parent_prototype(&self, ty: &syn::Type) -> TokenStream {
         let syn::ImplItemMethod {
             attrs,
             vis,
@@ -202,7 +199,7 @@ impl VirtualMethod {
             #(#attrs)* #vis #defaultness #sig
         }
     }
-    pub fn parent_definition(&self, mod_name: &syn::Ident, name: &syn::Ident, ty: &syn::Type) -> TokenStream {
+    pub(crate) fn parent_definition(&self, mod_name: &syn::Ident, name: &syn::Ident, ty: &syn::Type) -> TokenStream {
         let proto = self.parent_prototype(ty);
         let ident = &self.method.sig.ident;
         let args = self.external_args();
@@ -216,7 +213,7 @@ impl VirtualMethod {
             }
         }
     }
-    pub fn set_default_trampoline(&self) -> TokenStream {
+    pub(crate) fn set_default_trampoline(&self) -> TokenStream {
         let ident = &self.method.sig.ident;
         let trampoline_ident = format_ident!("{}_default_trampoline", ident);
         quote! {
@@ -224,7 +221,7 @@ impl VirtualMethod {
             klass.#ident = #trampoline_ident;
         }
     }
-    pub fn set_subclassed_trampoline(&self) -> TokenStream {
+    pub(crate) fn set_subclassed_trampoline(&self) -> TokenStream {
         let ident = &self.method.sig.ident;
         let trampoline_ident = format_ident!("{}_trampoline", ident);
         quote! {

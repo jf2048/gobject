@@ -496,10 +496,10 @@ impl PropertyOverride {
     }
 }
 
-pub struct Properties {
-    pub final_: bool,
-    pub properties: Vec<Property>,
-    pub fields: syn::Fields,
+pub(crate) struct Properties {
+    pub(crate) final_: bool,
+    pub(crate) properties: Vec<Property>,
+    pub(crate) fields: syn::Fields,
 }
 
 impl Default for Properties {
@@ -513,7 +513,7 @@ impl Default for Properties {
 }
 
 impl Properties {
-    pub fn from_derive_input(
+    pub(crate) fn from_derive_input(
         input: &syn::DeriveInput,
         iface: bool,
         errors: &mut Vec<darling::Error>,
@@ -622,7 +622,7 @@ impl Property {
             flags: attrs.flags(pod),
         })
     }
-    pub fn definition(&self, go: &syn::Ident) -> TokenStream {
+    pub(crate) fn definition(&self, go: &syn::Ident) -> TokenStream {
         let glib = quote! { #go::glib };
         let name = self.name.to_string();
         if let Some(override_) = &self.override_ {
@@ -682,7 +682,7 @@ impl Property {
     fn getter_name(&self) -> syn::Ident {
         format_ident!("{}", self.name.to_string().to_snake_case())
     }
-    pub fn get_impl(&self, index: usize, go: &syn::Ident) -> Option<TokenStream> {
+    pub(crate) fn get_impl(&self, index: usize, go: &syn::Ident) -> Option<TokenStream> {
         (self.get.is_allowed() && !self.is_abstract()).then(|| {
             let glib = quote! { #go::glib };
             let body = if let PropertyPermission::AllowCustom(method) = &self.get {
@@ -698,14 +698,14 @@ impl Property {
             }
         })
     }
-    pub fn getter_prototype(&self, go: &syn::Ident) -> Option<TokenStream> {
+    pub(crate) fn getter_prototype(&self, go: &syn::Ident) -> Option<TokenStream> {
         (!self.is_inherited() && matches!(self.get, PropertyPermission::Allow)).then(|| {
             let method_name = self.getter_name();
             let ty = self.inner_type(go);
             quote_spanned! { self.span() => fn #method_name(&self) -> #ty }
         })
     }
-    pub fn getter_definition(
+    pub(crate) fn getter_definition(
         &self,
         object_type: &TokenStream,
         go: &syn::Ident,
@@ -730,7 +730,7 @@ impl Property {
     fn borrow_name(&self) -> syn::Ident {
         format_ident!("borrow_{}", self.name.to_string().to_snake_case())
     }
-    pub fn borrow_prototype(&self, go: &syn::Ident) -> Option<TokenStream> {
+    pub(crate) fn borrow_prototype(&self, go: &syn::Ident) -> Option<TokenStream> {
         self.borrow.then(|| {
             let method_name = self.borrow_name();
             let ty = if self.is_abstract() {
@@ -742,7 +742,7 @@ impl Property {
             quote_spanned! { self.span() => fn #method_name(&self) -> #ty }
         })
     }
-    pub fn borrow_definition(
+    pub(crate) fn borrow_definition(
         &self,
         object_type: &TokenStream,
         go: &syn::Ident,
@@ -790,7 +790,7 @@ impl Property {
             }
         }
     }
-    pub fn set_impl(&self, index: usize, go: &syn::Ident) -> Option<TokenStream> {
+    pub(crate) fn set_impl(&self, index: usize, go: &syn::Ident) -> Option<TokenStream> {
         (self.set.is_allowed() && !self.is_abstract()).then(|| {
             let glib = quote! { #go::glib };
             let body = if let PropertyPermission::AllowCustom(method) = &self.set {
@@ -828,7 +828,7 @@ impl Property {
             }
         })
     }
-    pub fn setter_prototype(&self, go: &syn::Ident) -> Option<TokenStream> {
+    pub(crate) fn setter_prototype(&self, go: &syn::Ident) -> Option<TokenStream> {
         let construct_only = self.flags.contains(PropertyFlags::CONSTRUCT_ONLY);
         let allowed = match &self.set {
             PropertyPermission::Allow => true,
@@ -841,7 +841,7 @@ impl Property {
             quote_spanned! { self.span() => fn #method_name(&self, value: #ty) }
         })
     }
-    pub fn setter_definition(
+    pub(crate) fn setter_definition(
         &self,
         index: usize,
         object_type: &TokenStream,
@@ -876,11 +876,11 @@ impl Property {
             }
         })
     }
-    pub fn pspec_prototype(&self, glib: &TokenStream) -> Option<TokenStream> {
+    pub(crate) fn pspec_prototype(&self, glib: &TokenStream) -> Option<TokenStream> {
         let method_name = format_ident!("pspec_{}", self.name.to_string().to_snake_case());
         Some(quote_spanned! { self.span() => fn #method_name() -> &'static #glib::ParamSpec })
     }
-    pub fn pspec_definition(
+    pub(crate) fn pspec_definition(
         &self,
         index: usize,
         properties_path: &TokenStream,
@@ -895,7 +895,7 @@ impl Property {
             }
         })
     }
-    pub fn notify_prototype(&self) -> Option<TokenStream> {
+    pub(crate) fn notify_prototype(&self) -> Option<TokenStream> {
         (!self.is_inherited()
             && self.get.is_allowed()
             && !self.flags.contains(PropertyFlags::CONSTRUCT_ONLY)
@@ -905,7 +905,7 @@ impl Property {
                 quote_spanned! { self.span() => fn #method_name(&self) }
             })
     }
-    pub fn notify_definition(
+    pub(crate) fn notify_definition(
         &self,
         index: usize,
         properties_path: &TokenStream,
@@ -923,7 +923,7 @@ impl Property {
             }
         })
     }
-    pub fn connect_prototype(&self, glib: &TokenStream) -> Option<TokenStream> {
+    pub(crate) fn connect_prototype(&self, glib: &TokenStream) -> Option<TokenStream> {
         (!self.is_inherited()
             && self.get.is_allowed()
             && !self.flags.contains(PropertyFlags::CONSTRUCT_ONLY)
@@ -936,7 +936,7 @@ impl Property {
                 }
             })
     }
-    pub fn connect_definition(&self, glib: &TokenStream) -> Option<TokenStream> {
+    pub(crate) fn connect_definition(&self, glib: &TokenStream) -> Option<TokenStream> {
         self.connect_prototype(glib).map(|proto| {
             let name = self.name.to_string();
             quote_spanned! { self.span() =>

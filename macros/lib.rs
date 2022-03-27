@@ -1,25 +1,48 @@
 use proc_macro::TokenStream;
 
-mod class_impl;
-mod interface_impl;
-mod property;
-mod signal;
-mod type_definition;
-mod util;
-mod validations;
-mod virtual_method;
-
 #[proc_macro_attribute]
 pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
+    use gobject_core::{ClassDefinition, ClassOptions, util};
+
     let mut errors = vec![];
-    let opts = util::parse_list::<class_impl::Options>(attr.into(), &mut errors);
+    let opts = ClassOptions::parse(attr.into(), &mut errors);
+    let parser = ClassDefinition::type_parser();
     let module = util::parse::<syn::ItemMod>(item.into(), &mut errors);
-    let tokens = module
-        .map(|module| class_impl::class_impl(opts, module, &mut errors))
-        .unwrap_or_default();
-    if !errors.is_empty() {
-        darling::Error::multiple(errors).write_errors().into()
-    } else {
+    let tokens = module.map(|module| {
+        let type_def = parser.parse(&mut module, false, &mut errors);
+        let class_def = ClassDefinition::from_mod(&mut module, type_def, opts, &mut errors);
+        let go = crate_ident();
+        class_def.to_tokens(&go)
+    }).unwrap_or_default();
+    if errors.is_empty() {
         tokens.into()
+    } else {
+        darling::Error::multiple(errors).write_errors().into()
     }
+}
+
+#[proc_macro_attribute]
+pub fn interface(attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+#[proc_macro_attribute]
+pub fn gtk_widget(attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+#[inline]
+fn crate_ident() -> syn::Ident {
+    use proc_macro_crate::FoundCrate;
+
+    let crate_name = match proc_macro_crate::crate_name("gobject") {
+        Ok(FoundCrate::Name(name)) => name,
+        Ok(FoundCrate::Itself) => "gobject".into(),
+        Err(e) => {
+            proc_macro_error::emit_error!("{}", e);
+            "gobject".into()
+        },
+    };
+
+    syn::Ident::new(&crate_name, proc_macro2::Span::call_site())
 }

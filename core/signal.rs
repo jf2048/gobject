@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use syn::spanned::Spanned;
 
 bitflags::bitflags! {
-    pub struct SignalFlags: u32 {
+    pub(crate) struct SignalFlags: u32 {
         const RUN_FIRST             = 1 << 0;
         const RUN_LAST              = 1 << 1;
         const RUN_CLEANUP           = 1 << 2;
@@ -88,7 +88,7 @@ pub struct Signal {
 }
 
 impl Signal {
-    pub fn many_from_items(
+    pub(crate) fn many_from_items(
         items: &mut Vec<syn::ImplItem>,
         is_interface: bool,
         errors: &mut Vec<darling::Error>,
@@ -97,10 +97,7 @@ impl Signal {
         let mut signals = Vec::<Signal>::new();
 
         let mut index = 0;
-        loop {
-            if index >= items.len() {
-                break;
-            }
+        while index < items.len() {
             let mut signal_attr = None;
             if let syn::ImplItem::Method(method) = &mut items[index] {
                 let signal_index = method.attrs.iter().position(|attr| {
@@ -373,7 +370,7 @@ impl Signal {
             }
         })
     }
-    pub fn definition(
+    pub(crate) fn definition(
         &self,
         self_ty: &syn::Type,
         object_type: Option<&syn::Type>,
@@ -465,7 +462,7 @@ impl Signal {
             }
         })
     }
-    pub fn class_init_override(
+    pub(crate) fn class_init_override(
         &self,
         self_ty: &syn::Type,
         object_type: Option<&syn::Type>,
@@ -488,7 +485,7 @@ impl Signal {
             );
         })
     }
-    pub fn handler_definition(&self) -> Option<TokenStream> {
+    pub(crate) fn handler_definition(&self) -> Option<TokenStream> {
         todo!("get rid of this");
         let handler = self.handler.as_ref().unwrap();
         if !handler.block.stmts.is_empty() {
@@ -519,7 +516,7 @@ impl Signal {
             ty
         })
     }
-    pub fn emit_prototype(&self, glib: &TokenStream) -> Option<TokenStream> {
+    pub(crate) fn emit_prototype(&self, glib: &TokenStream) -> Option<TokenStream> {
         if self.override_ {
             return None;
         }
@@ -535,7 +532,7 @@ impl Signal {
             fn #method_name(&self, #details_arg #(#arg_defs),*) #output
         })
     }
-    pub fn emit_definition(
+    pub(crate) fn emit_definition(
         &self,
         index: usize,
         self_ty: &syn::Type,
@@ -584,7 +581,7 @@ impl Signal {
             }
         })
     }
-    pub fn connect_prototype(&self, glib: &TokenStream) -> Option<TokenStream> {
+    pub(crate) fn connect_prototype(&self, glib: &TokenStream) -> Option<TokenStream> {
         if !self.connect || self.override_ {
             return None;
         }
@@ -607,7 +604,7 @@ impl Signal {
             ) -> #glib::SignalHandlerId
         })
     }
-    pub fn connect_definition(
+    pub(crate) fn connect_definition(
         &self,
         index: usize,
         self_ty: &syn::Type,

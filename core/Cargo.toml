@@ -6,6 +6,10 @@ edition = "2021"
 [lib]
 path = "lib.rs"
 
+[features]
+gtk4 = []
+gio = []
+
 [dependencies]
 bitflags = "1.3.2"
 darling = "0.13.1"

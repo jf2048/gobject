@@ -1,4 +1,4 @@
-use crate::{property::Property, type_definition::TypeDefinition, util};
+use crate::{property::Property, type_definition::TypeDefinition, util, TypeDefinitionParser, TypeDefinitionParser};
 use darling::{
     util::{Flag, PathList, SpannedValue},
     FromMeta,
@@ -10,7 +10,7 @@ use syn::spanned::Spanned;
 
 #[derive(Debug, Default, FromMeta)]
 #[darling(default)]
-pub struct Options {
+struct Attrs {
     pub name: Option<syn::Ident>,
     pub ns: Option<syn::Ident>,
     pub ext_trait: Option<syn::Ident>,
@@ -24,7 +24,15 @@ pub struct Options {
     pub implements: PathList,
 }
 
-impl Options {
+pub struct ClassOptions(Attrs);
+
+impl ClassOptions {
+    pub fn parse(tokens: TokenStream, errors: &mut Vec<darling::Error>) -> Self {
+        Self(util::parse_list(tokens, errors))
+    }
+}
+
+impl Attrs {
     fn normalize(&mut self, def: &TypeDefinition) {
         if self.name.is_none() {
             self.name = def.name().cloned();
@@ -44,7 +52,55 @@ impl Options {
         let final_ = ("final", check_flag(&self.final_));
         only_one([&abstract_, &final_], errors);
     }
-    fn ty(&self, def: &TypeDefinition) -> syn::Type {
+}
+
+pub struct ClassDefinition {
+    pub inner: TypeDefinition,
+    pub ext_trait: Option<syn::Ident>,
+    pub parent_trait: Option<syn::Path>,
+    pub wrapper: bool,
+    pub abstract_: bool,
+    pub final_: bool,
+    pub extends: Vec<syn::Path>,
+    pub implements: Vec<syn::Path>,
+}
+
+impl ClassDefinition {
+    pub fn type_parser() -> TypeDefinitionParser {
+        *TypeDefinitionParser::new()
+            .add_custom_method("properties")
+            .add_custom_method("signals")
+            .add_custom_method("set_property")
+            .add_custom_method("property")
+            .add_custom_method("constructed")
+            .add_custom_method("dispose")
+            .add_custom_method("class_init")
+            .add_custom_method("instance_init")
+    }
+    pub fn from_mod(
+        module: &mut syn::ItemMod,
+        def: TypeDefinition,
+        opts: ClassOptions,
+        errors: &mut Vec<darling::Error>,
+    ) -> Self {
+        let mut attrs = opts.0;
+        attrs.normalize(&def);
+        attrs.validate(&def, errors);
+        Self {
+            inner: def,
+            ext_trait: attrs.ext_trait,
+            parent_trait: attrs.parent_trait,
+            wrapper: attrs.wrapper.unwrap_or(true),
+            abstract_: attrs.abstract_.is_some(),
+            final_: attrs.final_.is_some(),
+            extends: FromIterator::from_iter(attrs.extends.into_iter()),
+            implements: FromIterator::from_iter(attrs.implements.into_iter()),
+        }
+    }
+    fn name(&self) -> Option<syn::Ident> {
+        todo!()
+    }
+    fn ty(&self) -> syn::Type {
         todo!()
     }
     fn parent_type(&self) -> Option<TokenStream> {
@@ -52,7 +108,7 @@ impl Options {
     }
     #[inline]
     fn wrapper(&self, mod_ident: &syn::Ident, glib: &TokenStream) -> Option<TokenStream> {
-        if !self.wrapper.unwrap_or(true) {
+        if !self.wrapper {
             return None;
         }
         let mut inherits = Vec::new();
@@ -77,7 +133,7 @@ impl Options {
     }
     #[inline]
     fn ext_trait(&self) -> Option<syn::Ident> {
-        if self.final_.is_some() {
+        if self.final_ {
             return None;
         }
         let name = self.name.as_ref()?;
@@ -102,25 +158,25 @@ impl Options {
     #[inline]
     fn object_subclass_impl(
         &self,
-        def: &TypeDefinition,
         glib: &TokenStream,
     ) -> Option<TokenStream> {
-        let name = self.name.as_ref()?;
+        let name = self.name()?;
         let gtype_name = if let Some(ns) = &self.ns {
             format!("{}_{}", ns, name)
         } else {
             name.to_string()
         }
         .to_upper_camel_case();
-        let abstract_ = self.abstract_.is_some();
+        let abstract_ = self.abstract_;
         let parent_type = self
             .parent_type()
             .unwrap_or_else(|| quote! { #glib::Object });
         let interfaces = &self.implements;
-        let class_init = def
+        let class_init = self
+            .inner
             .custom_method("class_init")
             .or_else(|| def.set_default_vtable().map(|vt| Self::class_init_method("class_init", vt)));
-        let instance_init = def.custom_method("instance_init");
+        let instance_init = self.inner.custom_method("instance_init");
         Some(quote! {
             #[#glib::object_subclass]
             impl #glib::subclass::types::ObjectSubclass for #name {
@@ -148,20 +204,22 @@ impl Options {
         }
     }
     fn set_property_method(
+        &self,
         method_name: &str,
-        props: &[Property],
-        properties_path: &TokenStream,
         go: &syn::Ident,
     ) -> Option<TokenStream> {
-        if props.is_empty() {
+        if self.inner.properties.is_empty() {
             return None;
         }
-        let set_impls = props
+        let set_impls = self
+            .inner
+            .properties
             .iter()
             .enumerate()
             .filter_map(|(index, prop)| prop.set_impl(index, go));
         let glib = quote! { #go::glib };
         let method_name = format_ident!("{}", method_name);
+        let properties_path = self.properties_path(&glib)?;
         let unimplemented = Self::unimplemented_property(&glib);
         Some(quote! {
             fn #method_name(
@@ -178,20 +236,22 @@ impl Options {
         })
     }
     fn property_method(
+        &self,
         method_name: &str,
-        props: &[Property],
-        properties_path: &TokenStream,
         go: &syn::Ident,
     ) -> Option<TokenStream> {
-        if props.is_empty() {
+        if self.inner.properties.is_empty() {
             return None;
         }
-        let get_impls = props
+        let get_impls = self
+            .inner
+            .properties
             .iter()
             .enumerate()
             .filter_map(|(index, prop)| prop.get_impl(index, go));
         let glib = quote! { #go::glib };
         let method_name = format_ident!("{}", method_name);
+        let properties_path = self.properties_path(&glib)?;
         let unimplemented = Self::unimplemented_property(&glib);
         Some(quote! {
             fn #method_name(
@@ -206,8 +266,8 @@ impl Options {
             }
         })
     }
-    fn method_path(method: &str, def: &TypeDefinition, ty: &syn::Type, glib: &TokenStream) -> TokenStream {
-        def.has_custom_method(method) {
+    fn method_path(&self, method: &str, glib: &TokenStream) -> TokenStream {
+        self.inner.has_custom_method(method) {
             let method = format_ident!("derived_{}", method);
             quote! { #ty::#method }
         } else {
@@ -215,28 +275,35 @@ impl Options {
             quote! { <#ty as #glib::subclass::object::ObjectImpl>::#method }
         }
     }
-    #[inline]
-    fn object_impl_impl(&self, def: &TypeDefinition, go: &syn::Ident) -> Option<TokenStream> {
-        let glib = quote! { #go::glib };
-        let name = self.name.as_ref()?;
-        let properties = def
-            .custom_method("properties")
-            .or_else(|| def.properties_method("properties", go));
-        let signals = def
-            .custom_method("signals")
-            .or_else(|| def.signals_method("signals", &glib));
-        let properties_path = if def.has_custom_method("properties") {
+    fn properties_path(&self, glib: &TokenStream) -> Option<TokenStream> {
+        let name = self.name()?;
+        Some(if self.inner.has_custom_method("properties") {
             quote! { #name::derived_property }
         } else {
             quote! { <#name as #glib::subclass::object::ObjectImpl>::properties }
-        };
-        let set_property = def
+        })
+    }
+    #[inline]
+    fn object_impl_impl(&self, go: &syn::Ident) -> Option<TokenStream> {
+        let glib = quote! { #go::glib };
+        let name = self.name()?;
+        let properties = self
+            .inner
+            .custom_method("properties")
+            .or_else(|| self.inner.properties_method("properties", go));
+        let signals = self
+            .inner
+            .custom_method("signals")
+            .or_else(|| self.inner.signals_method("signals", &glib));
+        let set_property = self
+            .inner
             .custom_method("set_property")
-            .or_else(|| Self::set_property_method("set_property", &def.properties, &properties_path, go));
-        let property = def
+            .or_else(|| self.set_property_method("set_property", go));
+        let property = self
+            .inner
             .custom_method("property")
-            .or_else(|| Self::property_method("property", &def.properties, &properties_path, go));
-        let extra = def.custom_methods(&["constructed", "dispose"]);
+            .or_else(|| self.property_method("property", go));
+        let extra = self.inner.custom_methods(&["constructed", "dispose"]);
         Some(quote! {
             impl #glib::subclass::object::ObjectImpl for #name {
                 #properties
@@ -273,58 +340,45 @@ impl Options {
             }
         })
     }
-}
+    pub fn to_tokens(&self, go: &syn::Ident) -> TokenStream {
+        let glib = quote! { #go::glib };
+        let ty = self.ty();
 
-pub(crate) fn class_impl(
-    mut opts: Options,
-    module: syn::ItemMod,
-    errors: &mut Vec<darling::Error>,
-) -> TokenStream {
-    let (def, mut module) = TypeDefinition::new(
-        module,
-        false,
-        &["properties", "signals", "set_property", "property", "constructed", "dispose", "class_init", "instance_init"],
-        errors
-    );
-    opts.normalize(&def);
-    opts.validate(&def, errors);
-    let go = util::crate_ident();
-    let glib = quote! { #go::glib };
-    let ty = opts.ty(&def);
+        let (_, items) = module.content.get_or_insert_with(Default::default);
+        if let Some(object_subclass_impl) = self.object_subclass_impl(&glib) {
+            items.push(syn::Item::Verbatim(object_subclass_impl));
+        }
+        if let Some(object_impl_impl) = self.object_impl_impl(&go) {
+            items.push(syn::Item::Verbatim(object_impl_impl));
+        }
+        // TODO add private 'derived_*' impls
 
-    let (_, items) = module.content.get_or_insert_with(Default::default);
-    if let Some(object_subclass_impl) = opts.object_subclass_impl(&def, &glib) {
-        items.push(syn::Item::Verbatim(object_subclass_impl));
+        let wrapper = self.wrapper(&module.ident, &glib);
+        let public_methods = self.name.as_ref().map(|name| {
+            let trait_name = self.ext_trait();
+            def.public_methods(name, &ty, trait_name.as_ref(), false, &go)
+        });
+        let is_subclassable = def.set_subclassed_vtable().map(|vt| {
+            self.is_subclassable_impl(
+                &vt,
+                def.generics.clone(),
+                &glib
+            )
+        });
+        let virtual_traits = self.name.as_ref().and_then(|name| {
+            let parent_trait = self.parent_trait.as_ref()
+                .map(|p| p.to_token_stream())
+                .unwrap_or_else(|| quote! { #glib::subclass::object::ObjectImpl });
+            def.virtual_traits(&module.ident, name, &parent_trait, &ty, &glib)
+        });
+
+        quote_spanned! { module.span() =>
+            #module
+            #wrapper
+            #public_methods
+            #is_subclassable
+            #virtual_traits
+        }
     }
-    if let Some(object_impl_impl) = opts.object_impl_impl(&def, &go) {
-        items.push(syn::Item::Verbatim(object_impl_impl));
-    }
-    // TODO add private 'derived_*' impls
 
-    let wrapper = opts.wrapper(&module.ident, &glib);
-    let public_methods = opts.name.as_ref().map(|name| {
-        let trait_name = opts.ext_trait();
-        def.public_methods(name, &ty, trait_name.as_ref(), false, &go)
-    });
-    let is_subclassable = def.set_subclassed_vtable().map(|vt| {
-        opts.is_subclassable_impl(
-            &vt,
-            def.generics.clone(),
-            &glib
-        )
-    });
-    let virtual_traits = opts.name.as_ref().and_then(|name| {
-        let parent_trait = opts.parent_trait.as_ref()
-            .map(|p| p.to_token_stream())
-            .unwrap_or_else(|| quote! { #glib::subclass::object::ObjectImpl });
-        def.virtual_traits(&module.ident, name, &parent_trait, &ty, &glib)
-    });
-
-    quote_spanned! { module.span() =>
-        #module
-        #wrapper
-        #public_methods
-        #is_subclassable
-        #virtual_traits
-    }
 }

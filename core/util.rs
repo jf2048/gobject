@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream;
 use syn::parse::{Parse, ParseStream, Parser};
 
-pub(crate) fn parse<T: Parse>(input: TokenStream, errors: &mut Vec<darling::Error>) -> Option<T> {
+pub fn parse<T: Parse>(input: TokenStream, errors: &mut Vec<darling::Error>) -> Option<T> {
     match <T as Parse>::parse.parse2(input) {
         Ok(t) => Some(t),
         Err(e) => {
@@ -86,22 +86,6 @@ pub(crate) fn is_valid_name(name: &str) -> bool {
 #[inline]
 pub(crate) fn make_stmt(tokens: TokenStream) -> TokenStream {
     quote::quote! { #tokens; }
-}
-
-#[inline]
-pub(crate) fn crate_ident() -> syn::Ident {
-    use proc_macro_crate::FoundCrate;
-
-    let crate_name = match proc_macro_crate::crate_name("gobject") {
-        Ok(FoundCrate::Name(name)) => name,
-        Ok(FoundCrate::Itself) => "gobject".into(),
-        Err(e) => {
-            proc_macro_error::emit_error!("{}", e);
-            "gobject".into()
-        },
-    };
-
-    syn::Ident::new(&crate_name, proc_macro2::Span::call_site())
 }
 
 #[inline]
