@@ -3,9 +3,6 @@ name = "gobject"
 version = "0.1.0"
 edition = "2021"
 
-[lib]
-path = "lib.rs"
-
 [features]
 gtk4_macros = ["gtk4", "gobject-macros/gtk4"]
 gio_macros = ["gio", "gobject-macros/gio"]
