@@ -80,7 +80,7 @@ impl TypeDefinitionParser {
             let Properties {
                 properties,
                 ..
-            } = Properties::from_derive_input(&struct_.clone().into(), base, true, errors);
+            } = Properties::from_derive_input(&struct_.clone().into(), Some(base), errors);
             def.properties.extend(properties);
         }
         if let Some(impl_) = impl_ {

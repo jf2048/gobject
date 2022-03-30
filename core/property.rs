@@ -14,6 +14,7 @@ use syn::spanned::Spanned;
 pub(crate) struct PropertiesAttrs {
     pod: Flag,
     final_type: Option<syn::Ident>,
+    interface: SpannedValue<Flag>,
     data: darling::ast::Data<darling::util::Ignored, PropertyAttrs>,
 }
 
@@ -22,6 +23,7 @@ impl Default for PropertiesAttrs {
         Self {
             pod: Default::default(),
             final_type: None,
+            interface: Default::default(),
             data: darling::ast::Data::empty_from(&syn::Data::Struct(syn::DataStruct {
                 struct_token: Default::default(),
                 fields: syn::Fields::Unit,
@@ -214,7 +216,10 @@ impl PropertyAttrs {
             util::push_error_spanned(errors, field, "Property must be readable or writable");
         }
 
-        let interface = ("interface", (base == TypeBase::Interface).then(|| field.span()));
+        let interface = (
+            "interface",
+            (base == TypeBase::Interface).then(|| field.span()),
+        );
         let enum_ = ("enum", check_flag(&self.enum_));
         let flags = ("flags", check_flag(&self.flags));
         let boxed = ("boxed", check_flag(&self.boxed));
@@ -327,8 +332,8 @@ impl FromMeta for PropertyStorageAttr {
     }
 }
 
-#[derive(Debug, PartialEq)]
-enum PropertyPermission {
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum PropertyPermission {
     Deny,
     Allow,
     AllowNoMethod,
@@ -373,7 +378,7 @@ impl PropertyPermission {
 }
 
 bitflags::bitflags! {
-    struct PropertyFlags: u32 {
+    pub struct PropertyFlags: u32 {
         const READABLE        = 1 << 0;
         const WRITABLE        = 1 << 1;
         const CONSTRUCT       = 1 << 2;
@@ -405,8 +410,8 @@ impl PropertyFlags {
     }
 }
 
-#[derive(Debug)]
-enum PropertyType {
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Copy, Clone)]
+pub enum PropertyType {
     Unspecified,
     Enum,
     Flags,
@@ -437,8 +442,8 @@ impl PropertyType {
     }
 }
 
-#[derive(Debug)]
-enum PropertyStorage {
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum PropertyStorage {
     NamedField(syn::Ident),
     UnnamedField(usize),
     InterfaceAbstract,
@@ -447,8 +452,8 @@ enum PropertyStorage {
     Delegate(Box<syn::Expr>),
 }
 
-#[derive(Debug)]
-enum PropertyName {
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum PropertyName {
     Field(syn::Ident),
     Custom(syn::LitStr),
 }
@@ -471,8 +476,8 @@ impl std::fmt::Display for PropertyName {
     }
 }
 
-#[derive(Debug)]
-enum PropertyOverride {
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum PropertyOverride {
     Interface(syn::Path),
     Class(syn::Path),
 }
@@ -492,6 +497,7 @@ impl PropertyOverride {
 
 pub(crate) struct Properties {
     pub(crate) final_type: Option<syn::Ident>,
+    pub(crate) base: TypeBase,
     pub(crate) properties: Vec<Property>,
 }
 
@@ -499,6 +505,7 @@ impl Default for Properties {
     fn default() -> Self {
         Self {
             final_type: None,
+            base: TypeBase::Class,
             properties: Vec::new(),
         }
     }
@@ -507,28 +514,36 @@ impl Default for Properties {
 impl Properties {
     pub(crate) fn from_derive_input(
         input: &syn::DeriveInput,
-        base: TypeBase,
-        inside_def: bool,
+        base: Option<TypeBase>,
         errors: &mut Vec<darling::Error>,
     ) -> Self {
-        let PropertiesAttrs { pod, final_type, data } = match PropertiesAttrs::from_derive_input(&input)
-        {
+        let PropertiesAttrs {
+            pod,
+            final_type,
+            interface,
+            data,
+        } = match PropertiesAttrs::from_derive_input(&input) {
             Ok(attrs) => attrs,
             Err(e) => {
                 errors.push(e.into());
                 Default::default()
             }
         };
-        if inside_def {
+        if base.is_none() {
             if let Some(final_type) = &final_type {
-                util::push_error_spanned(
-                    errors,
-                    final_type,
-                    "`final_type` not allowed here",
-                );
+                util::push_error_spanned(errors, final_type, "`final_type` not allowed here");
+            }
+        } else {
+            if interface.is_some() {
+                util::push_error(errors, interface.span(), "`interface` not allowed here");
             }
         }
         let pod = pod.is_some();
+        let base = base.unwrap_or_else(|| {
+            interface
+                .map(|_| TypeBase::Interface)
+                .unwrap_or(TypeBase::Class)
+        });
         let data = data.take_struct().map(|s| s.fields).unwrap_or_default();
 
         let fields = match &input.data {
@@ -556,6 +571,7 @@ impl Properties {
 
         Self {
             final_type,
+            base,
             properties,
         }
     }
@@ -563,20 +579,20 @@ impl Properties {
 
 #[derive(Debug)]
 pub struct Property {
-    field: syn::Field,
-    name: PropertyName,
-    special_type: PropertyType,
-    storage: PropertyStorage,
-    override_: Option<PropertyOverride>,
-    get: PropertyPermission,
-    set: PropertyPermission,
-    borrow: bool,
-    notify: bool,
-    connect_notify: bool,
-    nick: Option<String>,
-    blurb: Option<String>,
-    buildable_props: Vec<(syn::Ident, syn::Lit)>,
-    flags: PropertyFlags,
+    pub field: syn::Field,
+    pub name: PropertyName,
+    pub special_type: PropertyType,
+    pub storage: PropertyStorage,
+    pub override_: Option<PropertyOverride>,
+    pub get: PropertyPermission,
+    pub set: PropertyPermission,
+    pub borrow: bool,
+    pub notify: bool,
+    pub connect_notify: bool,
+    pub nick: Option<String>,
+    pub blurb: Option<String>,
+    pub buildable_props: Vec<(syn::Ident, syn::Lit)>,
+    pub flags: PropertyFlags,
 }
 
 impl Property {
@@ -696,11 +712,7 @@ impl Property {
             quote_spanned! { self.span() => fn #method_name(&self) -> #ty }
         })
     }
-    fn getter_definition(
-        &self,
-        object_type: &TokenStream,
-        go: &syn::Ident,
-    ) -> Option<TokenStream> {
+    fn getter_definition(&self, object_type: &TokenStream, go: &syn::Ident) -> Option<TokenStream> {
         self.getter_prototype(go).map(|proto| {
             let body = if self.is_abstract() {
                 let name = self.name.to_string();
@@ -733,11 +745,7 @@ impl Property {
             quote_spanned! { self.span() => fn #method_name(&self) -> #ty }
         })
     }
-    fn borrow_definition(
-        &self,
-        object_type: &TokenStream,
-        go: &syn::Ident,
-    ) -> Option<TokenStream> {
+    fn borrow_definition(&self, object_type: &TokenStream, go: &syn::Ident) -> Option<TokenStream> {
         self.borrow_prototype(go).map(|proto| {
             let field = self.field_storage(Some(object_type), go);
             quote_spanned! { self.span() =>
@@ -923,10 +931,7 @@ impl Property {
             }
         })
     }
-    pub(crate) fn method_prototypes(
-        &self,
-        go: &syn::Ident
-    ) -> Vec<TokenStream> {
+    pub(crate) fn method_prototypes(&self, go: &syn::Ident) -> Vec<TokenStream> {
         let glib = quote! { #go::glib };
         [
             self.setter_prototype(go),
@@ -934,14 +939,17 @@ impl Property {
             self.borrow_prototype(go),
             self.notify_prototype(),
             self.connect_prototype(&glib),
-        ].into_iter().filter_map(|d| d).collect()
+        ]
+        .into_iter()
+        .filter_map(|d| d)
+        .collect()
     }
     pub(crate) fn method_definitions(
         &self,
         index: usize,
         ty: &TokenStream,
         properties_path: &TokenStream,
-        go: &syn::Ident
+        go: &syn::Ident,
     ) -> Vec<TokenStream> {
         let glib = quote! { #go::glib };
         [
@@ -950,7 +958,10 @@ impl Property {
             self.borrow_definition(&ty, go),
             self.notify_definition(index, &properties_path, &glib),
             self.connect_definition(&glib),
-        ].into_iter().filter_map(|d| d).collect()
+        ]
+        .into_iter()
+        .filter_map(|d| d)
+        .collect()
     }
 }
 

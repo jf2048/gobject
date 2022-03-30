@@ -25,16 +25,8 @@ struct Attrs {
 }
 
 impl Attrs {
-    fn validate(&self, def: &TypeDefinition, errors: &mut Vec<darling::Error>) {
+    fn validate(&self, errors: &mut Vec<darling::Error>) {
         use crate::validations::*;
-
-        if self.name.is_none() {
-            util::push_error(
-                errors,
-                def.span(),
-                "Class must have a `name = \"...\"` parameter or a #[properties] struct",
-            );
-        }
         let abstract_ = ("abstract", check_flag(&self.abstract_));
         let final_ = ("final", check_flag(&self.final_));
         only_one([&abstract_, &final_], errors);
@@ -89,7 +81,7 @@ impl ClassDefinition {
         errors: &mut Vec<darling::Error>,
     ) -> Self {
         let attrs = opts.0;
-        attrs.validate(&def, errors);
+        attrs.validate(errors);
 
         let mut class = Self {
             inner: def,
@@ -107,6 +99,13 @@ impl ClassDefinition {
 
         if let Some(name) = attrs.name {
             class.inner.set_name(name);
+        }
+        if class.inner.name.is_none() {
+            util::push_error(
+                errors,
+                class.inner.span(),
+                "Class must have a `name = \"...\"` parameter or a #[properties] struct",
+            );
         }
         class.inner.set_crate_ident(crate_ident);
 
@@ -506,8 +505,9 @@ pub fn derived_class_properties(
 ) -> TokenStream {
     let Properties {
         final_type,
+        base,
         properties,
-    } = Properties::from_derive_input(input, TypeBase::Class, false, errors);
+    } = Properties::from_derive_input(input, None, errors);
     let glib = quote! { #go::glib };
     let name = &input.ident;
     let generics = &input.generics;
@@ -561,26 +561,17 @@ pub fn derived_class_properties(
     };
 
     let defs = properties.iter().map(|p| p.definition(go));
-    let set_impls = properties
-        .iter()
-        .enumerate()
-        .filter_map(|(index, prop)| prop.set_impl(index, go));
-    let get_impls = properties
-        .iter()
-        .enumerate()
-        .filter_map(|(index, prop)| prop.get_impl(index, go));
-    let unimplemented = ClassDefinition::unimplemented_property(&glib);
-
-    quote! {
-        #public_methods
-        impl #impl_generics #ty #where_clause {
-            fn derived_properties() -> &'static [#glib::ParamSpec] {
-                static PROPS: #glib::once_cell::sync::Lazy<::std::vec::Vec<#glib::ParamSpec>> =
-                    #glib::once_cell::sync::Lazy::new(|| {
-                        vec![#(#defs),*]
-                    });
-                ::std::convert::AsRef::as_ref(::std::ops::Deref::deref(&PROPS))
-            }
+    let access = if base == TypeBase::Class {
+        let set_impls = properties
+            .iter()
+            .enumerate()
+            .filter_map(|(index, prop)| prop.set_impl(index, go));
+        let get_impls = properties
+            .iter()
+            .enumerate()
+            .filter_map(|(index, prop)| prop.get_impl(index, go));
+        let unimplemented = ClassDefinition::unimplemented_property(&glib);
+        Some(quote! {
             fn derived_set_property(
                 &self,
                 obj: &<Self as #glib::subclass::types::ObjectSubclass>::Type,
@@ -602,6 +593,22 @@ pub fn derived_class_properties(
                 #(#get_impls)*
                 #unimplemented
             }
+        })
+    } else {
+        None
+    };
+
+    quote! {
+        #public_methods
+        impl #impl_generics #ty #where_clause {
+            fn derived_properties() -> &'static [#glib::ParamSpec] {
+                static PROPS: #glib::once_cell::sync::Lazy<::std::vec::Vec<#glib::ParamSpec>> =
+                    #glib::once_cell::sync::Lazy::new(|| {
+                        vec![#(#defs),*]
+                    });
+                ::std::convert::AsRef::as_ref(::std::ops::Deref::deref(&PROPS))
+            }
+            #access
         }
     }
 }

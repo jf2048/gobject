@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 #[derive(Debug)]
 pub struct VirtualMethod {
-    method: syn::ImplItemMethod,
+    pub method: syn::ImplItemMethod,
 }
 
 impl VirtualMethod {

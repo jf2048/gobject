@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use syn::spanned::Spanned;
 
 bitflags::bitflags! {
-    pub(crate) struct SignalFlags: u32 {
+    pub struct SignalFlags: u32 {
         const RUN_FIRST             = 1 << 0;
         const RUN_LAST              = 1 << 1;
         const RUN_CLEANUP           = 1 << 2;
@@ -79,13 +79,13 @@ impl SignalAttrs {
 
 #[derive(Debug)]
 pub struct Signal {
-    ident: syn::Ident,
-    name: String,
-    flags: SignalFlags,
-    connect: bool,
-    override_: bool,
-    handler: Option<syn::ImplItemMethod>,
-    accumulator: Option<syn::ImplItemMethod>,
+    pub ident: syn::Ident,
+    pub name: String,
+    pub flags: SignalFlags,
+    pub connect: bool,
+    pub override_: bool,
+    pub handler: Option<syn::ImplItemMethod>,
+    pub accumulator: Option<syn::ImplItemMethod>,
 }
 
 impl Signal {

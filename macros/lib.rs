@@ -31,12 +31,19 @@ pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn interface(attr: TokenStream, item: TokenStream) -> TokenStream {
-    item
-}
+    use gobject_core::{InterfaceDefinition, InterfaceOptions, TypeBase};
 
-#[proc_macro_attribute]
-pub fn gtk_widget(attr: TokenStream, item: TokenStream) -> TokenStream {
-    item
+    let mut errors = vec![];
+    let opts = InterfaceOptions::parse(attr.into(), &mut errors);
+    let parser = InterfaceDefinition::type_parser();
+    let module = util::parse::<syn::ItemMod>(item.into(), &mut errors);
+    let tokens = module.map(|module| {
+        let type_def = parser.parse(module, TypeBase::Interface, &mut errors);
+        let go = crate_ident();
+        let class_def = InterfaceDefinition::from_type(type_def, opts, go.clone(), &mut errors);
+        class_def.to_token_stream()
+    }).unwrap_or_default();
+    tokens_or_error(tokens, errors)
 }
 
 #[inline]
