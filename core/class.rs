@@ -1,4 +1,4 @@
-use crate::{util, Properties, TypeBase, TypeDefinition, TypeDefinitionParser};
+use crate::{util, Properties, TypeBase, TypeDefinition, TypeDefinitionParser, TypeMode};
 use darling::{
     util::{Flag, PathList, SpannedValue},
     FromMeta,
@@ -127,13 +127,13 @@ impl ClassDefinition {
     {
         self.inner
             .has_custom_method(method)
-            .then(|| func(format!("{}_derived", method).as_str()))
+            .then(|| func(format!("derived_{}", method).as_str()))
             .flatten()
     }
     fn extra_private_items(&self) -> Vec<syn::Item> {
         let derived_methods = [
             self.derived_method("properties", |n| self.inner.properties_method(n)),
-            self.derived_method("signals", |n| self.inner.signals_method(n)),
+            self.derived_method("signals", |_| self.inner.derived_signals_method()),
             self.derived_method("set_property", |n| self.set_property_method(n)),
             self.derived_method("property", |n| self.property_method(n)),
             self.derived_method("class_init", |n| self.class_init_method(n)),
@@ -154,7 +154,7 @@ impl ClassDefinition {
                 };
                 quote! {
                     #head {
-                        #(#derived_methods)*
+                        #(pub(super) #derived_methods)*
                     }
                 }
             });
@@ -207,7 +207,7 @@ impl ClassDefinition {
         let generics = self.inner.generics.as_ref();
         Some(quote! {
             #glib::wrapper! {
-                pub struct #name #generics(ObjectSubclass<#mod_name::#name #generics>) #(#inherits),*;
+                pub struct #name #generics(ObjectSubclass<self::#mod_name::#name #generics>) #(#inherits),*;
             }
         })
     }
@@ -289,6 +289,15 @@ impl ClassDefinition {
     fn object_subclass_impl(&self) -> Option<TokenStream> {
         let glib = self.inner.glib()?;
         let name = self.inner.name.as_ref()?;
+        let head = if let Some(generics) = &self.inner.generics {
+            let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
+            quote! {
+                impl #impl_generics #glib::subclass::types::ObjectSubclass
+                for #name #type_generics #where_clause
+            }
+        } else {
+            quote! { impl #glib::subclass::types::ObjectSubclass for #name }
+        };
         let gtype_name = if let Some(ns) = &self.ns {
             format!("{}{}", ns, name)
         } else {
@@ -315,7 +324,7 @@ impl ClassDefinition {
             .custom_methods(&["type_init", "new", "with_class"]);
         Some(quote! {
             #[#glib::object_subclass]
-            impl #glib::subclass::types::ObjectSubclass for #name {
+            #head {
                 const NAME: &'static ::std::primitive::str = #gtype_name;
                 const ABSTRACT: bool = #abstract_;
                 type Type = super::#name;
@@ -354,7 +363,7 @@ impl ClassDefinition {
             .enumerate()
             .filter_map(|(index, prop)| prop.set_impl(index, go));
         let method_name = format_ident!("{}", method_name);
-        let properties_path = self.inner.method_path("properties")?;
+        let properties_path = self.inner.method_path("properties", TypeMode::Subclass)?;
         let unimplemented = Self::unimplemented_property(&glib);
         Some(quote! {
             fn #method_name(
@@ -383,7 +392,7 @@ impl ClassDefinition {
             .enumerate()
             .filter_map(|(index, prop)| prop.get_impl(index, go));
         let method_name = format_ident!("{}", method_name);
-        let properties_path = self.inner.method_path("properties")?;
+        let properties_path = self.inner.method_path("properties", TypeMode::Subclass)?;
         let unimplemented = Self::unimplemented_property(&glib);
         Some(quote! {
             fn #method_name(
@@ -409,7 +418,7 @@ impl ClassDefinition {
         let signals = self
             .inner
             .custom_method("signals")
-            .or_else(|| self.inner.signals_method("signals"));
+            .or_else(|| self.inner.signals_method());
         let set_property = self
             .inner
             .custom_method("set_property")
@@ -507,6 +516,7 @@ pub fn derived_class_properties(
         final_type,
         base,
         properties,
+        ..
     } = Properties::from_derive_input(input, None, errors);
     let glib = quote! { #go::glib };
     let name = &input.ident;
@@ -530,8 +540,7 @@ pub fn derived_class_properties(
     let public_methods = if let Some(trait_name) = trait_name {
         let type_ident = format_ident!("____Object");
         let mut generics = generics.clone();
-        let param =
-            util::parse(quote! { #type_ident: #glib::IsA<#wrapper_ty> }, &mut vec![]).unwrap();
+        let param = syn::parse_quote! { #type_ident: #glib::IsA<#wrapper_ty> };
         generics.params.push(param);
         let (impl_generics, _, where_clause) = generics.split_for_impl();
 

@@ -94,13 +94,13 @@ impl InterfaceDefinition {
     {
         self.inner
             .has_custom_method(method)
-            .then(|| func(format!("{}_derived", method).as_str()))
+            .then(|| func(format!("derived_{}", method).as_str()))
             .flatten()
     }
     fn extra_private_items(&self) -> Vec<syn::Item> {
         let derived_methods = [
             self.derived_method("properties", |n| self.inner.properties_method(n)),
-            self.derived_method("signals", |n| self.inner.signals_method(n)),
+            self.derived_method("signals", |_| self.inner.derived_signals_method()),
             self.derived_method("interface_init", |n| self.interface_init_method(n)),
         ]
         .into_iter()
@@ -118,7 +118,7 @@ impl InterfaceDefinition {
                 };
                 quote! {
                     #head {
-                        #(#derived_methods)*
+                        #(pub(super) #derived_methods)*
                     }
                 }
             });
@@ -155,7 +155,7 @@ impl InterfaceDefinition {
         let generics = self.inner.generics.as_ref();
         Some(quote! {
             #glib::wrapper! {
-                pub struct #name #generics(ObjectInterface<#mod_name::#name #generics>) #(#requires),*;
+                pub struct #name #generics(ObjectInterface<self::#mod_name::#name #generics>) #(#requires),*;
             }
         })
     }
@@ -201,6 +201,15 @@ impl InterfaceDefinition {
     fn object_interface_impl(&self) -> Option<TokenStream> {
         let glib = self.inner.glib()?;
         let name = self.inner.name.as_ref()?;
+        let head = if let Some(generics) = &self.inner.generics {
+            let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
+            quote! {
+                impl #impl_generics #glib::subclass::types::ObjectInterface
+                for #name #type_generics #where_clause
+            }
+        } else {
+            quote! { impl #glib::subclass::types::ObjectInterface for #name }
+        };
         let gtype_name = if let Some(ns) = &self.ns {
             format!("{}{}", ns, name)
         } else {
@@ -219,11 +228,11 @@ impl InterfaceDefinition {
         let signals = self
             .inner
             .custom_method("signals")
-            .or_else(|| self.inner.signals_method("signals"));
+            .or_else(|| self.inner.signals_method());
         let extra = self.inner.custom_methods(&["type_init"]);
         Some(quote! {
             #[#glib::object_interface]
-            impl #glib::subclass::types::ObjectInterface for #name {
+            #head {
                 const NAME: &'static ::std::primitive::str = #gtype_name;
                 type Prerequisites = (#(#prerequisites,)*);
                 #extra
@@ -242,13 +251,9 @@ impl InterfaceDefinition {
         let body = self.inner.child_type_init_body(&type_ident, &iface_ident)?;
         let trait_name = format_ident!("{}Impl", name);
 
-        let pred = util::parse(
-            quote! {
-                <#type_ident as #glib::subclass::types::ObjectSubclass>::Type: #glib::IsA<#glib::Object>
-            },
-            &mut vec![],
-        )
-        .unwrap();
+        let pred = syn::parse_quote! {
+            <#type_ident as #glib::subclass::types::ObjectSubclass>::Type: #glib::IsA<#glib::Object>
+        };
         let head = if let Some(mut generics) = self.inner.generics.clone() {
             {
                 let where_clause = generics.make_where_clause();

@@ -33,11 +33,10 @@ impl Default for PropertiesAttrs {
     }
 }
 
-#[derive(Default, FromField)]
+#[derive(Debug, Default, FromField)]
 #[darling(default, attributes(property))]
 struct PropertyAttrs {
     ident: Option<syn::Ident>,
-    attrs: Vec<syn::Attribute>,
     skip: SpannedValue<Flag>,
     get: SpannedValue<Option<PropertyPermission>>,
     set: SpannedValue<Option<PropertyPermission>>,
@@ -45,6 +44,14 @@ struct PropertyAttrs {
     construct: SpannedValue<Option<bool>>,
     construct_only: SpannedValue<Option<bool>>,
     lax_validation: SpannedValue<Option<bool>>,
+    user_1: SpannedValue<Option<bool>>,
+    user_2: SpannedValue<Option<bool>>,
+    user_3: SpannedValue<Option<bool>>,
+    user_4: SpannedValue<Option<bool>>,
+    user_5: SpannedValue<Option<bool>>,
+    user_6: SpannedValue<Option<bool>>,
+    user_7: SpannedValue<Option<bool>>,
+    user_8: SpannedValue<Option<bool>>,
     explicit_notify: SpannedValue<Option<bool>>,
     deprecated: SpannedValue<Option<bool>>,
     notify: Option<bool>,
@@ -63,6 +70,7 @@ struct PropertyAttrs {
     abstract_: SpannedValue<Flag>,
     override_class: Option<syn::Path>,
     override_iface: Option<syn::Path>,
+    builder_defaults: Option<syn::ExprArray>,
     builder: SpannedValue<HashMap<syn::Ident, syn::Lit>>,
 }
 
@@ -132,6 +140,14 @@ impl PropertyAttrs {
             PropertyFlags::LAX_VALIDATION,
             self.lax_validation.unwrap_or(false),
         );
+        flags.set(PropertyFlags::USER_1, self.user_1.unwrap_or(false));
+        flags.set(PropertyFlags::USER_2, self.user_2.unwrap_or(false));
+        flags.set(PropertyFlags::USER_3, self.user_3.unwrap_or(false));
+        flags.set(PropertyFlags::USER_4, self.user_4.unwrap_or(false));
+        flags.set(PropertyFlags::USER_5, self.user_5.unwrap_or(false));
+        flags.set(PropertyFlags::USER_6, self.user_6.unwrap_or(false));
+        flags.set(PropertyFlags::USER_7, self.user_7.unwrap_or(false));
+        flags.set(PropertyFlags::USER_8, self.user_8.unwrap_or(false));
         flags.set(
             PropertyFlags::EXPLICIT_NOTIFY,
             self.explicit_notify.unwrap_or(false),
@@ -139,7 +155,7 @@ impl PropertyAttrs {
         flags.set(PropertyFlags::DEPRECATED, self.deprecated.unwrap_or(false));
         flags
     }
-    fn normalize(&mut self, index: usize, pod: bool) {
+    fn normalize(&mut self, index: usize, field: &syn::Field, pod: bool) {
         if pod {
             if self.get.is_none() {
                 self.get = SpannedValue::new(Some(PropertyPermission::Allow), self.ident.span());
@@ -156,7 +172,7 @@ impl PropertyAttrs {
                 }
             }
         } else {
-            if self
+            if field
                 .attrs
                 .iter()
                 .find(|a| a.path.is_ident("property"))
@@ -257,6 +273,14 @@ impl PropertyAttrs {
         let construct = ("construct", check_bool(&self.construct));
         let construct_only = ("construct_only", check_bool(&self.construct_only));
         let lax_validation = ("lax_validation", check_bool(&self.lax_validation));
+        let user_1 = ("user_1", check_bool(&self.user_1));
+        let user_2 = ("user_2", check_bool(&self.user_2));
+        let user_3 = ("user_3", check_bool(&self.user_3));
+        let user_4 = ("user_4", check_bool(&self.user_4));
+        let user_5 = ("user_5", check_bool(&self.user_5));
+        let user_6 = ("user_6", check_bool(&self.user_6));
+        let user_7 = ("user_7", check_bool(&self.user_7));
+        let user_8 = ("user_8", check_bool(&self.user_8));
         let explicit_notify = ("explicit_notify", check_bool(&self.explicit_notify));
         let deprecated = ("deprecated", check_bool(&self.deprecated));
         let nick = ("nick", self.nick.as_ref().map(|n| n.span()));
@@ -298,6 +322,14 @@ impl PropertyAttrs {
                     &construct,
                     &construct_only,
                     &lax_validation,
+                    &user_1,
+                    &user_2,
+                    &user_3,
+                    &user_4,
+                    &user_5,
+                    &user_6,
+                    &user_7,
+                    &user_8,
                     &explicit_notify,
                     &deprecated,
                 ],
@@ -324,6 +356,7 @@ impl PropertyAttrs {
     }
 }
 
+#[derive(Debug)]
 struct PropertyStorageAttr(syn::Expr);
 
 impl FromMeta for PropertyStorageAttr {
@@ -384,6 +417,14 @@ bitflags::bitflags! {
         const CONSTRUCT       = 1 << 2;
         const CONSTRUCT_ONLY  = 1 << 3;
         const LAX_VALIDATION  = 1 << 4;
+        const USER_1          = 256;
+        const USER_2          = 1024;
+        const USER_3          = 2048;
+        const USER_4          = 4096;
+        const USER_5          = 8192;
+        const USER_6          = 16384;
+        const USER_7          = 32768;
+        const USER_8          = 65536;
         const EXPLICIT_NOTIFY = 1 << 30;
         const DEPRECATED      = 1 << 31;
     }
@@ -420,12 +461,18 @@ pub enum PropertyType {
 }
 
 impl PropertyType {
-    fn builder(&self, name: &str, ty: &TokenStream, go: &syn::Ident) -> TokenStream {
+    fn builder(
+        &self,
+        name: &str,
+        extra: &[syn::Expr],
+        ty: &TokenStream,
+        go: &syn::Ident,
+    ) -> TokenStream {
         let glib = quote! { #go::glib };
         let pspec_type = match self {
             Self::Unspecified => {
                 return quote! {
-                    <#ty as #go::ParamSpecBuildable>::builder(#name)
+                    <#ty as #go::ParamSpecBuildable>::ParamSpec::builder(#name, #(#extra),*)
                 }
             }
             Self::Enum => format_ident!("ParamSpecEnum"),
@@ -499,6 +546,7 @@ pub(crate) struct Properties {
     pub(crate) final_type: Option<syn::Ident>,
     pub(crate) base: TypeBase,
     pub(crate) properties: Vec<Property>,
+    pub(crate) fields: syn::Fields,
 }
 
 impl Default for Properties {
@@ -507,6 +555,7 @@ impl Default for Properties {
             final_type: None,
             base: TypeBase::Class,
             properties: Vec::new(),
+            fields: syn::Fields::Unit,
         }
     }
 }
@@ -546,16 +595,19 @@ impl Properties {
         });
         let data = data.take_struct().map(|s| s.fields).unwrap_or_default();
 
-        let fields = match &input.data {
-            syn::Data::Struct(syn::DataStruct { fields, .. }) => fields,
+        let mut fields = match &input.data {
+            syn::Data::Struct(syn::DataStruct { fields, .. }) => fields.clone(),
             _ => return Default::default(),
         };
 
         let mut prop_names = HashSet::new();
         let mut properties = vec![];
-        for (index, (attrs, field)) in std::iter::zip(data, fields.iter()).enumerate() {
+        for (index, (attrs, field)) in std::iter::zip(data, fields.iter_mut()).enumerate() {
             let prop = Property::new(attrs, field, index, pod, base, errors);
             if let Some(prop) = prop {
+                if field.vis == syn::Visibility::Inherited {
+                    field.vis = syn::parse_quote! { pub(super) };
+                }
                 let name = prop.name.to_string();
                 if prop_names.contains(&name) {
                     util::push_error(
@@ -567,12 +619,16 @@ impl Properties {
                 prop_names.insert(name);
                 properties.push(prop);
             }
+            while let Some(index) = field.attrs.iter().position(|a| a.path.is_ident("property")) {
+                field.attrs.remove(index);
+            }
         }
 
         Self {
             final_type,
             base,
             properties,
+            fields,
         }
     }
 }
@@ -591,6 +647,7 @@ pub struct Property {
     pub connect_notify: bool,
     pub nick: Option<String>,
     pub blurb: Option<String>,
+    pub buildable_defaults: Vec<syn::Expr>,
     pub buildable_props: Vec<(syn::Ident, syn::Lit)>,
     pub flags: PropertyFlags,
 }
@@ -604,12 +661,13 @@ impl Property {
         base: TypeBase,
         errors: &mut Vec<darling::Error>,
     ) -> Option<Self> {
-        attrs.normalize(index, pod);
+        attrs.normalize(index, field, pod);
         attrs.validate(field, pod, base, errors);
         if attrs.skip.is_some() {
             return None;
         }
 
+        let flags = attrs.flags(pod);
         Some(Self {
             field: field.clone(),
             name: attrs.name(index),
@@ -623,8 +681,12 @@ impl Property {
             connect_notify: attrs.connect_notify.unwrap_or(true),
             nick: attrs.nick.take().map(|n| n.value()),
             blurb: attrs.blurb.take().map(|b| b.value()),
+            buildable_defaults: attrs
+                .builder_defaults
+                .map(|d| d.elems.into_iter().collect())
+                .unwrap_or_default(),
             buildable_props: std::mem::take(&mut *attrs.builder).into_iter().collect(),
-            flags: attrs.flags(pod),
+            flags,
         })
     }
     pub(crate) fn definition(&self, go: &syn::Ident) -> TokenStream {
@@ -641,7 +703,9 @@ impl Property {
             .buildable_props
             .iter()
             .map(|(ident, value)| quote! { .#ident(#value) });
-        let builder = self.special_type.builder(&name, &ty, go);
+        let builder = self
+            .special_type
+            .builder(&name, &self.buildable_defaults, &ty, go);
         quote_spanned! { self.span() =>
             #builder
             #(#props)*
@@ -897,7 +961,7 @@ impl Property {
                     #![inline]
                     <Self as #glib::object::ObjectExt>::notify_by_pspec(
                         self,
-                        &#properties_path[#index]
+                        &#properties_path()[#index]
                     );
                 }
             }
@@ -912,7 +976,7 @@ impl Property {
                 let method_name =
                     format_ident!("connect_{}_notify", self.name.to_string().to_snake_case());
                 quote_spanned! { self.span() =>
-                    fn #method_name<F: Fn(&Self) + 'static>(&self, f: F) -> #glib::SignalHandlerId
+                    fn #method_name<____Func: Fn(&Self) + 'static>(&self, f: ____Func) -> #glib::SignalHandlerId
                 }
             })
     }
