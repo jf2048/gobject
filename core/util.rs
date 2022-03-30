@@ -87,15 +87,3 @@ pub(crate) fn is_valid_name(name: &str) -> bool {
 pub(crate) fn make_stmt(tokens: TokenStream) -> TokenStream {
     quote::quote! { #tokens; }
 }
-
-#[inline]
-pub(crate) fn make_attrs(tokens: TokenStream) -> Vec<syn::Attribute> {
-    struct OuterAttrs(Vec<syn::Attribute>);
-    impl Parse for OuterAttrs {
-        fn parse(input: ParseStream) -> syn::Result<Self> {
-            Ok(Self(syn::Attribute::parse_outer(input)?))
-        }
-    }
-    parse::<OuterAttrs>(tokens, &mut vec![]).unwrap().0
-}
-

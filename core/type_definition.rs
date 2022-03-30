@@ -24,7 +24,7 @@ impl TypeDefinitionParser {
         self.custom_methods.insert(name.to_owned());
         self
     }
-    pub(crate) fn parse(
+    pub fn parse(
         &self,
         module: syn::ItemMod,
         base: TypeBase,
@@ -79,10 +79,8 @@ impl TypeDefinitionParser {
             def.name = Some(struct_.ident.clone());
             let Properties {
                 properties,
-                fields,
                 ..
             } = Properties::from_derive_input(&struct_.clone().into(), base, true, errors);
-            struct_.fields = fields;
             def.properties.extend(properties);
         }
         if let Some(impl_) = impl_ {
@@ -223,15 +221,7 @@ impl TypeDefinition {
         let go = unwrap_or_return!(self.crate_ident.as_ref(), protos);
         let glib = unwrap_or_return!(self.glib(), protos);
         for prop in &self.properties {
-            let ps = [
-                prop.setter_prototype(go),
-                prop.getter_prototype(go),
-                prop.borrow_prototype(go),
-                prop.pspec_prototype(&glib),
-                prop.notify_prototype(),
-                prop.connect_prototype(&glib),
-            ];
-            for proto in ps.into_iter().filter_map(|p| p) {
+            for proto in prop.method_prototypes(go) {
                 protos.push(util::make_stmt(proto));
             }
         }
@@ -273,35 +263,25 @@ impl TypeDefinition {
         let go = unwrap_or_return!(self.crate_ident.as_ref(), methods);
         let glib = unwrap_or_return!(self.glib(), methods);
         let ty = unwrap_or_return!(self.type_(TypeMode::Wrapper, TypeMode::Wrapper), methods);
-        let wrapper_ty =
-            unwrap_or_return!(self.type_(TypeMode::Subclass, TypeMode::Wrapper), methods);
         let properties_path = unwrap_or_return!(self.method_path("properties"), methods);
 
         for (index, prop) in self.properties.iter().enumerate() {
-            let defs = [
-                prop.setter_definition(index, &ty, &properties_path, go),
-                prop.getter_definition(&ty, go),
-                prop.borrow_definition(&ty, go),
-                prop.pspec_definition(index, &properties_path, &glib),
-                prop.notify_definition(index, &properties_path, &glib),
-                prop.connect_definition(&glib),
-            ];
-            for method in defs.into_iter().filter_map(|d| d) {
-                methods.push(util::make_stmt(method));
+            for method in prop.method_definitions(index, &ty, &properties_path, go) {
+                methods.push(method);
             }
         }
-        for (index, signal) in self.signals.iter().enumerate() {
+        for signal in &self.signals {
             let defs = [
                 signal.emit_definition(&glib),
                 signal.connect_definition(&glib),
             ];
             for method in defs.into_iter().filter_map(|d| d) {
-                methods.push(util::make_stmt(method));
+                methods.push(method);
             }
         }
         for virtual_method in &self.virtual_methods {
             let method = virtual_method.definition(&ty, self.base, &glib);
-            methods.push(util::make_stmt(method));
+            methods.push(method);
         }
         methods
     }
@@ -326,7 +306,7 @@ impl TypeDefinition {
                 let (impl_generics, _, _) = generics.split_for_impl();
                 let protos = self.public_method_prototypes();
                 Some(quote! {
-                    pub(crate) trait #trait_name: 'static {
+                    pub trait #trait_name: 'static {
                         #(#protos)*
                     }
                     impl #impl_generics #trait_name for #type_ident #where_clause {
@@ -344,7 +324,7 @@ impl TypeDefinition {
             if let Some(trait_name) = trait_name {
                 let protos = self.public_method_prototypes();
                 Some(quote! {
-                    pub(crate) trait #trait_name: 'static {
+                    pub trait #trait_name: 'static {
                         #(#protos)*
                     }
                     impl<#type_ident: #glib::IsA<#name>> #trait_name for #type_ident {

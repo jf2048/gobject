@@ -654,7 +654,8 @@ impl Signal {
         let proto = self.connect_prototype(glib)?;
         let handler = self.handler.as_ref().unwrap();
         let arg_names = self.arg_names().skip(1);
-        let args_unwrap = self.args_unwrap(&quote! { Self }, glib).skip(1);
+        let self_ty = quote! { Self };
+        let args_unwrap = self.args_unwrap(&self_ty, glib).skip(1);
 
         let signal_id_cell = self.signal_id_cell_ident();
         let details = if self.flags.contains(SignalFlags::DETAILED) {

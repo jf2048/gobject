@@ -13,8 +13,7 @@ use syn::spanned::Spanned;
 #[darling(default, attributes(properties))]
 pub(crate) struct PropertiesAttrs {
     pod: Flag,
-    #[darling(rename = "final")]
-    final_: SpannedValue<Flag>,
+    final_type: Option<syn::Ident>,
     data: darling::ast::Data<darling::util::Ignored, PropertyAttrs>,
 }
 
@@ -22,7 +21,7 @@ impl Default for PropertiesAttrs {
     fn default() -> Self {
         Self {
             pod: Default::default(),
-            final_: Default::default(),
+            final_type: None,
             data: darling::ast::Data::empty_from(&syn::Data::Struct(syn::DataStruct {
                 struct_token: Default::default(),
                 fields: syn::Fields::Unit,
@@ -416,11 +415,11 @@ enum PropertyType {
 }
 
 impl PropertyType {
-    fn builder(&self, name: &str, ty: &syn::Type, go: &syn::Ident) -> TokenStream {
+    fn builder(&self, name: &str, ty: &TokenStream, go: &syn::Ident) -> TokenStream {
         let glib = quote! { #go::glib };
         let pspec_type = match self {
             Self::Unspecified => {
-                return quote_spanned! { ty.span() =>
+                return quote! {
                     <#ty as #go::ParamSpecBuildable>::builder(#name)
                 }
             }
@@ -429,7 +428,7 @@ impl PropertyType {
             Self::Boxed => format_ident!("ParamSpecBoxed"),
             Self::Object => format_ident!("ParamSpecObject"),
         };
-        quote_spanned! { ty.span() =>
+        quote! {
             #glib::#pspec_type::builder(
                 #name,
                 <<#ty as #glib::value::ValueType>::Type as #glib::StaticType>::static_type(),
@@ -446,15 +445,6 @@ enum PropertyStorage {
     Abstract,
     Computed,
     Delegate(Box<syn::Expr>),
-}
-
-impl PropertyStorage {
-    fn has_field(&self) -> bool {
-        matches!(
-            self,
-            PropertyStorage::NamedField(_) | PropertyStorage::UnnamedField(_)
-        )
-    }
 }
 
 #[derive(Debug)]
@@ -501,17 +491,15 @@ impl PropertyOverride {
 }
 
 pub(crate) struct Properties {
-    pub(crate) final_: bool,
+    pub(crate) final_type: Option<syn::Ident>,
     pub(crate) properties: Vec<Property>,
-    pub(crate) fields: syn::Fields,
 }
 
 impl Default for Properties {
     fn default() -> Self {
         Self {
-            final_: false,
+            final_type: None,
             properties: Vec::new(),
-            fields: syn::Fields::Unit,
         }
     }
 }
@@ -520,10 +508,10 @@ impl Properties {
     pub(crate) fn from_derive_input(
         input: &syn::DeriveInput,
         base: TypeBase,
-        inside_class: bool,
+        inside_def: bool,
         errors: &mut Vec<darling::Error>,
     ) -> Self {
-        let PropertiesAttrs { pod, final_, data } = match PropertiesAttrs::from_derive_input(&input)
+        let PropertiesAttrs { pod, final_type, data } = match PropertiesAttrs::from_derive_input(&input)
         {
             Ok(attrs) => attrs,
             Err(e) => {
@@ -531,27 +519,26 @@ impl Properties {
                 Default::default()
             }
         };
-        if inside_class && final_.is_some() {
-            util::push_error(
-                errors,
-                final_.span(),
-                "`final` not allowed here",
-            );
+        if inside_def {
+            if let Some(final_type) = &final_type {
+                util::push_error_spanned(
+                    errors,
+                    final_type,
+                    "`final_type` not allowed here",
+                );
+            }
         }
         let pod = pod.is_some();
-        let final_ = final_.is_some();
         let data = data.take_struct().map(|s| s.fields).unwrap_or_default();
 
-        let mut fields = match &input.data {
-            syn::Data::Struct(syn::DataStruct { fields: fs, .. }) => fs.clone(),
+        let fields = match &input.data {
+            syn::Data::Struct(syn::DataStruct { fields, .. }) => fields,
             _ => return Default::default(),
         };
 
         let mut prop_names = HashSet::new();
         let mut properties = vec![];
-        let mut fs = vec![];
         for (index, (attrs, field)) in std::iter::zip(data, fields.iter()).enumerate() {
-            let mut has_field = true;
             let prop = Property::new(attrs, field, index, pod, base, errors);
             if let Some(prop) = prop {
                 let name = prop.name.to_string();
@@ -563,24 +550,13 @@ impl Properties {
                     );
                 }
                 prop_names.insert(name);
-                has_field = prop.storage.has_field();
                 properties.push(prop);
             }
-            if has_field {
-                fs.push(field.clone());
-            }
-        }
-
-        match &mut fields {
-            syn::Fields::Named(f) => f.named = FromIterator::from_iter(fs),
-            syn::Fields::Unnamed(f) => f.unnamed = FromIterator::from_iter(fs),
-            _ => {}
         }
 
         Self {
-            final_,
+            final_type,
             properties,
-            fields,
         }
     }
 }
@@ -649,10 +625,12 @@ impl Property {
             .buildable_props
             .iter()
             .map(|(ident, value)| quote! { .#ident(#value) });
-        let builder = self.special_type.builder(&name, &self.field.ty, go);
+        let builder = self.special_type.builder(&name, &ty, go);
         quote_spanned! { self.span() =>
             #builder
             #(#props)*
+            .nick(#nick)
+            .blurb(#blurb)
             .flags(#flags)
             .build()
         }
@@ -711,14 +689,14 @@ impl Property {
             }
         })
     }
-    pub(crate) fn getter_prototype(&self, go: &syn::Ident) -> Option<TokenStream> {
+    fn getter_prototype(&self, go: &syn::Ident) -> Option<TokenStream> {
         (!self.is_inherited() && matches!(self.get, PropertyPermission::Allow)).then(|| {
             let method_name = self.getter_name();
             let ty = self.inner_type(go);
             quote_spanned! { self.span() => fn #method_name(&self) -> #ty }
         })
     }
-    pub(crate) fn getter_definition(
+    fn getter_definition(
         &self,
         object_type: &TokenStream,
         go: &syn::Ident,
@@ -743,7 +721,7 @@ impl Property {
     fn borrow_name(&self) -> syn::Ident {
         format_ident!("borrow_{}", self.name.to_string().to_snake_case())
     }
-    pub(crate) fn borrow_prototype(&self, go: &syn::Ident) -> Option<TokenStream> {
+    fn borrow_prototype(&self, go: &syn::Ident) -> Option<TokenStream> {
         self.borrow.then(|| {
             let method_name = self.borrow_name();
             let ty = if self.is_abstract() {
@@ -755,7 +733,7 @@ impl Property {
             quote_spanned! { self.span() => fn #method_name(&self) -> #ty }
         })
     }
-    pub(crate) fn borrow_definition(
+    fn borrow_definition(
         &self,
         object_type: &TokenStream,
         go: &syn::Ident,
@@ -841,7 +819,7 @@ impl Property {
             }
         })
     }
-    pub(crate) fn setter_prototype(&self, go: &syn::Ident) -> Option<TokenStream> {
+    fn setter_prototype(&self, go: &syn::Ident) -> Option<TokenStream> {
         let construct_only = self.flags.contains(PropertyFlags::CONSTRUCT_ONLY);
         let allowed = match &self.set {
             PropertyPermission::Allow => true,
@@ -854,7 +832,7 @@ impl Property {
             quote_spanned! { self.span() => fn #method_name(&self, value: #ty) }
         })
     }
-    pub(crate) fn setter_definition(
+    fn setter_definition(
         &self,
         index: usize,
         object_type: &TokenStream,
@@ -889,26 +867,7 @@ impl Property {
             }
         })
     }
-    pub(crate) fn pspec_prototype(&self, glib: &TokenStream) -> Option<TokenStream> {
-        let method_name = format_ident!("pspec_{}", self.name.to_string().to_snake_case());
-        Some(quote_spanned! { self.span() => fn #method_name() -> &'static #glib::ParamSpec })
-    }
-    pub(crate) fn pspec_definition(
-        &self,
-        index: usize,
-        properties_path: &TokenStream,
-        glib: &TokenStream,
-    ) -> Option<TokenStream> {
-        self.pspec_prototype(glib).map(|proto| {
-            quote_spanned! { self.span() =>
-                #proto {
-                    #![inline]
-                    &#properties_path()[#index]
-                }
-            }
-        })
-    }
-    pub(crate) fn notify_prototype(&self) -> Option<TokenStream> {
+    fn notify_prototype(&self) -> Option<TokenStream> {
         (!self.is_inherited()
             && self.get.is_allowed()
             && !self.flags.contains(PropertyFlags::CONSTRUCT_ONLY)
@@ -918,7 +877,7 @@ impl Property {
                 quote_spanned! { self.span() => fn #method_name(&self) }
             })
     }
-    pub(crate) fn notify_definition(
+    fn notify_definition(
         &self,
         index: usize,
         properties_path: &TokenStream,
@@ -936,7 +895,7 @@ impl Property {
             }
         })
     }
-    pub(crate) fn connect_prototype(&self, glib: &TokenStream) -> Option<TokenStream> {
+    fn connect_prototype(&self, glib: &TokenStream) -> Option<TokenStream> {
         (!self.is_inherited()
             && self.get.is_allowed()
             && !self.flags.contains(PropertyFlags::CONSTRUCT_ONLY)
@@ -949,7 +908,7 @@ impl Property {
                 }
             })
     }
-    pub(crate) fn connect_definition(&self, glib: &TokenStream) -> Option<TokenStream> {
+    fn connect_definition(&self, glib: &TokenStream) -> Option<TokenStream> {
         self.connect_prototype(glib).map(|proto| {
             let name = self.name.to_string();
             quote_spanned! { self.span() =>
@@ -963,6 +922,35 @@ impl Property {
                 }
             }
         })
+    }
+    pub(crate) fn method_prototypes(
+        &self,
+        go: &syn::Ident
+    ) -> Vec<TokenStream> {
+        let glib = quote! { #go::glib };
+        [
+            self.setter_prototype(go),
+            self.getter_prototype(go),
+            self.borrow_prototype(go),
+            self.notify_prototype(),
+            self.connect_prototype(&glib),
+        ].into_iter().filter_map(|d| d).collect()
+    }
+    pub(crate) fn method_definitions(
+        &self,
+        index: usize,
+        ty: &TokenStream,
+        properties_path: &TokenStream,
+        go: &syn::Ident
+    ) -> Vec<TokenStream> {
+        let glib = quote! { #go::glib };
+        [
+            self.setter_definition(index, &ty, &properties_path, go),
+            self.getter_definition(&ty, go),
+            self.borrow_definition(&ty, go),
+            self.notify_definition(index, &properties_path, &glib),
+            self.connect_definition(&glib),
+        ].into_iter().filter_map(|d| d).collect()
     }
 }
 
