@@ -1,4 +1,4 @@
-use crate::util;
+use crate::{util, TypeBase};
 use darling::{
     util::{Flag, SpannedValue},
     FromDeriveInput, FromField, FromMeta,
@@ -14,7 +14,7 @@ use syn::spanned::Spanned;
 pub(crate) struct PropertiesAttrs {
     pod: Flag,
     #[darling(rename = "final")]
-    final_: Flag,
+    final_: SpannedValue<Flag>,
     data: darling::ast::Data<darling::util::Ignored, PropertyAttrs>,
 }
 
@@ -88,8 +88,8 @@ impl PropertyAttrs {
             PropertyType::Unspecified
         }
     }
-    fn storage(&self, index: usize, iface: bool) -> PropertyStorage {
-        if iface {
+    fn storage(&self, index: usize, base: TypeBase) -> PropertyStorage {
+        if base == TypeBase::Interface {
             PropertyStorage::InterfaceAbstract
         } else if self.computed.is_some() {
             PropertyStorage::Computed
@@ -177,7 +177,7 @@ impl PropertyAttrs {
         &self,
         field: &syn::Field,
         pod: bool,
-        iface: bool,
+        base: TypeBase,
         errors: &mut Vec<darling::Error>,
     ) {
         use crate::validations::*;
@@ -215,7 +215,7 @@ impl PropertyAttrs {
             util::push_error_spanned(errors, field, "Property must be readable or writable");
         }
 
-        let interface = ("interface", iface.then(|| self.borrow.span()));
+        let interface = ("interface", (base == TypeBase::Interface).then(|| field.span()));
         let enum_ = ("enum", check_flag(&self.enum_));
         let flags = ("flags", check_flag(&self.flags));
         let boxed = ("boxed", check_flag(&self.boxed));
@@ -328,7 +328,7 @@ impl FromMeta for PropertyStorageAttr {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum PropertyPermission {
     Deny,
     Allow,
@@ -406,6 +406,7 @@ impl PropertyFlags {
     }
 }
 
+#[derive(Debug)]
 enum PropertyType {
     Unspecified,
     Enum,
@@ -437,6 +438,7 @@ impl PropertyType {
     }
 }
 
+#[derive(Debug)]
 enum PropertyStorage {
     NamedField(syn::Ident),
     UnnamedField(usize),
@@ -455,6 +457,7 @@ impl PropertyStorage {
     }
 }
 
+#[derive(Debug)]
 enum PropertyName {
     Field(syn::Ident),
     Custom(syn::LitStr),
@@ -478,6 +481,7 @@ impl std::fmt::Display for PropertyName {
     }
 }
 
+#[derive(Debug)]
 enum PropertyOverride {
     Interface(syn::Path),
     Class(syn::Path),
@@ -515,7 +519,8 @@ impl Default for Properties {
 impl Properties {
     pub(crate) fn from_derive_input(
         input: &syn::DeriveInput,
-        iface: bool,
+        base: TypeBase,
+        inside_class: bool,
         errors: &mut Vec<darling::Error>,
     ) -> Self {
         let PropertiesAttrs { pod, final_, data } = match PropertiesAttrs::from_derive_input(&input)
@@ -526,6 +531,13 @@ impl Properties {
                 Default::default()
             }
         };
+        if inside_class && final_.is_some() {
+            util::push_error(
+                errors,
+                final_.span(),
+                "`final` not allowed here",
+            );
+        }
         let pod = pod.is_some();
         let final_ = final_.is_some();
         let data = data.take_struct().map(|s| s.fields).unwrap_or_default();
@@ -540,7 +552,7 @@ impl Properties {
         let mut fs = vec![];
         for (index, (attrs, field)) in std::iter::zip(data, fields.iter()).enumerate() {
             let mut has_field = true;
-            let prop = Property::new(attrs, field, index, pod, iface, errors);
+            let prop = Property::new(attrs, field, index, pod, base, errors);
             if let Some(prop) = prop {
                 let name = prop.name.to_string();
                 if prop_names.contains(&name) {
@@ -573,6 +585,7 @@ impl Properties {
     }
 }
 
+#[derive(Debug)]
 pub struct Property {
     field: syn::Field,
     name: PropertyName,
@@ -596,11 +609,11 @@ impl Property {
         field: &syn::Field,
         index: usize,
         pod: bool,
-        iface: bool,
+        base: TypeBase,
         errors: &mut Vec<darling::Error>,
     ) -> Option<Self> {
         attrs.normalize(index, pod);
-        attrs.validate(field, pod, iface, errors);
+        attrs.validate(field, pod, base, errors);
         if attrs.skip.is_some() {
             return None;
         }
@@ -609,7 +622,7 @@ impl Property {
             field: field.clone(),
             name: attrs.name(index),
             special_type: attrs.special_type(),
-            storage: attrs.storage(index, iface),
+            storage: attrs.storage(index, base),
             override_: attrs.override_(),
             get: (*attrs.get).take().unwrap_or_default(),
             set: (*attrs.set).take().unwrap_or_default(),

@@ -98,3 +98,4 @@ pub(crate) fn make_attrs(tokens: TokenStream) -> Vec<syn::Attribute> {
     }
     parse::<OuterAttrs>(tokens, &mut vec![]).unwrap().0
 }
+

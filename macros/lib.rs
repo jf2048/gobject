@@ -9,10 +9,10 @@ pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
     let parser = ClassDefinition::type_parser();
     let module = util::parse::<syn::ItemMod>(item.into(), &mut errors);
     let tokens = module.map(|module| {
-        let type_def = parser.parse(&mut module, false, &mut errors);
-        let class_def = ClassDefinition::from_mod(&mut module, type_def, opts, &mut errors);
+        let type_def = parser.parse(module, false, &mut errors);
         let go = crate_ident();
-        class_def.to_tokens(&go)
+        let class_def = ClassDefinition::from_type(type_def, opts, go.clone(), &mut errors);
+        class_def.to_tokens()
     }).unwrap_or_default();
     if errors.is_empty() {
         tokens.into()
