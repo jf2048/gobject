@@ -77,10 +77,8 @@ impl TypeDefinitionParser {
         if let Some(struct_) = struct_ {
             def.generics = Some(struct_.generics.clone());
             def.name = Some(struct_.ident.clone());
-            let Properties {
-                properties,
-                ..
-            } = Properties::from_derive_input(&struct_.clone().into(), Some(base), errors);
+            let Properties { properties, .. } =
+                Properties::from_derive_input(&struct_.clone().into(), Some(base), errors);
             def.properties.extend(properties);
         }
         if let Some(impl_) = impl_ {

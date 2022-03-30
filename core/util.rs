@@ -36,7 +36,7 @@ impl Parse for AttributeArgs {
 
 pub(crate) fn parse_list<T>(input: TokenStream, errors: &mut Vec<darling::Error>) -> T
 where
-    T: darling::FromMeta + Default
+    T: darling::FromMeta + Default,
 {
     let args = parse::<AttributeArgs>(input, errors).unwrap_or_default().0;
     match T::from_list(&args) {
@@ -52,7 +52,7 @@ where
 pub(crate) fn push_error<T: std::fmt::Display>(
     errors: &mut Vec<darling::Error>,
     span: proc_macro2::Span,
-    message: T
+    message: T,
 ) {
     errors.push(syn::Error::new(span, message).into());
 }
@@ -61,7 +61,7 @@ pub(crate) fn push_error<T: std::fmt::Display>(
 pub(crate) fn push_error_spanned<T: quote::ToTokens, U: std::fmt::Display>(
     errors: &mut Vec<darling::Error>,
     tokens: T,
-    message: U
+    message: U,
 ) {
     errors.push(syn::Error::new_spanned(tokens, message).into());
 }

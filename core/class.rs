@@ -1,4 +1,4 @@
-use crate::{util, TypeDefinition, TypeDefinitionParser, Properties, TypeBase};
+use crate::{util, Properties, TypeBase, TypeDefinition, TypeDefinitionParser};
 use darling::{
     util::{Flag, PathList, SpannedValue},
     FromMeta,
@@ -516,7 +516,9 @@ pub fn derived_class_properties(
     let ty = quote! { #name #type_generics };
     let properties_path = quote! { #ty::derived_properties };
     let wrapper_ty = quote! { <#ty as #glib::subclass::types::ObjectSubclass>::Type };
-    let trait_name = final_type.is_none().then(|| format_ident!("{}PropertiesExt", input.ident));
+    let trait_name = final_type
+        .is_none()
+        .then(|| format_ident!("{}PropertiesExt", input.ident));
 
     let mut items = Vec::new();
     for (index, prop) in properties.iter().enumerate() {
@@ -528,11 +530,8 @@ pub fn derived_class_properties(
     let public_methods = if let Some(trait_name) = trait_name {
         let type_ident = format_ident!("____Object");
         let mut generics = generics.clone();
-        let param = util::parse(
-            quote! { #type_ident: #glib::IsA<#wrapper_ty> },
-            &mut vec![],
-        )
-        .unwrap();
+        let param =
+            util::parse(quote! { #type_ident: #glib::IsA<#wrapper_ty> }, &mut vec![]).unwrap();
         generics.params.push(param);
         let (impl_generics, _, where_clause) = generics.split_for_impl();
 

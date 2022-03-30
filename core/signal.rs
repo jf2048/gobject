@@ -3,7 +3,7 @@ use darling::{
     util::{Flag, IdentString},
     FromMeta,
 };
-use heck::{ToKebabCase, ToSnakeCase, ToShoutySnakeCase};
+use heck::{ToKebabCase, ToShoutySnakeCase, ToSnakeCase};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, quote_spanned};
 use std::collections::HashSet;
@@ -64,15 +64,15 @@ struct SignalAttrs {
 impl SignalAttrs {
     fn flags(&self) -> SignalFlags {
         let mut flags = SignalFlags::empty();
-        flags.set(SignalFlags::RUN_FIRST,    self.run_first.is_some());
-        flags.set(SignalFlags::RUN_LAST,     self.run_last.is_some());
-        flags.set(SignalFlags::RUN_CLEANUP,  self.run_cleanup.is_some());
-        flags.set(SignalFlags::NO_RECURSE,   self.no_recurse.is_some());
-        flags.set(SignalFlags::DETAILED,     self.detailed.is_some());
-        flags.set(SignalFlags::ACTION,       self.action.is_some());
-        flags.set(SignalFlags::NO_HOOKS,     self.no_hooks.is_some());
+        flags.set(SignalFlags::RUN_FIRST, self.run_first.is_some());
+        flags.set(SignalFlags::RUN_LAST, self.run_last.is_some());
+        flags.set(SignalFlags::RUN_CLEANUP, self.run_cleanup.is_some());
+        flags.set(SignalFlags::NO_RECURSE, self.no_recurse.is_some());
+        flags.set(SignalFlags::DETAILED, self.detailed.is_some());
+        flags.set(SignalFlags::ACTION, self.action.is_some());
+        flags.set(SignalFlags::NO_HOOKS, self.no_hooks.is_some());
         flags.set(SignalFlags::MUST_COLLECT, self.must_collect.is_some());
-        flags.set(SignalFlags::DEPRECATED,   self.deprecated.is_some());
+        flags.set(SignalFlags::DEPRECATED, self.deprecated.is_some());
         flags
     }
 }
@@ -108,11 +108,7 @@ impl Signal {
                     signal_attr.replace(method.attrs.remove(signal_index));
                 }
                 if let Some(next) = method.attrs.first() {
-                    util::push_error_spanned(
-                        errors,
-                        next,
-                        "Unknown attribute on signal",
-                    );
+                    util::push_error_spanned(errors, next, "Unknown attribute on signal");
                 }
             }
             if let Some(attr) = signal_attr {
@@ -121,14 +117,7 @@ impl Signal {
                     _ => unreachable!(),
                 };
                 if attr.path.is_ident("signal") {
-                    Self::from_handler(
-                        method,
-                        attr,
-                        base,
-                        &mut signal_names,
-                        &mut signals,
-                        errors,
-                    );
+                    Self::from_handler(method, attr, base, &mut signal_names, &mut signals, errors);
                 } else if attr.path.is_ident("accumulator") {
                     let method = method.clone();
                     Self::from_accumulator(method, attr, &mut signals, errors);
@@ -164,7 +153,7 @@ impl Signal {
                     util::push_error_spanned(
                         errors,
                         acc,
-                        "Accumulator not allowed on overriden signal"
+                        "Accumulator not allowed on overriden signal",
                     );
                 }
             }
@@ -172,7 +161,7 @@ impl Signal {
                 util::push_error_spanned(
                     errors,
                     &signal.ident,
-                    "`override` not allowed on interface signal"
+                    "`override` not allowed on interface signal",
                 );
                 signal.override_ = false;
             }
@@ -191,22 +180,26 @@ impl Signal {
     ) {
         let ident = &method.sig.ident;
         match base {
-            TypeBase::Class => if method.sig.receiver().is_none() {
-                if let Some(first) = method.sig.inputs.first() {
+            TypeBase::Class => {
+                if method.sig.receiver().is_none() {
+                    if let Some(first) = method.sig.inputs.first() {
+                        util::push_error_spanned(
+                            errors,
+                            first,
+                            "First argument to class signal handler must be `&self`",
+                        );
+                    }
+                }
+            }
+            TypeBase::Interface => {
+                if let Some(recv) = method.sig.receiver() {
                     util::push_error_spanned(
                         errors,
-                        first,
-                        "First argument to class signal handler must be `&self`",
+                        recv,
+                        "First argument to interface signal handler must be the wrapper type",
                     );
                 }
-            },
-            TypeBase::Interface => if let Some(recv) = method.sig.receiver() {
-                util::push_error_spanned(
-                    errors,
-                    recv,
-                    "First argument to interface signal handler must be the wrapper type",
-                );
-            },
+            }
         }
         let signal_attrs = util::parse_list::<SignalAttrs>(attr.tokens.into(), errors);
         let name = signal_attrs
@@ -261,11 +254,7 @@ impl Signal {
         errors: &mut Vec<darling::Error>,
     ) {
         if !attr.tokens.is_empty() {
-            util::push_error_spanned(
-                errors,
-                &attr.tokens,
-                "Unknown tokens on accumulator",
-            );
+            util::push_error_spanned(errors, &attr.tokens, "Unknown tokens on accumulator");
         }
         if !(2..=3).contains(&method.sig.inputs.len()) {
             util::push_error_spanned(
@@ -275,17 +264,13 @@ impl Signal {
             );
         }
         if let Some(recv) = method.sig.receiver() {
-            util::push_error_spanned(
-                errors,
-                recv,
-                "Receiver argument not allowed on accumulator"
-            );
+            util::push_error_spanned(errors, recv, "Receiver argument not allowed on accumulator");
         }
         if matches!(method.sig.output, syn::ReturnType::Default) {
             util::push_error_spanned(
                 errors,
                 &method.sig.output,
-                "Accumulator must have return type"
+                "Accumulator must have return type",
             );
         }
         let ident = &method.sig.ident;
@@ -389,7 +374,11 @@ impl Signal {
     fn signal_id_cell_ident(&self) -> syn::Ident {
         format_ident!("{}_SIGNAL", self.name.to_shouty_snake_case())
     }
-    pub(crate) fn signal_id_cell_definition(&self, wrapper_ty: &TokenStream, glib: &TokenStream) -> TokenStream {
+    pub(crate) fn signal_id_cell_definition(
+        &self,
+        wrapper_ty: &TokenStream,
+        glib: &TokenStream,
+    ) -> TokenStream {
         let name = &self.name;
         let ident = self.signal_id_cell_ident();
         quote! {
@@ -527,8 +516,10 @@ impl Signal {
             syn::Pat::Ident(syn::PatIdent { ident, .. }) => ident.clone(),
             _ => unimplemented!(),
         });
-        let arg_values = arg_names.map(|arg| quote! {
-            #glib::ToValue::to_value(&#arg)
+        let arg_values = arg_names.map(|arg| {
+            quote! {
+                #glib::ToValue::to_value(&#arg)
+            }
         });
         let return_type = match output {
             syn::ReturnType::Type(_, ty) => quote! {
@@ -579,10 +570,7 @@ impl Signal {
             fn #method_name(&self, #details_arg #(#arg_types),*) #output
         })
     }
-    pub(crate) fn emit_definition(
-        &self,
-        glib: &TokenStream,
-    ) -> Option<TokenStream> {
+    pub(crate) fn emit_definition(&self, glib: &TokenStream) -> Option<TokenStream> {
         let proto = self.emit_prototype(glib)?;
         let handler = self.handler.as_ref().unwrap();
         let arg_types = self.arg_types();
@@ -647,10 +635,7 @@ impl Signal {
             ) -> #glib::SignalHandlerId
         })
     }
-    pub(crate) fn connect_definition(
-        &self,
-        glib: &TokenStream,
-    ) -> Option<TokenStream> {
+    pub(crate) fn connect_definition(&self, glib: &TokenStream) -> Option<TokenStream> {
         let proto = self.connect_prototype(glib)?;
         let handler = self.handler.as_ref().unwrap();
         let arg_names = self.arg_names().skip(1);
