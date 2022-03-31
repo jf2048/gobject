@@ -1,5 +1,5 @@
 use crate::{ConstructCell, OnceBool, OnceBox, OnceCell, SyncOnceCell};
-use glib::{ToValue, value::ValueType, Value};
+use glib::{value::ValueType, ToValue, Value};
 use std::{ops::DerefMut, sync::atomic::Ordering};
 
 pub trait ParamStore {

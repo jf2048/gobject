@@ -1,12 +1,8 @@
 use crate::{util, TypeBase};
-use darling::{
-    util::{Flag, IdentString},
-    FromMeta,
-};
-use heck::{ToKebabCase, ToShoutySnakeCase, ToSnakeCase};
+use darling::{util::Flag, FromMeta};
+use heck::{ToShoutySnakeCase, ToSnakeCase};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, quote_spanned};
-use std::collections::HashSet;
 use syn::spanned::Spanned;
 
 bitflags::bitflags! {
@@ -58,7 +54,7 @@ struct SignalAttrs {
     deprecated: Flag,
     override_: Flag,
     connect: Option<bool>,
-    name: Option<IdentString>,
+    name: Option<syn::LitStr>,
 }
 
 impl SignalAttrs {
@@ -75,6 +71,11 @@ impl SignalAttrs {
         flags.set(SignalFlags::DEPRECATED, self.deprecated.is_some());
         flags
     }
+}
+#[derive(Default, FromMeta)]
+#[darling(default)]
+struct AccumulatorAttrs {
+    signal: Option<syn::LitStr>,
 }
 
 #[derive(Debug)]
@@ -95,7 +96,6 @@ impl Signal {
         base: TypeBase,
         errors: &mut Vec<darling::Error>,
     ) -> Vec<Self> {
-        let mut signal_names = HashSet::new();
         let mut signals = Vec::<Signal>::new();
 
         let mut index = 0;
@@ -116,10 +116,13 @@ impl Signal {
                 };
                 if method.block.stmts.is_empty() {
                     method.attrs.push(syn::parse_quote! { #[allow(dead_code)] });
+                    method
+                        .attrs
+                        .push(syn::parse_quote! { #[allow(unused_variables)] });
                 }
                 let method = method.clone();
                 if attr.path.is_ident("signal") {
-                    Self::from_handler(method, attr, base, &mut signal_names, &mut signals, errors);
+                    Self::from_handler(method, attr, base, &mut signals, errors);
                 } else if attr.path.is_ident("accumulator") {
                     let method = method.clone();
                     Self::from_accumulator(method, attr, &mut signals, errors);
@@ -132,9 +135,7 @@ impl Signal {
 
         for signal in &mut signals {
             if let Some(sig) = &signal.sig {
-                if signal.accumulator.is_some()
-                    && matches!(sig.output, syn::ReturnType::Default)
-                {
+                if signal.accumulator.is_some() && matches!(sig.output, syn::ReturnType::Default) {
                     util::push_error_spanned(
                         errors,
                         sig,
@@ -146,7 +147,7 @@ impl Signal {
                 util::push_error_spanned(
                     errors,
                     acc,
-                    format!("No definition for signal `{}`", signal.ident),
+                    format!("No definition for signal `{}`", signal.name),
                 );
             }
             if let Some(acc) = &signal.accumulator {
@@ -175,7 +176,6 @@ impl Signal {
         method: syn::ImplItemMethod,
         attr: syn::Attribute,
         base: TypeBase,
-        signal_names: &mut HashSet<String>,
         signals: &mut Vec<Self>,
         errors: &mut Vec<darling::Error>,
     ) {
@@ -202,46 +202,32 @@ impl Signal {
                 }
             }
         }
-        let signal_attrs = util::parse_list::<SignalAttrs>(attr.tokens.into(), errors);
+        let signal_attrs = util::parse_paren_list::<SignalAttrs>(attr.tokens.into(), errors);
         let name = signal_attrs
             .name
-            .clone()
-            .map(|n| n.as_str().to_owned())
-            .unwrap_or_else(|| ident.to_string().to_kebab_case());
+            .as_ref()
+            .map(|n| n.value())
+            .unwrap_or_else(|| util::format_name(ident));
         if !util::is_valid_name(&name) {
-            let name = signal_attrs
-                .name
-                .as_ref()
-                .map(|n| n.as_ident())
-                .unwrap_or_else(|| ident);
             util::push_error_spanned(
                 errors,
-                name,
+                &name,
                 format!("Invalid signal name '{}'. Signal names must start with an ASCII letter and only contain ASCII letters, numbers, '-' or '_'", name)
             );
         }
-        if signal_names.contains(&name) {
-            util::push_error_spanned(
-                errors,
-                ident,
-                format!("Duplicate definition for signal `{}`", name),
-            );
-        }
-        let signal = if let Some(i) = signals.iter().position(|s| s.ident == *ident) {
+        let signal = if let Some(i) = signals.iter().position(|s| s.name == name) {
             &mut signals[i]
         } else {
-            signals.push(Signal::new(ident.clone()));
+            signals.push(Signal::new(ident.clone(), name.clone()));
             signals.last_mut().unwrap()
         };
         if signal.sig.is_some() {
             util::push_error_spanned(
                 errors,
                 &ident,
-                format!("Duplicate definition for signal `{}`", ident),
+                format!("Duplicate definition for signal `{}`", name),
             );
         }
-        signal_names.insert(name.clone());
-        signal.name = name;
         signal.flags = signal_attrs.flags();
         signal.connect = signal_attrs.connect.unwrap_or(true);
         signal.override_ = signal_attrs.override_.is_some();
@@ -255,9 +241,6 @@ impl Signal {
         signals: &mut Vec<Self>,
         errors: &mut Vec<darling::Error>,
     ) {
-        if !attr.tokens.is_empty() {
-            util::push_error_spanned(errors, &attr.tokens, "Unknown tokens on accumulator");
-        }
         if !(2..=3).contains(&method.sig.inputs.len()) {
             util::push_error_spanned(
                 errors,
@@ -276,10 +259,16 @@ impl Signal {
             );
         }
         let ident = &method.sig.ident;
-        let signal = if let Some(i) = signals.iter().position(|s| s.ident == *ident) {
+        let acc_attrs = util::parse_paren_list::<AccumulatorAttrs>(attr.tokens.into(), errors);
+        let name = acc_attrs
+            .signal
+            .as_ref()
+            .map(|n| n.value())
+            .unwrap_or_else(|| util::format_name(ident));
+        let signal = if let Some(i) = signals.iter().position(|s| s.name == name) {
             &mut signals[i]
         } else {
-            signals.push(Signal::new(ident.clone()));
+            signals.push(Signal::new(ident.clone(), name.clone()));
             signals.last_mut().unwrap()
         };
         if signal.accumulator.is_some() {
@@ -288,16 +277,16 @@ impl Signal {
                 &ident,
                 format!(
                     "Duplicate definition for accumulator on signal definition `{}`",
-                    ident
+                    name
                 ),
             );
         }
         signal.accumulator = Some(method.sig);
     }
-    fn new(ident: syn::Ident) -> Self {
+    fn new(ident: syn::Ident, name: String) -> Self {
         Self {
             ident,
-            name: Default::default(),
+            name,
             flags: SignalFlags::empty(),
             connect: false,
             override_: false,
@@ -386,7 +375,7 @@ impl Signal {
         let ident = self.signal_id_cell_ident();
         quote! {
             #[doc(hidden)]
-            pub(super) static #ident: #glib::once_cell::sync::Lazy<#glib::subclass::SignalId> =
+            static #ident: #glib::once_cell::sync::Lazy<#glib::subclass::SignalId> =
                 #glib::once_cell::sync::Lazy::new(|| {
                     #glib::subclass::SignalId::lookup(
                         #name,
@@ -415,7 +404,7 @@ impl Signal {
             ..
         } = self;
 
-        let sig = sig.as_ref().unwrap();
+        let sig = sig.as_ref()?;
         let inputs = self.inputs();
         let input_static_types = inputs.skip(1).map(|input| {
             let ty = match &input {
@@ -432,39 +421,51 @@ impl Signal {
             let arg_names = self.arg_names();
             let args_unwrap = self.args_unwrap(wrapper_ty, glib);
             let method_name = &sig.ident;
+            let handler_name = format_ident!("{}_class_handler", method_name);
             quote! {
-                let builder = builder.class_handler(|_, args| {
+                #[inline]
+                fn #handler_name(
+                    _token: &#glib::subclass::SignalClassHandlerToken,
+                    args: &[#glib::Value]
+                ) -> ::std::option::Option<#glib::Value> {
                     #(#args_unwrap)*
                     let ret = #sub_ty::#method_name(#(#arg_names),*);
                     #glib::closure::ToClosureReturnValue::to_closure_return_value(&ret)
-                });
+                }
+                let builder = builder.class_handler(#handler_name);
             }
         });
         let output = match &sig.output {
             syn::ReturnType::Type(_, ty) => quote! { #ty },
             _ => quote! { () },
         };
-        let accumulator = accumulator.as_ref().map(|method| {
-            let ident = &method.ident;
-            let call_args = if method.inputs.len() == 2 {
-                quote! { &mut output, value }
+        let accumulator = accumulator.as_ref().map(|sig| {
+            let method_name = &sig.ident;
+            let acc_name = format_ident!("{}_accumulator", method_name);
+            let call_args = if sig.inputs.len() == 2 {
+                quote! { curr_accu, value }
             } else {
-                quote! { _hint, &mut output, value }
+                quote! { _hint, curr_accu, value }
             };
             quote! {
-                let builder = builder.accumulator(|_hint, accu, value| {
-                    #method
+                #[inline]
+                fn #acc_name(
+                    _hint: &#glib::subclass::SignalInvocationHint,
+                    accu: &mut #glib::Value,
+                    value: &#glib::Value
+                ) -> ::std::primitive::bool {
                     let curr_accu = accu.get().unwrap();
                     let value = value.get().unwrap();
-                    let (next, ret) = match #ident(#call_args) {
+                    let (next, ret) = match #sub_ty::#method_name(#call_args) {
                         ::std::ops::ControlFlow::Continue(next) => (next, true),
                         ::std::ops::ControlFlow::Break(next) => (next, false),
                     };
-                    if let ::std::option::Some(next) = next {
+                    if let ::std::option::Option::Some(next) = next {
                         *accu = #glib::ToValue::to_value(&next);
                     }
                     ret
-                });
+                }
+                let builder = builder.accumulator(#acc_name);
             }
         });
         let flags = (!flags.is_empty()).then(|| {
@@ -500,23 +501,29 @@ impl Signal {
         }
         let arg_names = self.arg_names();
         let args_unwrap = self.args_unwrap(wrapper_ty, glib);
-        let method_name = &self.sig.as_ref().unwrap().ident;
-        Some(quote! {
+        let method_name = &self.sig.as_ref()?.ident;
+        let override_name = format_ident!("{}_override_handler", method_name);
+        Some(quote! {{
+            #[inline]
+            fn #override_name(
+                _token: &#glib::subclass::SignalClassHandlerToken,
+                args: &[#glib::Value]
+            ) -> ::std::option::Option<#glib::Value> {
+                #(#args_unwrap)*
+                let ret = #sub_ty::#method_name(#(#arg_names),*);
+                #glib::closure::ToClosureReturnValue::to_closure_return_value(&ret)
+            }
             #glib::subclass::object::ObjectClassSubclassExt::override_signal_class_handler(
                 #class_ident,
-                |_token, values| {
-                    #(#args_unwrap)*
-                    let ret = #sub_ty::#method_name(#(#arg_names),*);
-                    #glib::closure::ToClosureReturnValue::to_closure_return_value(&ret)
-                }
+                #override_name,
             );
-        })
+        }})
     }
     pub(crate) fn chain_definition(&self, glib: &TokenStream) -> Option<TokenStream> {
         if !self.override_ {
             return None;
         }
-        let sig = self.sig.as_ref().unwrap();
+        let sig = self.sig.as_ref()?;
         let output = &sig.output;
         let method_name = format_ident!("parent_{}", self.name.to_snake_case());
         let arg_types = self.arg_types();
@@ -566,7 +573,7 @@ impl Signal {
         if self.override_ {
             return None;
         }
-        let sig = self.sig.as_ref().unwrap();
+        let sig = self.sig.as_ref()?;
         let output = &sig.output;
         let method_name = format_ident!("emit_{}", self.name.to_snake_case());
         let arg_types = self.arg_types();
@@ -578,9 +585,9 @@ impl Signal {
             fn #method_name(&self, #details_arg #(#arg_types),*) #output
         })
     }
-    pub(crate) fn emit_definition(&self, mod_name: &syn::Ident, glib: &TokenStream) -> Option<TokenStream> {
+    pub(crate) fn emit_definition(&self, glib: &TokenStream) -> Option<TokenStream> {
         let proto = self.emit_prototype(glib)?;
-        let sig = self.sig.as_ref().unwrap();
+        let sig = self.sig.as_ref()?;
         let arg_types = self.arg_types();
         let arg_names = arg_types.clone().map(|arg| match &*arg.pat {
             syn::Pat::Ident(syn::PatIdent { ident, .. }) => ident.clone(),
@@ -592,7 +599,7 @@ impl Signal {
             quote! {
                 <Self as #glib::object::ObjectExt>::emit(
                     self,
-                    *self::#mod_name::#signal_id_cell,
+                    *#signal_id_cell,
                     &[#(&#arg_names),*]
                 )
             }
@@ -602,7 +609,7 @@ impl Signal {
                 if let Some(signal_details) = signal_details {
                     <Self as #glib::object::ObjectExt>::emit_with_details(
                         self,
-                        *self::#mod_name::#signal_id_cell,
+                        *#signal_id_cell,
                         signal_details,
                         &[#(&#arg_names),*]
                     )
@@ -625,7 +632,7 @@ impl Signal {
             return None;
         }
         let method_name = format_ident!("connect_{}", self.name.to_snake_case());
-        let sig = self.sig.as_ref().unwrap();
+        let sig = self.sig.as_ref()?;
         let output = &sig.output;
         let input_types = self.inputs().skip(1).map(|arg| match arg {
             syn::FnArg::Typed(t) => &t.ty,
@@ -643,9 +650,9 @@ impl Signal {
             ) -> #glib::SignalHandlerId
         })
     }
-    pub(crate) fn connect_definition(&self, mod_name: &syn::Ident, glib: &TokenStream) -> Option<TokenStream> {
+    pub(crate) fn connect_definition(&self, glib: &TokenStream) -> Option<TokenStream> {
         let proto = self.connect_prototype(glib)?;
-        let sig = self.sig.as_ref().unwrap();
+        let sig = self.sig.as_ref()?;
         let arg_names = self.arg_names().skip(1);
         let self_ty = quote! { Self };
         let args_unwrap = self.args_unwrap(&self_ty, glib).skip(1);
@@ -668,7 +675,7 @@ impl Signal {
                 #![inline]
                 <Self as #glib::object::ObjectExt>::connect_local_id(
                     self,
-                    *self::#mod_name::#signal_id_cell,
+                    *#signal_id_cell,
                     #details,
                     false,
                     move |args| {

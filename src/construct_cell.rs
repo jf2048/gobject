@@ -1,4 +1,3 @@
-
 #[derive(Debug)]
 #[repr(transparent)]
 pub struct ConstructCell<T>(std::cell::RefCell<Option<T>>);
@@ -26,4 +25,3 @@ impl<T> Default for ConstructCell<T> {
         Self::new_empty()
     }
 }
-

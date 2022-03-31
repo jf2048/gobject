@@ -3,7 +3,7 @@ use darling::{
     util::{Flag, SpannedValue},
     FromDeriveInput, FromField, FromMeta,
 };
-use heck::{ToKebabCase, ToSnakeCase};
+use heck::ToSnakeCase;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use std::collections::{HashMap, HashSet};
@@ -71,7 +71,37 @@ struct PropertyAttrs {
     override_class: Option<syn::Path>,
     override_iface: Option<syn::Path>,
     builder_defaults: Option<syn::ExprArray>,
-    builder: SpannedValue<HashMap<syn::Ident, syn::Lit>>,
+    builder: SpannedValue<HashMap<syn::Ident, InnerExpr>>,
+}
+
+#[derive(Debug)]
+struct InnerExpr(syn::Expr);
+
+impl FromMeta for InnerExpr {
+    fn from_list(items: &[syn::NestedMeta]) -> darling::Result<Self> {
+        if items.len() != 1 {
+            return Err(darling::Error::unsupported_format(
+                "nested meta with length other than 1",
+            ));
+        }
+        let meta = items.first().unwrap();
+        let lit = match meta {
+            syn::NestedMeta::Lit(syn::Lit::Str(lit)) => lit,
+            syn::NestedMeta::Lit(lit) => {
+                return Err(darling::Error::unexpected_lit_type(lit));
+            }
+            syn::NestedMeta::Meta(_) => {
+                return Err(darling::Error::unsupported_format("meta"));
+            }
+        };
+        Ok(Self(syn::parse_str(&lit.value())?))
+    }
+    fn from_value(value: &syn::Lit) -> darling::Result<Self> {
+        Ok(Self(syn::Expr::Lit(syn::ExprLit {
+            attrs: Vec::new(),
+            lit: value.clone(),
+        })))
+    }
 }
 
 impl PropertyAttrs {
@@ -155,7 +185,7 @@ impl PropertyAttrs {
         flags.set(PropertyFlags::DEPRECATED, self.deprecated.unwrap_or(false));
         flags
     }
-    fn normalize(&mut self, index: usize, field: &syn::Field, pod: bool) {
+    fn normalize(&mut self, field: &syn::Field, pod: bool) {
         if pod {
             if self.get.is_none() {
                 self.get = SpannedValue::new(Some(PropertyPermission::Allow), self.ident.span());
@@ -181,13 +211,12 @@ impl PropertyAttrs {
                 self.skip = SpannedValue::new(Flag::present(), Span::call_site());
             }
         }
-        let name = self.name(index).to_string();
         let computed = self.computed.is_some();
         if let Some(get) = self.get.as_mut() {
-            get.normalize(computed, || format!("Self::Type::{}", name));
+            get.normalize(computed);
         }
         if let Some(set) = self.set.as_mut() {
-            set.normalize(computed, || format!("Self::Type::set_{}", name));
+            set.normalize(computed);
         }
     }
     fn validate(
@@ -370,6 +399,7 @@ pub enum PropertyPermission {
     Deny,
     Allow,
     AllowNoMethod,
+    AllowCustomDefault,
     AllowCustom(syn::Path),
 }
 
@@ -390,19 +420,17 @@ impl FromMeta for PropertyPermission {
         if value == "()" {
             return Ok(Self::AllowNoMethod);
         }
+        if value == "_" {
+            return Ok(Self::AllowCustomDefault);
+        }
         Ok(Self::AllowCustom(syn::parse_str(&value)?))
     }
 }
 
 impl PropertyPermission {
-    fn normalize<F: FnOnce() -> String>(&mut self, computed: bool, make_name: F) {
+    fn normalize(&mut self, computed: bool) {
         if computed && matches!(self, Self::Allow) {
-            *self = Self::AllowCustom(syn::parse_str("_").unwrap());
-        }
-        if let Self::AllowCustom(path) = self {
-            if path.is_ident("_") {
-                *path = syn::parse_str(&make_name()).unwrap();
-            }
+            *self = Self::AllowCustomDefault;
         }
     }
     fn is_allowed(&self) -> bool {
@@ -484,6 +512,7 @@ impl PropertyType {
             #glib::#pspec_type::builder(
                 #name,
                 <<#ty as #glib::value::ValueType>::Type as #glib::StaticType>::static_type(),
+                #(#extra),*
             )
         }
     }
@@ -517,7 +546,7 @@ impl Spanned for PropertyName {
 impl std::fmt::Display for PropertyName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PropertyName::Field(name) => name.to_string().to_kebab_case().fmt(f),
+            PropertyName::Field(name) => util::format_name(name).fmt(f),
             PropertyName::Custom(name) => name.value().fmt(f),
         }
     }
@@ -648,7 +677,7 @@ pub struct Property {
     pub nick: Option<String>,
     pub blurb: Option<String>,
     pub buildable_defaults: Vec<syn::Expr>,
-    pub buildable_props: Vec<(syn::Ident, syn::Lit)>,
+    pub buildable_props: Vec<(syn::Ident, syn::Expr)>,
     pub flags: PropertyFlags,
 }
 
@@ -661,7 +690,7 @@ impl Property {
         base: TypeBase,
         errors: &mut Vec<darling::Error>,
     ) -> Option<Self> {
-        attrs.normalize(index, field, pod);
+        attrs.normalize(field, pod);
         attrs.validate(field, pod, base, errors);
         if attrs.skip.is_some() {
             return None;
@@ -685,7 +714,10 @@ impl Property {
                 .builder_defaults
                 .map(|d| d.elems.into_iter().collect())
                 .unwrap_or_default(),
-            buildable_props: std::mem::take(&mut *attrs.builder).into_iter().collect(),
+            buildable_props: std::mem::take(&mut *attrs.builder)
+                .into_iter()
+                .map(|(i, e)| (i, e.0))
+                .collect(),
             flags,
         })
     }
@@ -717,11 +749,7 @@ impl Property {
     }
     fn inner_type(&self, go: &syn::Ident) -> TokenStream {
         let ty = &self.field.ty;
-        if self.is_abstract() || matches!(self.storage, PropertyStorage::Computed) {
-            quote! { #ty }
-        } else {
-            quote! { <#ty as #go::ParamStore>::Type }
-        }
+        quote! { <#ty as #go::ParamStore>::Type }
     }
     fn field_storage(&self, object_type: Option<&TokenStream>, go: &syn::Ident) -> TokenStream {
         let recv = if let Some(object_type) = object_type {
@@ -750,20 +778,57 @@ impl Property {
         )
     }
     #[inline]
+    fn pspec_cmp(&self, index: usize) -> TokenStream {
+        if self.override_.is_some() {
+            let name = self.name.to_string();
+            quote! { pspec.name() == #name }
+        } else {
+            quote! { pspec == &properties[#index] }
+        }
+    }
+    #[inline]
+    fn custom_call(&self, set_ty: Option<&TokenStream>) -> Option<TokenStream> {
+        let perm = match set_ty.is_some() {
+            true => &self.set,
+            false => &self.get,
+        };
+        let set_ty = set_ty.map(|s| quote! { value.get::<#s>().unwrap() });
+        let args = if matches!(self.storage, PropertyStorage::InterfaceAbstract) {
+            quote! { obj, #set_ty }
+        } else {
+            quote! { self, obj, #set_ty }
+        };
+        match perm {
+            PropertyPermission::AllowCustomDefault => {
+                let name = self.name.to_string().to_snake_case();
+                let method = match set_ty.is_some() {
+                    true => format_ident!("set_{}", name),
+                    false => format_ident!("{}", name),
+                };
+                Some(quote! { Self::#method(#args) })
+            }
+            PropertyPermission::AllowCustom(path) => Some(quote! {
+                #path(#args)
+            }),
+            _ => None,
+        }
+    }
+    #[inline]
     fn getter_name(&self) -> syn::Ident {
         format_ident!("{}", self.name.to_string().to_snake_case())
     }
     pub(crate) fn get_impl(&self, index: usize, go: &syn::Ident) -> Option<TokenStream> {
         (self.get.is_allowed() && !self.is_abstract()).then(|| {
             let glib = quote! { #go::glib };
-            let body = if let PropertyPermission::AllowCustom(method) = &self.get {
-                quote! { #glib::ToValue::to_value(&#method(&obj)) }
+            let cmp = self.pspec_cmp(index);
+            let body = if let Some(call) = self.custom_call(None) {
+                quote! { #glib::ToValue::to_value(&#call) }
             } else {
                 let field = self.field_storage(None, go);
                 quote! { #go::ParamStoreReadValue::get_value(&#field) }
             };
             quote_spanned! { self.span() =>
-                if pspec == &properties[#index] {
+                if #cmp {
                     return #body;
                 }
             }
@@ -856,11 +921,10 @@ impl Property {
     pub(crate) fn set_impl(&self, index: usize, go: &syn::Ident) -> Option<TokenStream> {
         (self.set.is_allowed() && !self.is_abstract()).then(|| {
             let glib = quote! { #go::glib };
-            let body = if let PropertyPermission::AllowCustom(method) = &self.set {
-                let ty = self.inner_type(go);
-                quote! {
-                    #method(&obj, value.get::<#ty>().unwrap());
-                }
+            let cmp = self.pspec_cmp(index);
+            let ty = self.inner_type(go);
+            let body = if let Some(call) = self.custom_call(Some(&ty)) {
+                quote! { #call; }
             } else if self.is_set_inline() {
                 let body = self.inline_set_impl(
                     None,
@@ -884,7 +948,7 @@ impl Property {
                 }
             };
             quote_spanned! { self.span() =>
-                if pspec == &properties[#index] {
+                if #cmp {
                     #body
                     return;
                 }
@@ -895,7 +959,9 @@ impl Property {
         let construct_only = self.flags.contains(PropertyFlags::CONSTRUCT_ONLY);
         let allowed = match &self.set {
             PropertyPermission::Allow => true,
-            PropertyPermission::AllowCustom(_) => !self.is_set_inline(),
+            PropertyPermission::AllowCustom(_) | PropertyPermission::AllowCustomDefault => {
+                !self.is_set_inline()
+            }
             _ => false,
         };
         (allowed && !construct_only && !self.is_inherited()).then(|| {

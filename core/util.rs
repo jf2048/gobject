@@ -1,3 +1,4 @@
+use heck::ToKebabCase;
 use proc_macro2::TokenStream;
 use syn::parse::{Parse, ParseStream, Parser};
 
@@ -48,6 +49,39 @@ where
     }
 }
 
+#[derive(Default)]
+struct ParenAttributeArgs(syn::AttributeArgs);
+
+impl Parse for ParenAttributeArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let args = if input.peek(syn::token::Paren) {
+            let content;
+            syn::parenthesized!(content in input);
+            content.parse::<AttributeArgs>()?.0
+        } else {
+            Default::default()
+        };
+        input.parse::<syn::parse::Nothing>()?;
+        Ok(Self(args))
+    }
+}
+
+pub(crate) fn parse_paren_list<T>(input: TokenStream, errors: &mut Vec<darling::Error>) -> T
+where
+    T: darling::FromMeta + Default,
+{
+    let args = parse::<ParenAttributeArgs>(input, errors)
+        .unwrap_or_default()
+        .0;
+    match T::from_list(&args) {
+        Ok(args) => args,
+        Err(e) => {
+            errors.push(e);
+            Default::default()
+        }
+    }
+}
+
 #[inline]
 pub(crate) fn push_error<T: std::fmt::Display>(
     errors: &mut Vec<darling::Error>,
@@ -64,6 +98,15 @@ pub(crate) fn push_error_spanned<T: quote::ToTokens, U: std::fmt::Display>(
     message: U,
 ) {
     errors.push(syn::Error::new_spanned(tokens, message).into());
+}
+
+pub(crate) fn format_name(ident: &syn::Ident) -> String {
+    let ident = ident.to_string();
+    let mut s = ident.as_str();
+    while let Some(n) = s.strip_prefix('_') {
+        s = n;
+    }
+    s.to_kebab_case()
 }
 
 pub(crate) fn is_valid_name(name: &str) -> bool {

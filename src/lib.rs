@@ -9,6 +9,5 @@ mod store;
 pub use store::*;
 
 pub use glib::once_cell::race::{OnceBool, OnceBox};
-pub use glib::once_cell::unsync::OnceCell;
 pub use glib::once_cell::sync::OnceCell as SyncOnceCell;
-
+pub use glib::once_cell::unsync::OnceCell;

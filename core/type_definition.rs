@@ -1,5 +1,6 @@
 use crate::{
     property::{Properties, Property},
+    public_method::PublicMethod,
     signal::Signal,
     util,
     virtual_method::VirtualMethod,
@@ -38,6 +39,7 @@ impl TypeDefinitionParser {
             generics: None,
             properties: Vec::new(),
             signals: Vec::new(),
+            public_methods: Vec::new(),
             virtual_methods: Vec::new(),
             custom_methods: HashMap::new(),
         };
@@ -55,8 +57,10 @@ impl TypeDefinitionParser {
         for item in items {
             match item {
                 syn::Item::Struct(s) => {
-                    if find_attr(&mut s.attrs, "properties", struct_.is_some(), errors).is_some() {
-                        struct_ = Some(s);
+                    if let Some(a) =
+                        find_attr(&mut s.attrs, "properties", struct_.is_some(), errors)
+                    {
+                        struct_ = Some((s, a));
                     }
                 }
                 syn::Item::Impl(i) => {
@@ -74,12 +78,14 @@ impl TypeDefinitionParser {
                 _ => {}
             }
         }
-        if let Some(struct_) = struct_ {
+        if let Some((struct_, attr)) = struct_ {
             def.generics = Some(struct_.generics.clone());
             def.name = Some(struct_.ident.clone());
+            let mut input: syn::DeriveInput = struct_.clone().into();
+            input.attrs.insert(0, attr);
             let Properties {
                 properties, fields, ..
-            } = Properties::from_derive_input(&struct_.clone().into(), Some(base), errors);
+            } = Properties::from_derive_input(&input, Some(base), errors);
             struct_.fields = fields;
             def.properties.extend(properties);
         }
@@ -89,6 +95,8 @@ impl TypeDefinitionParser {
             }
             def.signals
                 .extend(Signal::many_from_items(&mut impl_.items, base, errors));
+            def.public_methods
+                .extend(PublicMethod::many_from_items(&mut impl_.items));
             def.virtual_methods
                 .extend(VirtualMethod::many_from_items(&mut impl_.items, errors));
 
@@ -111,6 +119,7 @@ pub struct TypeDefinition {
     pub generics: Option<syn::Generics>,
     pub properties: Vec<Property>,
     pub signals: Vec<Signal>,
+    pub public_methods: Vec<PublicMethod>,
     pub virtual_methods: Vec<VirtualMethod>,
     pub custom_methods: HashMap<String, syn::ImplItemMethod>,
 }
@@ -119,6 +128,12 @@ pub struct TypeDefinition {
 pub enum TypeMode {
     Subclass,
     Wrapper,
+}
+
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Copy, Clone)]
+pub enum TypeContext {
+    Internal,
+    External,
 }
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Copy, Clone)]
@@ -147,15 +162,19 @@ impl TypeDefinition {
         let go = self.crate_ident.as_ref()?;
         Some(quote! { #go::glib })
     }
-    pub fn type_(&self, from: TypeMode, to: TypeMode) -> Option<TokenStream> {
+    pub fn type_(&self, from: TypeMode, to: TypeMode, ctx: TypeContext) -> Option<TokenStream> {
         use TypeBase::*;
+        use TypeContext::*;
         use TypeMode::*;
 
         let name = self.name.as_ref()?;
         let glib = self.glib()?;
         let generics = self.generics.as_ref();
 
-        let recv = quote! { #name #generics };
+        let recv = match ctx {
+            Internal => quote! { Self },
+            External => quote! { #name #generics },
+        };
 
         match (from, to, self.base) {
             (Subclass, Subclass, _) | (Wrapper, Wrapper, _) => Some(recv),
@@ -163,13 +182,13 @@ impl TypeDefinition {
                 <#recv as #glib::subclass::types::ObjectSubclass>::Type
             }),
             (Subclass, Wrapper, Interface) => Some(quote! {
-                <#recv as #glib::object::ObjectType>::GlibClassType
+                super::#name #generics
             }),
             (Wrapper, Subclass, Class) => Some(quote! {
                 <#recv as #glib::object::ObjectSubclassIs>::Subclass
             }),
             (Wrapper, Subclass, Interface) => Some(quote! {
-                super::#name #generics
+                <#recv as #glib::object::ObjectType>::GlibClassType
             }),
         }
     }
@@ -196,9 +215,16 @@ impl TypeDefinition {
             return None;
         }
         let glib = self.glib()?;
-        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper)?;
-        let sub_ty = self.type_(TypeMode::Subclass, TypeMode::Subclass)?;
-        let defs = self.signals.iter().map(|s| s.definition(&ty, &sub_ty, &glib));
+        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
+        let sub_ty = self.type_(
+            TypeMode::Subclass,
+            TypeMode::Subclass,
+            TypeContext::External,
+        )?;
+        let defs = self
+            .signals
+            .iter()
+            .map(|s| s.definition(&ty, &sub_ty, &glib));
         Some(quote! {
             fn signals() -> &'static [#glib::subclass::Signal] {
                 static SIGNALS: #glib::once_cell::sync::Lazy<::std::vec::Vec<#glib::subclass::Signal>> =
@@ -214,9 +240,16 @@ impl TypeDefinition {
             return None;
         }
         let glib = self.glib()?;
-        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper)?;
-        let sub_ty = self.type_(TypeMode::Subclass, TypeMode::Subclass)?;
-        let defs = self.signals.iter().map(|s| s.definition(&ty, &sub_ty, &glib));
+        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
+        let sub_ty = self.type_(
+            TypeMode::Subclass,
+            TypeMode::Subclass,
+            TypeContext::External,
+        )?;
+        let defs = self
+            .signals
+            .iter()
+            .map(|s| s.definition(&ty, &sub_ty, &glib));
         Some(quote! {
             fn derived_signals() -> ::std::vec::Vec<#glib::subclass::Signal> {
                 vec![#(#defs),*]
@@ -250,6 +283,10 @@ impl TypeDefinition {
                 protos.push(util::make_stmt(proto));
             }
         }
+        for public_method in &self.public_methods {
+            let proto = public_method.prototype();
+            protos.push(util::make_stmt(proto));
+        }
         for virtual_method in &self.virtual_methods {
             let proto = virtual_method.prototype();
             protos.push(util::make_stmt(proto));
@@ -258,7 +295,7 @@ impl TypeDefinition {
     }
     pub(crate) fn method_path(&self, method: &str, from: TypeMode) -> Option<TokenStream> {
         let glib = self.glib()?;
-        let subclass_ty = self.type_(from, TypeMode::Subclass)?;
+        let subclass_ty = self.type_(from, TypeMode::Subclass, TypeContext::External)?;
         Some(if self.has_custom_method(method) {
             let method = format_ident!("derived_{}", method);
             quote! { #subclass_ty::#method }
@@ -269,7 +306,7 @@ impl TypeDefinition {
                     <#subclass_ty as #glib::subclass::object::ObjectImpl>::#method
                 },
                 TypeBase::Interface => quote! {
-                    <#subclass_ty as #glib::subclass::interface::ObjectInterface>::#method
+                    <#subclass_ty as #glib::subclass::prelude::ObjectInterface>::#method
                 },
             }
         })
@@ -279,8 +316,16 @@ impl TypeDefinition {
 
         let go = unwrap_or_return!(self.crate_ident.as_ref(), methods);
         let glib = unwrap_or_return!(self.glib(), methods);
-        let ty = unwrap_or_return!(self.type_(TypeMode::Wrapper, TypeMode::Wrapper), methods);
-        let properties_path = unwrap_or_return!(self.method_path("properties", TypeMode::Wrapper), methods);
+        let ty = unwrap_or_return!(
+            self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External),
+            methods
+        );
+        let sub_ty = unwrap_or_return!(
+            self.type_(TypeMode::Wrapper, TypeMode::Subclass, TypeContext::Internal),
+            methods
+        );
+        let properties_path =
+            unwrap_or_return!(self.method_path("properties", TypeMode::Subclass), methods);
 
         for (index, prop) in self.properties.iter().enumerate() {
             for method in prop.method_definitions(index, &ty, &properties_path, go) {
@@ -289,12 +334,16 @@ impl TypeDefinition {
         }
         for signal in &self.signals {
             let defs = [
-                signal.emit_definition(&self.module.ident, &glib),
-                signal.connect_definition(&self.module.ident, &glib),
+                signal.emit_definition(&glib),
+                signal.connect_definition(&glib),
             ];
             for method in defs.into_iter().filter_map(|d| d) {
                 methods.push(method);
             }
+        }
+        for public_method in &self.public_methods {
+            let method = public_method.definition(&sub_ty, &glib);
+            methods.push(method);
         }
         for virtual_method in &self.virtual_methods {
             let method = virtual_method.definition(&ty, self.base, &glib);
@@ -314,7 +363,7 @@ impl TypeDefinition {
             let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
             if let Some(trait_name) = trait_name {
                 let mut generics = generics.clone();
-                let param = parse_quote! { #type_ident: #glib::IsA<#name #type_generics> };
+                let param = parse_quote! { #type_ident: #glib::IsA<super::#name #type_generics> };
                 generics.params.push(param);
                 let (impl_generics, _, _) = generics.split_for_impl();
                 let protos = self.public_method_prototypes();
@@ -328,8 +377,8 @@ impl TypeDefinition {
                 })
             } else {
                 Some(quote! {
-                    impl #impl_generics #name #type_generics #where_clause {
-                        #(#items)*
+                    impl #impl_generics super::#name #type_generics #where_clause {
+                        #(pub #items)*
                     }
                 })
             }
@@ -340,14 +389,14 @@ impl TypeDefinition {
                     pub trait #trait_name: 'static {
                         #(#protos)*
                     }
-                    impl<#type_ident: #glib::IsA<#name>> #trait_name for #type_ident {
+                    impl<#type_ident: #glib::IsA<super::#name>> #trait_name for #type_ident {
                         #(#items)*
                     }
                 })
             } else {
                 Some(quote! {
-                    impl #name {
-                        #(#items)*
+                    impl super::#name {
+                        #(pub #items)*
                     }
                 })
             }
@@ -360,7 +409,7 @@ impl TypeDefinition {
         }
         let glib = self.glib()?;
         let name = self.name.as_ref()?;
-        let ty = self.type_(TypeMode::Wrapper, TypeMode::Wrapper)?;
+        let ty = self.type_(TypeMode::Wrapper, TypeMode::Wrapper, TypeContext::External)?;
         let ty = parse_quote! { #ty };
         Some(FromIterator::from_iter(self.virtual_methods.iter().map(
             |m| m.set_default_trampoline(name, &ty, class_ident, &glib),
@@ -368,13 +417,20 @@ impl TypeDefinition {
     }
     pub(crate) fn type_init_body(&self, class_ident: &syn::Ident) -> Option<TokenStream> {
         let glib = self.glib()?;
-        let wrapper_ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper)?;
-        let sub_ty = self.type_(TypeMode::Subclass, TypeMode::Subclass)?;
+        let wrapper_ty =
+            self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
+        let sub_ty = self.type_(
+            TypeMode::Subclass,
+            TypeMode::Subclass,
+            TypeContext::External,
+        )?;
         let set_vtable = self.default_vtable_assignments(&class_ident);
         let overrides = self
             .signals
             .iter()
-            .filter_map(|signal| signal.class_init_override(&wrapper_ty, &sub_ty, &class_ident, &glib))
+            .filter_map(|signal| {
+                signal.class_init_override(&wrapper_ty, &sub_ty, &class_ident, &glib)
+            })
             .collect::<Vec<_>>();
         if set_vtable.is_none() && overrides.is_empty() {
             return None;
@@ -395,7 +451,7 @@ impl TypeDefinition {
         }
         let glib = self.glib()?;
         let name = self.name.as_ref()?;
-        let ty = self.type_(TypeMode::Wrapper, TypeMode::Wrapper)?;
+        let ty = self.type_(TypeMode::Wrapper, TypeMode::Wrapper, TypeContext::External)?;
         let ty = parse_quote! { #ty };
         let trait_name = format_ident!("{}Impl", name);
         Some(FromIterator::from_iter(self.virtual_methods.iter().map(
@@ -410,7 +466,10 @@ impl TypeDefinition {
         self.subclassed_vtable_assignments(type_ident, class_ident)
     }
     pub(crate) fn type_struct_fields(&self) -> Vec<TokenStream> {
-        let ty = unwrap_or_return!(self.type_(TypeMode::Wrapper, TypeMode::Wrapper), Vec::new());
+        let ty = unwrap_or_return!(
+            self.type_(TypeMode::Wrapper, TypeMode::Wrapper, TypeContext::External),
+            Vec::new()
+        );
         let ty = parse_quote! { #ty };
         self.virtual_methods
             .iter()
@@ -418,13 +477,9 @@ impl TypeDefinition {
             .collect()
     }
     pub(crate) fn virtual_traits(&self, parent_trait: &TokenStream) -> Option<TokenStream> {
-        if self.virtual_methods.is_empty() {
-            return None;
-        }
-
         let glib = self.glib()?;
         let name = self.name.as_ref()?;
-        let ty = self.type_(TypeMode::Wrapper, TypeMode::Wrapper)?;
+        let ty = self.type_(TypeMode::Wrapper, TypeMode::Wrapper, TypeContext::External)?;
         let ty = parse_quote! { #ty };
         let trait_name = format_ident!("{}Impl", name);
         let ext_trait_name = format_ident!("{}ImplExt", name);
@@ -434,25 +489,30 @@ impl TypeDefinition {
             .virtual_methods
             .iter()
             .map(|m| m.default_definition(&ty, &ext_trait_name));
-        let parent_method_protos = self
-            .virtual_methods
-            .iter()
-            .map(|m| m.parent_prototype(None, &ty));
-        let parent_method_definitions = self
-            .virtual_methods
-            .iter()
-            .map(|m| m.parent_definition(&self.module.ident, name, &ty, self.base, &glib));
+        let ext_trait = (!self.virtual_methods.is_empty()).then(|| {
+            let parent_method_protos = self
+                .virtual_methods
+                .iter()
+                .map(|m| m.parent_prototype(None, &ty));
+            let parent_method_definitions = self
+                .virtual_methods
+                .iter()
+                .map(|m| m.parent_definition(&self.module.ident, name, &ty, self.base, &glib));
+            quote! {
+                pub(crate) trait #ext_trait_name: #glib::subclass::types::ObjectSubclass {
+                    #(#parent_method_protos)*
+                }
+                impl<#type_ident: #trait_name> #ext_trait_name for #type_ident {
+                    #(#parent_method_definitions)*
+                }
+            }
+        });
 
         Some(quote! {
             pub(crate) trait #trait_name: #parent_trait + 'static {
                 #(#virtual_methods_default)*
             }
-            pub(crate) trait #ext_trait_name: #glib::subclass::types::ObjectSubclass {
-                #(#parent_method_protos)*
-            }
-            impl<#type_ident: #trait_name> #ext_trait_name for #type_ident {
-                #(#parent_method_definitions)*
-            }
+            #ext_trait
         })
     }
     fn private_methods(&self) -> Vec<TokenStream> {
@@ -472,8 +532,10 @@ impl TypeDefinition {
 
         let name = unwrap_or_return!(self.name.as_ref(), items);
         let glib = unwrap_or_return!(self.glib(), items);
-        let wrapper_ty =
-            unwrap_or_return!(self.type_(TypeMode::Subclass, TypeMode::Wrapper), items);
+        let wrapper_ty = unwrap_or_return!(
+            self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External),
+            items
+        );
 
         for signal in &self.signals {
             items.push(signal.signal_id_cell_definition(&wrapper_ty, &glib));

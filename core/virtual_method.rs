@@ -1,7 +1,6 @@
 use crate::{util, TypeBase};
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
-use std::collections::HashSet;
 
 #[derive(Debug)]
 pub struct VirtualMethod {
@@ -15,64 +14,38 @@ impl VirtualMethod {
         items: &mut Vec<syn::ImplItem>,
         errors: &mut Vec<darling::Error>,
     ) -> Vec<Self> {
-        let mut virtual_method_names = HashSet::new();
         let mut virtual_methods = Vec::new();
 
-        let mut index = 0;
-        while index < items.len() {
-            let mut method_attr = None;
-            if let syn::ImplItem::Method(method) = &mut items[index] {
+        for item in items {
+            if let syn::ImplItem::Method(method) = item {
                 let method_index = method
                     .attrs
                     .iter()
                     .position(|attr| attr.path.is_ident("virtual"));
                 if let Some(method_index) = method_index {
-                    method_attr.replace(method.attrs.remove(method_index));
+                    let attr = method.attrs.remove(method_index);
+                    let virtual_method = Self::from_method(method, attr, errors);
+                    if let Some(virtual_method) = virtual_method {
+                        virtual_methods.push(virtual_method);
+                    }
                 }
             }
-            if let Some(attr) = method_attr {
-                let method = match &items[index] {
-                    syn::ImplItem::Method(method) => method.clone(),
-                    _ => unreachable!(),
-                };
-                let virtual_method =
-                    Self::from_method(method, attr, &mut virtual_method_names, errors);
-                if let Some(virtual_method) = virtual_method {
-                    virtual_methods.push(virtual_method);
-                }
-            }
-            index += 1;
         }
 
         virtual_methods
     }
     #[inline]
     fn from_method(
-        method: syn::ImplItemMethod,
+        method: &syn::ImplItemMethod,
         attr: syn::Attribute,
-        virtual_method_names: &mut HashSet<String>,
         errors: &mut Vec<darling::Error>,
     ) -> Option<Self> {
         if !attr.tokens.is_empty() {
-            util::push_error_spanned(errors, &attr.tokens, "Unknown tokens on accumulator");
+            util::push_error_spanned(errors, &attr.tokens, "Unknown tokens on virtual method");
         }
         let syn::ImplItemMethod {
-            attrs,
-            vis,
-            sig,
-            ..
+            attrs, vis, sig, ..
         } = method;
-        {
-            let ident = &sig.ident;
-            if virtual_method_names.contains(&ident.to_string()) {
-                util::push_error_spanned(
-                    errors,
-                    ident,
-                    format!("Duplicate definition for method `{}`", ident),
-                );
-                return None;
-            }
-        }
         if sig
             .receiver()
             .map(|r| match r {
@@ -94,7 +67,11 @@ impl VirtualMethod {
             }
             return None;
         }
-        Some(Self { attrs, vis, sig })
+        Some(Self {
+            attrs: attrs.clone(),
+            vis: vis.clone(),
+            sig: sig.clone(),
+        })
     }
     fn external_sig(&self) -> syn::Signature {
         // TODO - impl IsA args?
@@ -115,11 +92,7 @@ impl VirtualMethod {
         sig
     }
     pub(crate) fn prototype(&self) -> TokenStream {
-        let Self {
-            attrs,
-            vis,
-            ..
-        } = self;
+        let Self { attrs, vis, .. } = self;
         let sig = self.external_sig();
         quote! {
             #(#attrs)* #vis #sig
@@ -127,7 +100,7 @@ impl VirtualMethod {
     }
     pub(crate) fn definition(
         &self,
-        ty: &TokenStream,
+        wrapper_ty: &TokenStream,
         base: TypeBase,
         glib: &TokenStream,
     ) -> TokenStream {
@@ -140,12 +113,12 @@ impl VirtualMethod {
                 #glib::ObjectExt::class(____obj)
             },
             TypeBase::Interface => quote! {
-                #glib::ObjectExt::interface::<#ty>(____obj).unwrap()
+                #glib::ObjectExt::interface::<#wrapper_ty>(____obj).unwrap()
             },
         };
         quote_spanned! { Span::mixed_site() =>
             #proto {
-                let ____obj = #glib::Cast::upcast_ref::<#ty>(self);
+                let ____obj = #glib::Cast::upcast_ref::<#wrapper_ty>(self);
                 let ____vtable = #get_vtable;
                 let ____vtable = ::std::convert::AsRef::as_ref(____vtable);
                 (____vtable.#ident)(____obj, #(#args),*)
@@ -174,11 +147,7 @@ impl VirtualMethod {
         sig
     }
     pub(crate) fn default_definition(&self, ty: &syn::Type, ext_trait: &syn::Ident) -> TokenStream {
-        let Self {
-            attrs,
-            vis,
-            ..
-        } = self;
+        let Self { attrs, vis, .. } = self;
         let this_ident = syn::Ident::new("____this", Span::mixed_site());
         let mut sig = self.parent_sig(this_ident.clone(), ty);
         let parent_ident = std::mem::replace(&mut sig.ident, self.sig.ident.clone());
@@ -195,11 +164,7 @@ impl VirtualMethod {
         ident: Option<syn::Ident>,
         ty: &syn::Type,
     ) -> TokenStream {
-        let Self {
-            attrs,
-            vis,
-            ..
-        } = self;
+        let Self { attrs, vis, .. } = self;
         let this_ident = ident.unwrap_or_else(|| syn::Ident::new("____this", Span::mixed_site()));
         let sig = self.parent_sig(this_ident, ty);
         quote! {

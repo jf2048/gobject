@@ -158,6 +158,7 @@ impl ClassDefinition {
                     }
                 }
             });
+        let trait_name = self.ext_trait();
         self.inner
             .extra_private_items()
             .into_iter()
@@ -166,6 +167,7 @@ impl ClassDefinition {
                     self.object_subclass_impl(),
                     self.object_impl_impl(),
                     self.class_struct_definition(),
+                    self.inner.public_methods(trait_name.as_ref()),
                     derived_methods,
                 ]
                 .into_iter()
@@ -190,16 +192,12 @@ impl ClassDefinition {
         }
         let mut inherits = Vec::new();
         if !self.extends.is_empty() {
-            inherits.push(quote! { @extends });
-            for extend in &*self.extends {
-                inherits.push(extend.to_token_stream());
-            }
+            let extends = &self.extends;
+            inherits.push(quote! { @extends #(#extends),* });
         }
         if !self.implements.is_empty() {
-            inherits.push(quote! { @implements });
-            for implement in &*self.implements {
-                inherits.push(implement.to_token_stream());
-            }
+            let implements = &self.implements;
+            inherits.push(quote! { @implements #(#implements),* });
         }
         let mod_name = &self.inner.module.ident;
         let name = self.inner.name.as_ref()?;
@@ -305,8 +303,8 @@ impl ClassDefinition {
         }
         .to_upper_camel_case();
         let abstract_ = self.abstract_;
-        let parent_type = self.parent_type()?;
-        let interfaces = &self.implements;
+        let parent_type = format_ident!("{}ParentType", name);
+        let interfaces = format_ident!("{}Interfaces", name);
         let class_struct_type = self.class_struct_definition().map(|_| {
             let class_name = format_ident!("{}Class", name);
             quote! { type Class = #class_name; }
@@ -328,8 +326,8 @@ impl ClassDefinition {
                 const NAME: &'static ::std::primitive::str = #gtype_name;
                 const ABSTRACT: bool = #abstract_;
                 type Type = super::#name;
-                type ParentType = #parent_type;
-                type Interfaces = (#(#interfaces,)*);
+                type ParentType = super::#parent_type;
+                type Interfaces = super::#interfaces;
                 #class_struct_type
                 #class_init
                 #instance_init
@@ -440,32 +438,46 @@ impl ClassDefinition {
     }
     #[inline]
     fn is_subclassable_impl(&self) -> Option<TokenStream> {
+        if self.final_ {
+            return None;
+        }
         let glib = self.inner.glib()?;
         let name = self.inner.name.as_ref()?;
         let type_ident = syn::Ident::new("____Object", Span::mixed_site());
-        let class_ident = syn::Ident::new("____class", Span::mixed_site());
-        let body = self.inner.child_type_init_body(&type_ident, &class_ident)?;
         let trait_name = format_ident!("{}Impl", name);
+        let param = syn::parse_quote! { #type_ident: #trait_name };
         let head = if let Some(generics) = &self.inner.generics {
-            let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
+            let (_, type_generics, _) = generics.split_for_impl();
+            let mut generics = generics.clone();
+            generics.params.push(param);
+            let (impl_generics, _, where_clause) = generics.split_for_impl();
             quote! {
                 unsafe impl #impl_generics #glib::subclass::types::IsSubclassable<#type_ident>
                     for #name #type_generics #where_clause
             }
         } else {
             quote! {
-                unsafe impl<#type_ident: #trait_name> #glib::subclass::types::IsSubclassable<#type_ident> for #name
+                unsafe impl<#param> #glib::subclass::types::IsSubclassable<#type_ident> for #name
             }
         };
+        let class_ident = syn::Ident::new("____class", Span::mixed_site());
+        let class_init = self
+            .inner
+            .child_type_init_body(&type_ident, &class_ident)
+            .map(|body| {
+                quote! {
+                    fn class_init(#class_ident: &mut #glib::Class<Self>) {
+                        <Self as #glib::subclass::types::IsSubclassableExt>::parent_class_init::<T>(
+                            #glib::Cast::upcast_ref_mut(#class_ident)
+                        );
+                        let #class_ident = ::std::convert::AsMut::as_mut(#class_ident);
+                        #body
+                    }
+                }
+            });
         Some(quote! {
             #head {
-                fn class_init(#class_ident: &mut #glib::Class<Self>) {
-                    <Self as #glib::subclass::types::IsSubclassableExt>::parent_class_init::<T>(
-                        #glib::Cast::upcast_ref_mut(#class_ident)
-                    );
-                    let #class_ident = ::std::convert::AsMut::as_mut(#class_ident);
-                    #body
-                }
+                #class_init
             }
         })
     }
@@ -483,25 +495,43 @@ macro_rules! unwrap_or_return {
 impl ToTokens for ClassDefinition {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let glib = unwrap_or_return!(self.inner.glib(), ());
+        let name = unwrap_or_return!(self.inner.name.as_ref(), ());
         let module = &self.inner.module;
 
         let wrapper = self.wrapper();
-        let trait_name = self.ext_trait();
-        let public_methods = self.inner.public_methods(trait_name.as_ref());
+        let use_trait = self.ext_trait().map(|ext| {
+            let mod_name = &module.ident;
+            quote! { pub use #mod_name::#ext; }
+        });
         let is_subclassable = self.is_subclassable_impl();
         let parent_trait = self
             .parent_trait
             .as_ref()
             .map(|p| p.to_token_stream())
             .unwrap_or_else(|| quote! { #glib::subclass::object::ObjectImpl });
-        let virtual_traits = self.inner.virtual_traits(&parent_trait);
+        let virtual_traits = if !self.final_ {
+            self.inner.virtual_traits(&parent_trait)
+        } else {
+            None
+        };
+        let parent_type = self.parent_type().map(|p| {
+            let ident = format_ident!("{}ParentType", name);
+            quote! { type #ident = #p; }
+        });
+        let interfaces_ident = format_ident!("{}Interfaces", name);
+        let interfaces = &self.implements;
+        let interfaces = quote! {
+            type #interfaces_ident = (#(#interfaces,)*);
+        };
 
         let class = quote_spanned! { module.span() =>
             #module
             #wrapper
-            #public_methods
+            #use_trait
             #is_subclassable
             #virtual_traits
+            #parent_type
+            #interfaces
         };
         class.to_tokens(tokens);
     }

@@ -31,7 +31,7 @@ mod obj_derivable {
     #[methods]
     impl ObjDerivable {
         #[signal]
-        fn abc(&self) { () }
+        fn abc(&self) {}
     }
 }
 
@@ -87,12 +87,7 @@ mod obj_inner {
             }
         }
 
-        fn property(
-            &self,
-            obj: &Self::Type,
-            id: usize,
-            pspec: &glib::ParamSpec,
-        ) -> glib::Value {
+        fn property(&self, obj: &Self::Type, id: usize, pspec: &glib::ParamSpec) -> glib::Value {
             match pspec.name() {
                 "my-uint" => glib::ToValue::to_value(&self.my_uint.get()),
                 _ => self.derived_property(obj, id, pspec),
@@ -104,8 +99,7 @@ mod obj_inner {
             static SIGNALS: SyncLazy<Vec<glib::subclass::Signal>> = SyncLazy::new(|| {
                 let mut signals = ObjInner::derived_signals();
                 signals.push(
-                    glib::subclass::Signal::builder("xyz", &[], glib::Type::UNIT.into())
-                        .build(),
+                    glib::subclass::Signal::builder("xyz", &[], glib::Type::UNIT.into()).build(),
                 );
                 signals
             });

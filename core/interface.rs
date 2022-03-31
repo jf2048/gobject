@@ -122,6 +122,7 @@ impl InterfaceDefinition {
                     }
                 }
             });
+        let trait_name = self.ext_trait();
         self.inner
             .extra_private_items()
             .into_iter()
@@ -129,6 +130,7 @@ impl InterfaceDefinition {
                 [
                     self.object_interface_impl(),
                     self.interface_struct_definition(),
+                    self.inner.public_methods(trait_name.as_ref()),
                     derived_methods,
                 ]
                 .into_iter()
@@ -142,20 +144,17 @@ impl InterfaceDefinition {
         if !self.wrapper {
             return None;
         }
-        let mut requires = Vec::new();
-        if !self.requires.is_empty() {
-            requires.push(quote! { @requires });
-            for require in &*self.requires {
-                requires.push(require.to_token_stream());
-            }
-        }
+        let requires = (!self.requires.is_empty()).then(|| {
+            let prerequisites = &self.requires;
+            quote! { @requires #(#prerequisites),* }
+        });
         let mod_name = &self.inner.module.ident;
         let name = self.inner.name.as_ref()?;
         let glib = self.inner.glib()?;
         let generics = self.inner.generics.as_ref();
         Some(quote! {
             #glib::wrapper! {
-                pub struct #name #generics(ObjectInterface<self::#mod_name::#name #generics>) #(#requires),*;
+                pub struct #name #generics(ObjectInterface<self::#mod_name::#name #generics>) #requires;
             }
         })
     }
@@ -204,11 +203,11 @@ impl InterfaceDefinition {
         let head = if let Some(generics) = &self.inner.generics {
             let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
             quote! {
-                impl #impl_generics #glib::subclass::types::ObjectInterface
-                for #name #type_generics #where_clause
+                unsafe impl #impl_generics #glib::subclass::prelude::ObjectInterface
+                    for #name #type_generics #where_clause
             }
         } else {
-            quote! { impl #glib::subclass::types::ObjectInterface for #name }
+            quote! { unsafe impl #glib::subclass::prelude::ObjectInterface for #name }
         };
         let gtype_name = if let Some(ns) = &self.ns {
             format!("{}{}", ns, name)
@@ -216,7 +215,7 @@ impl InterfaceDefinition {
             name.to_string()
         }
         .to_upper_camel_case();
-        let prerequisites = &self.requires;
+        let prerequisites = format_ident!("{}Prerequisites", name);
         let interface_init = self
             .inner
             .custom_method("interface_init")
@@ -234,7 +233,7 @@ impl InterfaceDefinition {
             #[#glib::object_interface]
             #head {
                 const NAME: &'static ::std::primitive::str = #gtype_name;
-                type Prerequisites = (#(#prerequisites,)*);
+                type Prerequisites = super::#prerequisites;
                 #extra
                 #interface_init
                 #properties
@@ -247,35 +246,46 @@ impl InterfaceDefinition {
         let glib = self.inner.glib()?;
         let name = self.inner.name.as_ref()?;
         let type_ident = syn::Ident::new("____Object", Span::mixed_site());
-        let iface_ident = syn::Ident::new("____iface", Span::mixed_site());
-        let body = self.inner.child_type_init_body(&type_ident, &iface_ident)?;
         let trait_name = format_ident!("{}Impl", name);
 
+        let param = syn::parse_quote! { #type_ident: #trait_name };
         let pred = syn::parse_quote! {
             <#type_ident as #glib::subclass::types::ObjectSubclass>::Type: #glib::IsA<#glib::Object>
         };
-        let head = if let Some(mut generics) = self.inner.generics.clone() {
+        let head = if let Some(generics) = &self.inner.generics {
+            let (_, type_generics, _) = generics.split_for_impl();
+            let mut generics = generics.clone();
+            generics.params.push(param);
             {
                 let where_clause = generics.make_where_clause();
                 where_clause.predicates.push(pred);
             }
-            let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
+            let (impl_generics, _, where_clause) = generics.split_for_impl();
             quote! {
                 unsafe impl #impl_generics #glib::subclass::types::IsImplementable<#type_ident>
                     for #name #type_generics #where_clause
             }
         } else {
             quote! {
-                unsafe impl<#type_ident: #trait_name> #glib::subclass::types::IsImplementable<#type_ident> for #name
+                unsafe impl<#param> #glib::subclass::types::IsImplementable<#type_ident> for #name
                 where #pred
             }
         };
+        let iface_ident = syn::Ident::new("____iface", Span::mixed_site());
+        let interface_init = self
+            .inner
+            .child_type_init_body(&type_ident, &iface_ident)
+            .map(|body| {
+                quote! {
+                    fn interface_init(#iface_ident: &mut #glib::Interface<Self>) {
+                        let #iface_ident = ::std::convert::AsMut::as_mut(#iface_ident);
+                        #body
+                    }
+                }
+            });
         Some(quote! {
             #head {
-                fn interface_init(#iface_ident: &mut #glib::Interface<Self>) {
-                    let #iface_ident = ::std::convert::AsMut::as_mut(#iface_ident);
-                    #body
-                }
+                #interface_init
             }
         })
     }
@@ -293,11 +303,14 @@ macro_rules! unwrap_or_return {
 impl ToTokens for InterfaceDefinition {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let glib = unwrap_or_return!(self.inner.glib(), ());
+        let name = unwrap_or_return!(self.inner.name.as_ref(), ());
         let module = &self.inner.module;
 
         let wrapper = self.wrapper();
-        let trait_name = self.ext_trait();
-        let public_methods = self.inner.public_methods(trait_name.as_ref());
+        let use_trait = self.ext_trait().map(|ext| {
+            let mod_name = &module.ident;
+            quote! { pub use #mod_name::#ext; }
+        });
         let is_implementable = self.is_implementable_impl();
         let parent_trait = self
             .parent_trait
@@ -305,13 +318,19 @@ impl ToTokens for InterfaceDefinition {
             .map(|p| p.to_token_stream())
             .unwrap_or_else(|| quote! { #glib::subclass::object::ObjectImpl });
         let virtual_traits = self.inner.virtual_traits(&parent_trait);
+        let requires_ident = format_ident!("{}Prerequisites", name);
+        let requires = &self.requires;
+        let requires = quote! {
+            type #requires_ident = (#(#requires,)*);
+        };
 
         let iface = quote_spanned! { module.span() =>
             #module
             #wrapper
-            #public_methods
+            #use_trait
             #is_implementable
             #virtual_traits
+            #requires
         };
         iface.to_tokens(tokens);
     }
