@@ -49,7 +49,6 @@ impl InterfaceDefinition {
     pub fn from_type(
         def: TypeDefinition,
         opts: InterfaceOptions,
-        crate_ident: syn::Ident,
         errors: &mut Vec<darling::Error>,
     ) -> Self {
         let attrs = opts.0;
@@ -74,7 +73,6 @@ impl InterfaceDefinition {
                 "Interface must have a `name = \"...\"` parameter or a #[properties] struct",
             );
         }
-        iface.inner.set_crate_ident(crate_ident);
 
         let extra = iface.extra_private_items();
 

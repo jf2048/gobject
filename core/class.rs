@@ -77,7 +77,6 @@ impl ClassDefinition {
     pub fn from_type(
         def: TypeDefinition,
         opts: ClassOptions,
-        crate_ident: syn::Ident,
         errors: &mut Vec<darling::Error>,
     ) -> Self {
         let attrs = opts.0;
@@ -107,7 +106,6 @@ impl ClassDefinition {
                 "Class must have a `name = \"...\"` parameter or a #[properties] struct",
             );
         }
-        class.inner.set_crate_ident(crate_ident);
 
         let extra = class.extra_private_items();
 
@@ -352,7 +350,7 @@ impl ClassDefinition {
         if self.inner.properties.is_empty() {
             return None;
         }
-        let go = self.inner.crate_ident.as_ref()?;
+        let go = &self.inner.crate_ident;
         let glib = self.inner.glib()?;
         let set_impls = self
             .inner
@@ -381,7 +379,7 @@ impl ClassDefinition {
         if self.inner.properties.is_empty() {
             return None;
         }
-        let go = self.inner.crate_ident.as_ref()?;
+        let go = &self.inner.crate_ident;
         let glib = self.inner.glib()?;
         let get_impls = self
             .inner

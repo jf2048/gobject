@@ -1,4 +1,5 @@
 mod class;
+mod closures;
 mod interface;
 mod property;
 mod public_method;
@@ -9,6 +10,7 @@ mod validations;
 mod virtual_method;
 
 pub use class::*;
+pub use closures::*;
 pub use interface::*;
 pub use property::*;
 pub use public_method::*;

@@ -29,13 +29,22 @@ impl TypeDefinitionParser {
         &self,
         module: syn::ItemMod,
         base: TypeBase,
+        crate_ident: syn::Ident,
         errors: &mut Vec<darling::Error>,
     ) -> TypeDefinition {
+        let mut syn_errors = vec![];
+        let mut item = syn::Item::Mod(module);
+        super::closures(&mut item, crate_ident.clone(), &mut syn_errors);
+        errors.extend(syn_errors.into_iter().map(|e| e.into()));
+        let module = match item {
+            syn::Item::Mod(m) => m,
+            _ => unreachable!(),
+        };
         let mut def = TypeDefinition {
             module,
             base,
             name: None,
-            crate_ident: None,
+            crate_ident,
             generics: None,
             properties: Vec::new(),
             signals: Vec::new(),
@@ -146,7 +155,7 @@ pub struct TypeDefinition {
     pub module: syn::ItemMod,
     pub base: TypeBase,
     pub name: Option<syn::Ident>,
-    pub crate_ident: Option<syn::Ident>,
+    pub crate_ident: syn::Ident,
     pub generics: Option<syn::Generics>,
     pub properties: Vec<Property>,
     pub signals: Vec<Signal>,
@@ -186,11 +195,8 @@ impl TypeDefinition {
     pub fn set_name(&mut self, name: syn::Ident) {
         self.name.replace(name);
     }
-    pub fn set_crate_ident(&mut self, ident: syn::Ident) {
-        self.crate_ident.replace(ident);
-    }
     pub fn glib(&self) -> Option<TokenStream> {
-        let go = self.crate_ident.as_ref()?;
+        let go = &self.crate_ident;
         Some(quote! { #go::glib })
     }
     pub fn type_(&self, from: TypeMode, to: TypeMode, ctx: TypeContext) -> Option<TokenStream> {
@@ -227,7 +233,7 @@ impl TypeDefinition {
         if self.properties.is_empty() {
             return None;
         }
-        let go = self.crate_ident.as_ref()?;
+        let go = &self.crate_ident;
         let glib = self.glib()?;
         let defs = self.properties.iter().map(|p| p.definition(go));
         let method_name = format_ident!("{}", method_name);
@@ -298,7 +304,7 @@ impl TypeDefinition {
     }
     fn public_method_prototypes(&self) -> Vec<TokenStream> {
         let mut protos = vec![];
-        let go = unwrap_or_return!(self.crate_ident.as_ref(), protos);
+        let go = &self.crate_ident;
         let glib = unwrap_or_return!(self.glib(), protos);
         for prop in &self.properties {
             for proto in prop.method_prototypes(go) {
@@ -345,7 +351,7 @@ impl TypeDefinition {
     fn public_method_definitions(&self) -> Vec<TokenStream> {
         let mut methods = vec![];
 
-        let go = unwrap_or_return!(self.crate_ident.as_ref(), methods);
+        let go = &self.crate_ident;
         let glib = unwrap_or_return!(self.glib(), methods);
         let ty = unwrap_or_return!(
             self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External),

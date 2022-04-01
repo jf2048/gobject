@@ -2,6 +2,19 @@ use gobject_core::util;
 use proc_macro::TokenStream;
 use quote::ToTokens;
 
+#[proc_macro_attribute]
+#[proc_macro_error::proc_macro_error]
+pub fn clone_block(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let mut item = syn::parse_macro_input!(item as syn::Item);
+    let mut errors = vec![];
+    let go = crate_ident();
+    gobject_core::closures(&mut item, go, &mut errors);
+    for error in errors {
+        proc_macro_error::Diagnostic::from(error).emit();
+    }
+    item.to_token_stream().into()
+}
+
 #[proc_macro_derive(Properties, attributes(properties, property))]
 pub fn derive_properties(item: TokenStream) -> TokenStream {
     let mut errors = vec![];
@@ -24,9 +37,9 @@ pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
     let module = util::parse::<syn::ItemMod>(item.into(), &mut errors);
     let tokens = module
         .map(|module| {
-            let type_def = parser.parse(module, TypeBase::Class, &mut errors);
             let go = crate_ident();
-            let class_def = ClassDefinition::from_type(type_def, opts, go.clone(), &mut errors);
+            let type_def = parser.parse(module, TypeBase::Class, go, &mut errors);
+            let class_def = ClassDefinition::from_type(type_def, opts, &mut errors);
             class_def.to_token_stream()
         })
         .unwrap_or_default();
@@ -43,9 +56,9 @@ pub fn interface(attr: TokenStream, item: TokenStream) -> TokenStream {
     let module = util::parse::<syn::ItemMod>(item.into(), &mut errors);
     let tokens = module
         .map(|module| {
-            let type_def = parser.parse(module, TypeBase::Interface, &mut errors);
             let go = crate_ident();
-            let class_def = InterfaceDefinition::from_type(type_def, opts, go.clone(), &mut errors);
+            let type_def = parser.parse(module, TypeBase::Interface, go, &mut errors);
+            let class_def = InterfaceDefinition::from_type(type_def, opts, &mut errors);
             class_def.to_token_stream()
         })
         .unwrap_or_default();

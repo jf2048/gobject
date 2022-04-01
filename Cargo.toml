@@ -13,5 +13,8 @@ gio = { git = "https://github.com/gtk-rs/gtk-rs-core", version = "0.16", optiona
 gtk4 = { git = "https://github.com/gtk-rs/gtk4-rs", version = "0.5", optional = true }
 gobject-macros = { path = "macros" }
 
+[dev-dependencies]
+futures-executor = "0.3"
+
 [workspace]
 members = ["macros", "core"]

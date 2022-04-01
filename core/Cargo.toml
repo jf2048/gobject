@@ -16,4 +16,4 @@ darling = "0.13.1"
 heck = "0.4.0"
 proc-macro2 = "1.0.36"
 quote = "1.0.16"
-syn = { version = "1.0.89", features = ["full"], default-features = false }
+syn = { version = "1.0.89", features = ["full", "visit-mut"], default-features = false }
