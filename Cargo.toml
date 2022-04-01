@@ -17,4 +17,4 @@ gobject-macros = { path = "macros" }
 futures-executor = "0.3"
 
 [workspace]
-members = ["macros", "core"]
+members = ["macros", "core", "clone-blockify"]
