@@ -59,7 +59,7 @@ impl Captures {
         });
         strongs.chain(weaks).collect()
     }
-    fn inner_tokens(&self, go: &syn::Ident) -> Vec<TokenStream> {
+    fn inner_tokens(&self, go: &syn::Ident, is_closure: bool) -> Vec<TokenStream> {
         self.weak
             .iter()
             .map(|WeakCapture { ident, or, .. }| {
@@ -73,7 +73,15 @@ impl Captures {
                                 quote! { ::std::panic!("Failed to upgrade `{}`", #name) }
                             }
                             UpgradeFailAction::Default(expr) => expr.to_token_stream(),
-                            UpgradeFailAction::Return(expr) => quote! { return #expr },
+                            UpgradeFailAction::Return(expr) => if is_closure {
+                                quote! {
+                                    return #go::glib::closure::ToClosureReturnValue::to_closure_return_value(
+                                        &#expr
+                                    )
+                                }
+                            } else {
+                                quote! { return #expr }
+                            },
                             UpgradeFailAction::AllowNone => unreachable!(),
                         };
                         quote_spanned! { Span::mixed_site() =>
@@ -359,7 +367,7 @@ impl Visitor {
             format_ident!("new")
         };
         let outer = captures.outer_tokens(go);
-        let inner = captures.inner_tokens(go);
+        let inner = captures.inner_tokens(go, true);
         let watch_outer = watch.as_ref().map(|WatchCapture { ident, from }| {
             let target = ident
                 .as_ref()
@@ -444,7 +452,7 @@ impl Visitor {
             }
             let go = &self.crate_ident;
             let outer = captures.outer_tokens(go);
-            let inner = captures.inner_tokens(go);
+            let inner = captures.inner_tokens(go, false);
             body.inputs = FromIterator::from_iter(inputs.into_iter());
             if matches!(body.body.as_ref(), syn::Expr::Async(_)) {
                 body.body = Box::new({
