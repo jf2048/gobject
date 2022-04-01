@@ -1,12 +1,10 @@
 #[gobject::class(final)]
 mod obj_final {
-    #[properties]
     #[derive(Default)]
     pub struct ObjFinal {
         #[property(get, set)]
         my_prop: std::cell::Cell<u64>,
     }
-    #[methods]
     impl ObjFinal {
         #[signal]
         fn abc(&self) {}
@@ -22,13 +20,11 @@ fn object_final() {
 
 #[gobject::class]
 mod obj_derivable {
-    #[properties]
     #[derive(Default)]
     pub struct ObjDerivable {
         #[property(get, set)]
         my_prop: std::cell::Cell<u64>,
     }
-    #[methods]
     impl ObjDerivable {
         #[signal]
         fn abc(&self) {}
@@ -45,14 +41,12 @@ fn object_derivable() {
 
 #[gobject::class]
 mod obj_inner {
-    #[properties]
     #[derive(Default)]
     pub struct ObjInner {
         #[property(get, set)]
         my_prop: std::cell::Cell<u64>,
         my_uint: std::cell::Cell<u32>,
     }
-    #[methods]
     impl ObjInner {
         #[signal]
         fn abc(&self) {}

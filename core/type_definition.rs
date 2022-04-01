@@ -55,13 +55,20 @@ impl TypeDefinitionParser {
         let mut struct_ = None;
         let mut impl_ = None;
         for item in items {
+            let mut first_struct = None;
+            let mut struct_count = 0usize;
+            let mut first_impl = None;
+            let mut impl_count = 0usize;
             match item {
                 syn::Item::Struct(s) => {
                     if let Some(a) =
                         find_attr(&mut s.attrs, "properties", struct_.is_some(), errors)
                     {
                         struct_ = Some((s, a));
+                    } else if first_struct.is_none() {
+                        first_struct = Some(s);
                     }
+                    struct_count += 1;
                 }
                 syn::Item::Impl(i) => {
                     if find_attr(&mut i.attrs, "methods", impl_.is_some(), errors).is_some() {
@@ -73,9 +80,33 @@ impl TypeDefinitionParser {
                             );
                         }
                         impl_ = Some(i);
+                    } else if first_impl.is_none() && i.trait_.is_none() {
+                        first_impl = Some(i);
                     }
+                    impl_count += 1;
                 }
                 _ => {}
+            }
+            if struct_count == 1 && struct_.is_none() {
+                struct_ = first_struct.map(|s| (s, parse_quote! { #[properties] }));
+            }
+            if impl_count == 1 && impl_.is_none() {
+                // only use it if the names match
+                if struct_
+                    .as_ref()
+                    .map(|(s, _)| {
+                        first_impl
+                            .as_ref()
+                            .map(|i| match i.self_ty.as_ref() {
+                                syn::Type::Path(p) => p.path.is_ident(&s.ident),
+                                _ => false,
+                            })
+                            .unwrap_or(true)
+                    })
+                    .unwrap_or(true)
+                {
+                    impl_ = first_impl;
+                }
             }
         }
         if let Some((struct_, attr)) = struct_ {

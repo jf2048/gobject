@@ -3,12 +3,10 @@ mod obj_signals {
     use std::cell::RefCell;
     use std::ops::ControlFlow;
 
-    #[properties]
     #[derive(Default)]
     pub struct Signals {
         pub(super) log: RefCell<Vec<String>>,
     }
-    #[methods]
     impl Signals {
         pub(super) fn append(&self, msg: &str) {
             self.log.borrow_mut().push(msg.to_owned());

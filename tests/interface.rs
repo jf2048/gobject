@@ -1,14 +1,12 @@
 #[gobject::interface]
 mod iface {
     use std::marker::PhantomData;
-    #[properties]
     #[derive(Copy, Clone)]
     pub struct Dummy {
         _parent: glib::gobject_ffi::GTypeInterface,
         #[property(get, set)]
         _my_prop: PhantomData<u64>,
     }
-    #[methods]
     impl Dummy {
         #[signal]
         fn my_sig(iface: &super::Dummy, hello: i32) {}
@@ -18,7 +16,6 @@ mod iface {
 #[gobject::class(final, implements(Dummy))]
 mod implement {
     use std::cell::Cell;
-    #[properties]
     #[derive(Default)]
     pub struct Implementor {
         #[property(get, set, override_iface = "super::Dummy")]

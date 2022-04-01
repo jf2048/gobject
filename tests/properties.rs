@@ -58,7 +58,6 @@ mod basic {
         my_bool: Cell<bool>,
     }
 
-    #[methods]
     impl BasicProps {
         fn constructed(&self, obj: &Self::Type) {
             self.parent_constructed(obj);
@@ -109,7 +108,6 @@ fn basic_properties() {
 mod base {
     use std::marker::PhantomData;
 
-    #[properties]
     #[derive(Default)]
     pub struct BaseObject {
         #[property(
@@ -138,7 +136,6 @@ pub enum Animal {
 mod small {
     use std::cell::RefCell;
 
-    #[properties]
     #[derive(Default)]
     pub struct SmallObject {
         #[property(get, set, override_class = "super::BaseObject")]
@@ -154,7 +151,6 @@ mod complex {
     use glib::{StaticType, ToVariant};
     use std::cell::{Cell, RefCell};
 
-    #[properties]
     pub struct ComplexProps {
         #[property(get, set, builder(is_a_type("glib::Type::OBJECT")))]
         object_type: Cell<glib::Type>,
@@ -207,7 +203,6 @@ mod my_obj {
     use glib::StaticType;
     use std::cell::Cell;
 
-    #[properties]
     pub struct MyObj {
         #[property(get, set, builder(is_a_type("glib::Object::static_type()")))]
         object_type: Cell<glib::Type>,
