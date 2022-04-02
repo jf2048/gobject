@@ -335,15 +335,8 @@ impl std::fmt::Display for ParseErrors {
                 column,
             } = source.span().start();
             let pos = column + 1;
-            std::format_args!(
-                "{}:{}: {}\n{}\n{:>pos$}",
-                sline,
-                column,
-                source,
-                line,
-                "^",
-            )
-            .fmt(f)?;
+            std::format_args!("{}:{}: {}\n{}\n{:>pos$}", sline, column, source, line, "^",)
+                .fmt(f)?;
         }
         Ok(())
     }
