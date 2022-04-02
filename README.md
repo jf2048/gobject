@@ -103,3 +103,6 @@ fn main() {
     assert_eq!(get_cell.invoke::<u32>(&[]), 0);
 }
 ```
+
+This repo also has a `clone-blockify` tool that attempts to convert Rust source
+files from `glib::clone!` and `glib::closure!` into the `clone_block` format.
