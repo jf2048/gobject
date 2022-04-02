@@ -125,8 +125,3 @@ pub(crate) fn is_valid_name(name: &str) -> bool {
         false
     }
 }
-
-#[inline]
-pub(crate) fn make_stmt(tokens: TokenStream) -> TokenStream {
-    quote::quote! { #tokens; }
-}

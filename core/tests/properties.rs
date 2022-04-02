@@ -89,9 +89,9 @@ fn properties() {
     let attr = quote::quote! { final };
     let opts = ClassOptions::parse(attr, &mut errors);
     let parser = ClassDefinition::type_parser();
-    let type_def = parser.parse(module, TypeBase::Class, &mut errors);
     let go = quote::format_ident!("go");
-    let class_def = ClassDefinition::from_type(type_def, opts, go.clone(), &mut errors);
+    let type_def = parser.parse(module, TypeBase::Class, go, &mut errors);
+    let class_def = ClassDefinition::from_type(type_def, opts, &mut errors);
     let _tokens = class_def.to_token_stream();
     if !errors.is_empty() {
         panic!("{}", darling::Error::multiple(errors));

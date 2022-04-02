@@ -189,7 +189,7 @@ impl InterfaceDefinition {
         Some(quote! {
             #[repr(C)]
             pub struct #iface_name #generics {
-                pub parent_iface: #glib::gobject_ffi::GTypeInterface,
+                pub ____parent_iface: #glib::gobject_ffi::GTypeInterface,
                 #(pub #fields),*
             }
         })

@@ -249,6 +249,18 @@ impl ClassDefinition {
             }
         })
     }
+    fn trait_head(&self, ty: &syn::Ident, trait_: TokenStream) -> TokenStream {
+        if let Some(generics) = &self.inner.generics {
+            let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
+            quote! {
+                impl #impl_generics #trait_ for #ty #type_generics #where_clause
+            }
+        } else {
+            quote! {
+                impl #trait_ for #ty
+            }
+        }
+    }
     fn class_struct_definition(&self) -> Option<TokenStream> {
         let fields = self.inner.type_struct_fields();
         if fields.is_empty() {
@@ -258,26 +270,49 @@ impl ClassDefinition {
         let generics = self.inner.generics.as_ref()?;
         let class_name = format_ident!("{}Class", name);
         let glib = self.inner.glib()?;
-        let parent_type = self.parent_type()?;
-        let head = if let Some(generics) = &self.inner.generics {
-            let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
-            quote! {
-                unsafe impl #impl_generics #glib::subclass::types::ClassStruct
-                    for #class_name #type_generics #where_clause
-            }
+        let parent_class = if self.extends.is_empty() {
+            quote! { #glib::gobject_ffi::GObjectClass }
         } else {
+            let parent_type = self.parent_type()?;
             quote! {
-                unsafe impl #glib::subclass::types::ClassStruct for #class_name
+                <<#parent_type as #glib::Object::ObjectSubclassIs>::Subclass as #glib::subclass::types::ObjectSubclass>::Class
             }
         };
+        let class_struct_head = self.trait_head(&class_name, quote! {
+            #glib::subclass::types::ClassStruct
+        });
+        let deref_head = self.trait_head(&class_name, quote! {
+            ::std::ops::Deref
+        });
+        let deref_mut_head = self.trait_head(&class_name, quote! {
+            ::std::ops::DerefMut
+        });
+
         Some(quote! {
             #[repr(C)]
             pub struct #class_name #generics {
-                pub parent_class: <<#parent_type as #glib::Object::ObjectSubclassIs>::Subclass as #glib::subclass::types::ObjectSubclass>::Class,
+                pub ____parent_class: #parent_class,
                 #(pub #fields),*
             }
-            #head {
+            unsafe #class_struct_head {
                 type Type = #name #generics;
+            }
+            #deref_head {
+                type Target = #glib::Class<<#name #generics as #glib::subclass::types::ObjectSubclass>::Type>;
+
+                fn deref(&self) -> &<Self as ::std::ops::Deref>::Target {
+                    unsafe {
+                        &*(self as *const _ as *const <Self as ::std::ops::Deref>::Target)
+                    }
+                }
+            }
+
+            #deref_mut_head {
+                fn deref_mut(&mut self) -> &mut <Self as ::std::ops::Deref>::Target {
+                    unsafe {
+                        &mut *(self as *mut _ as *mut <Self as ::std::ops::Deref>::Target)
+                    }
+                }
             }
         })
     }
@@ -465,8 +500,8 @@ impl ClassDefinition {
             .map(|body| {
                 quote! {
                     fn class_init(#class_ident: &mut #glib::Class<Self>) {
-                        <Self as #glib::subclass::types::IsSubclassableExt>::parent_class_init::<T>(
-                            #glib::Cast::upcast_ref_mut(#class_ident)
+                        <Self as #glib::subclass::types::IsSubclassableExt>::parent_class_init::<#type_ident>(
+                            #glib::object::Class::upcast_ref_mut(#class_ident)
                         );
                         let #class_ident = ::std::convert::AsMut::as_mut(#class_ident);
                         #body
@@ -572,16 +607,15 @@ pub fn derived_class_properties(
         generics.params.push(param);
         let (impl_generics, _, where_clause) = generics.split_for_impl();
 
-        let mut protos = Vec::new();
-        for prop in &properties {
-            for proto in prop.method_prototypes(go) {
-                protos.push(util::make_stmt(proto));
-            }
-        }
+        let protos = properties
+            .iter()
+            .map(|p| p.method_prototypes(go))
+            .flatten()
+            .collect::<Vec<_>>();
 
         quote! {
             pub trait #trait_name: 'static {
-                #(#protos)*
+                #(#protos;)*
             }
             impl #impl_generics #trait_name for #type_ident #where_clause {
                 #(#items)*

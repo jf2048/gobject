@@ -303,32 +303,21 @@ impl TypeDefinition {
         FromIterator::from_iter(methods.iter().filter_map(|m| self.custom_method(m)))
     }
     fn public_method_prototypes(&self) -> Vec<TokenStream> {
-        let mut protos = vec![];
         let go = &self.crate_ident;
-        let glib = unwrap_or_return!(self.glib(), protos);
-        for prop in &self.properties {
-            for proto in prop.method_prototypes(go) {
-                protos.push(util::make_stmt(proto));
-            }
-        }
-        for signal in &self.signals {
-            let ps = [
-                signal.emit_prototype(&glib),
-                signal.connect_prototype(&glib),
-            ];
-            for proto in ps.into_iter().filter_map(|p| p) {
-                protos.push(util::make_stmt(proto));
-            }
-        }
-        for public_method in &self.public_methods {
-            let proto = public_method.prototype();
-            protos.push(util::make_stmt(proto));
-        }
-        for virtual_method in &self.virtual_methods {
-            let proto = virtual_method.prototype();
-            protos.push(util::make_stmt(proto));
-        }
-        protos
+        let glib = unwrap_or_return!(self.glib(), Vec::new());
+        self.properties
+            .iter()
+            .map(|p| p.method_prototypes(go))
+            .flatten()
+            .chain(
+                self.signals
+                    .iter()
+                    .map(|s| s.method_prototypes(&glib))
+                    .flatten(),
+            )
+            .chain(self.public_methods.iter().map(|m| m.prototype()))
+            .chain(self.virtual_methods.iter().map(|m| m.prototype()))
+            .collect()
     }
     pub(crate) fn method_path(&self, method: &str, from: TypeMode) -> Option<TokenStream> {
         let glib = self.glib()?;
@@ -349,44 +338,43 @@ impl TypeDefinition {
         })
     }
     fn public_method_definitions(&self) -> Vec<TokenStream> {
-        let mut methods = vec![];
-
         let go = &self.crate_ident;
-        let glib = unwrap_or_return!(self.glib(), methods);
+        let glib = unwrap_or_return!(self.glib(), Vec::new());
         let ty = unwrap_or_return!(
             self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External),
-            methods
+            Vec::new()
         );
         let sub_ty = unwrap_or_return!(
             self.type_(TypeMode::Wrapper, TypeMode::Subclass, TypeContext::Internal),
-            methods
+            Vec::new()
         );
-        let properties_path =
-            unwrap_or_return!(self.method_path("properties", TypeMode::Subclass), methods);
+        let properties_path = unwrap_or_return!(
+            self.method_path("properties", TypeMode::Subclass),
+            Vec::new()
+        );
 
-        for (index, prop) in self.properties.iter().enumerate() {
-            for method in prop.method_definitions(index, &ty, &properties_path, go) {
-                methods.push(method);
-            }
-        }
-        for signal in &self.signals {
-            let defs = [
-                signal.emit_definition(&glib),
-                signal.connect_definition(&glib),
-            ];
-            for method in defs.into_iter().filter_map(|d| d) {
-                methods.push(method);
-            }
-        }
-        for public_method in &self.public_methods {
-            let method = public_method.definition(&sub_ty, &glib);
-            methods.push(method);
-        }
-        for virtual_method in &self.virtual_methods {
-            let method = virtual_method.definition(&ty, self.base, &glib);
-            methods.push(method);
-        }
-        methods
+        self.properties
+            .iter()
+            .enumerate()
+            .map(|(i, p)| p.method_definitions(i, &ty, &properties_path, go))
+            .flatten()
+            .chain(
+                self.signals
+                    .iter()
+                    .map(|s| s.method_definitions(&glib))
+                    .flatten(),
+            )
+            .chain(
+                self.public_methods
+                    .iter()
+                    .map(|m| m.definition(&sub_ty, &glib)),
+            )
+            .chain(
+                self.virtual_methods
+                    .iter()
+                    .map(|m| m.definition(&ty, self.base, &glib)),
+            )
+            .collect()
     }
     pub(crate) fn public_methods(&self, trait_name: Option<&syn::Ident>) -> Option<TokenStream> {
         let glib = self.glib()?;
@@ -406,7 +394,7 @@ impl TypeDefinition {
                 let protos = self.public_method_prototypes();
                 Some(quote! {
                     pub trait #trait_name: 'static {
-                        #(#protos)*
+                        #(#protos;)*
                     }
                     impl #impl_generics #trait_name for #type_ident #where_clause {
                         #(#items)*
@@ -424,7 +412,7 @@ impl TypeDefinition {
                 let protos = self.public_method_prototypes();
                 Some(quote! {
                     pub trait #trait_name: 'static {
-                        #(#protos)*
+                        #(#protos;)*
                     }
                     impl<#type_ident: #glib::IsA<super::#name>> #trait_name for #type_ident {
                         #(#items)*
@@ -446,7 +434,7 @@ impl TypeDefinition {
         }
         let glib = self.glib()?;
         let name = self.name.as_ref()?;
-        let ty = self.type_(TypeMode::Wrapper, TypeMode::Wrapper, TypeContext::External)?;
+        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
         let ty = parse_quote! { #ty };
         Some(FromIterator::from_iter(self.virtual_methods.iter().map(
             |m| m.set_default_trampoline(name, &ty, class_ident, &glib),
@@ -461,7 +449,7 @@ impl TypeDefinition {
             TypeMode::Subclass,
             TypeContext::External,
         )?;
-        let set_vtable = self.default_vtable_assignments(&class_ident);
+        let set_vtable = self.default_vtable_assignments(class_ident);
         let overrides = self
             .signals
             .iter()
@@ -472,9 +460,14 @@ impl TypeDefinition {
         if set_vtable.is_none() && overrides.is_empty() {
             return None;
         }
+        let deref_class = (!overrides.is_empty()).then(|| quote! {
+            let #class_ident = &mut *#class_ident;
+            let #class_ident = #glib::Class::upcast_ref_mut::<#glib::Object>(#class_ident);
+        });
         Some(quote! {
-            #(#overrides)*
             #set_vtable
+            #deref_class
+            #(#overrides)*
         })
     }
     #[inline]
@@ -504,7 +497,7 @@ impl TypeDefinition {
     }
     pub(crate) fn type_struct_fields(&self) -> Vec<TokenStream> {
         let ty = unwrap_or_return!(
-            self.type_(TypeMode::Wrapper, TypeMode::Wrapper, TypeContext::External),
+            self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External),
             Vec::new()
         );
         let ty = parse_quote! { #ty };
@@ -525,19 +518,19 @@ impl TypeDefinition {
         let virtual_methods_default = self
             .virtual_methods
             .iter()
-            .map(|m| m.default_definition(&ty, &ext_trait_name));
+            .map(|m| m.default_definition(&ext_trait_name, &glib));
         let ext_trait = (!self.virtual_methods.is_empty()).then(|| {
             let parent_method_protos = self
                 .virtual_methods
                 .iter()
-                .map(|m| m.parent_prototype(None, &ty));
+                .map(|m| m.parent_prototype(None, &glib));
             let parent_method_definitions = self
                 .virtual_methods
                 .iter()
                 .map(|m| m.parent_definition(&self.module.ident, name, &ty, self.base, &glib));
             quote! {
                 pub(crate) trait #ext_trait_name: #glib::subclass::types::ObjectSubclass {
-                    #(#parent_method_protos)*
+                    #(#parent_method_protos;)*
                 }
                 impl<#type_ident: #trait_name> #ext_trait_name for #type_ident {
                     #(#parent_method_definitions)*

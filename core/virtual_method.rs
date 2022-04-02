@@ -1,6 +1,7 @@
 use crate::{util, TypeBase};
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
+use syn::parse_quote;
 
 #[derive(Debug)]
 pub struct VirtualMethod {
@@ -21,7 +22,7 @@ impl VirtualMethod {
                 let method_index = method
                     .attrs
                     .iter()
-                    .position(|attr| attr.path.is_ident("virtual"));
+                    .position(|attr| attr.path.is_ident("virt"));
                 if let Some(method_index) = method_index {
                     let attr = method.attrs.remove(method_index);
                     let virtual_method = Self::from_method(method, attr, errors);
@@ -108,53 +109,42 @@ impl VirtualMethod {
         let ident = &self.sig.ident;
         let external_sig = self.external_sig();
         let args = signature_args(&external_sig);
+        let obj_ident = syn::Ident::new("____obj", Span::mixed_site());
+        let vtable_ident = syn::Ident::new("____vtable", Span::mixed_site());
         let get_vtable = match base {
             TypeBase::Class => quote! {
-                #glib::ObjectExt::class(____obj)
+                #glib::ObjectExt::class(#obj_ident)
             },
             TypeBase::Interface => quote! {
-                #glib::ObjectExt::interface::<#wrapper_ty>(____obj).unwrap()
+                #glib::ObjectExt::interface::<#wrapper_ty>(#obj_ident).unwrap()
             },
         };
-        quote_spanned! { Span::mixed_site() =>
+        quote! {
             #proto {
-                let ____obj = #glib::Cast::upcast_ref::<#wrapper_ty>(self);
-                let ____vtable = #get_vtable;
-                let ____vtable = ::std::convert::AsRef::as_ref(____vtable);
-                (____vtable.#ident)(____obj, #(#args),*)
+                let #obj_ident = #glib::Cast::upcast_ref::<#wrapper_ty>(self);
+                let #vtable_ident = #get_vtable;
+                let #vtable_ident = ::std::convert::AsRef::as_ref(#vtable_ident);
+                (#vtable_ident.#ident)(#obj_ident, #(#args),*)
             }
         }
     }
-    fn parent_sig(&self, ident: syn::Ident, ty: &syn::Type) -> syn::Signature {
+    fn parent_sig(&self, ident: syn::Ident, glib: &TokenStream) -> syn::Signature {
         let mut sig = self.external_sig();
         sig.ident = format_ident!("parent_{}", self.sig.ident);
         let this_index = sig.inputs.is_empty().then(|| 0).unwrap_or(1);
-        sig.inputs.insert(
-            this_index,
-            syn::FnArg::Typed(syn::PatType {
-                attrs: Vec::new(),
-                pat: Box::new(syn::Pat::Ident(syn::PatIdent {
-                    attrs: Default::default(),
-                    by_ref: None,
-                    mutability: None,
-                    ident,
-                    subpat: None,
-                })),
-                colon_token: Default::default(),
-                ty: Box::new(ty.clone()),
-            }),
-        );
+        sig.inputs.insert(this_index, parse_quote! {
+            #ident: &<Self as #glib::subclass::types::ObjectSubclass>::Type
+        });
         sig
     }
-    pub(crate) fn default_definition(&self, ty: &syn::Type, ext_trait: &syn::Ident) -> TokenStream {
-        let Self { attrs, vis, .. } = self;
+    pub(crate) fn default_definition(&self, ext_trait: &syn::Ident, glib: &TokenStream) -> TokenStream {
         let this_ident = syn::Ident::new("____this", Span::mixed_site());
-        let mut sig = self.parent_sig(this_ident.clone(), ty);
+        let mut sig = self.parent_sig(this_ident.clone(), glib);
         let parent_ident = std::mem::replace(&mut sig.ident, self.sig.ident.clone());
         let external_sig = self.external_sig();
         let args = signature_args(&external_sig);
-        quote_spanned! { Span::mixed_site() =>
-            #(#attrs)* #vis #sig {
+        quote! {
+            #sig {
                 #ext_trait::#parent_ident(self, #this_ident, #(#args),*)
             }
         }
@@ -162,14 +152,11 @@ impl VirtualMethod {
     pub(crate) fn parent_prototype(
         &self,
         ident: Option<syn::Ident>,
-        ty: &syn::Type,
+        glib: &TokenStream,
     ) -> TokenStream {
-        let Self { attrs, vis, .. } = self;
         let this_ident = ident.unwrap_or_else(|| syn::Ident::new("____this", Span::mixed_site()));
-        let sig = self.parent_sig(this_ident, ty);
-        quote! {
-            #(#attrs)* #vis #sig
-        }
+        let sig = self.parent_sig(this_ident, glib);
+        quote! { #sig }
     }
     pub(crate) fn parent_definition(
         &self,
@@ -180,7 +167,7 @@ impl VirtualMethod {
         glib: &TokenStream,
     ) -> TokenStream {
         let this_ident = syn::Ident::new("____this", Span::mixed_site());
-        let proto = self.parent_prototype(Some(this_ident.clone()), ty);
+        let proto = self.parent_prototype(Some(this_ident.clone()), glib);
         let ident = &self.sig.ident;
         let external_sig = self.external_sig();
         let args = signature_args(&external_sig);
@@ -192,11 +179,16 @@ impl VirtualMethod {
         };
         quote_spanned! { Span::mixed_site() =>
             #proto {
+                let #this_ident = unsafe {
+                    #glib::Cast::unsafe_cast_ref::<#ty>(#this_ident)
+                };
                 let #vtable_ident = <Self as #glib::subclass::types::ObjectSubclassType>::type_data();
-                let #vtable_ident = &*(
-                    #vtable_ident.as_ref().#parent_vtable_method()
-                    as *mut self::#mod_name::#class_name
-                );
+                let #vtable_ident = unsafe {
+                    &*(
+                        #vtable_ident.as_ref().#parent_vtable_method()
+                        as *mut self::#mod_name::#class_name
+                    )
+                };
                 (#vtable_ident.#ident)(#this_ident, #(#args),*)
             }
         }
@@ -231,19 +223,20 @@ impl VirtualMethod {
     pub(crate) fn vtable_field(&self, wrapper_ty: &syn::Type) -> TokenStream {
         let ident = &self.sig.ident;
         let sig = self.trampoline_sig(ident.clone(), wrapper_ty.clone());
+        let output = &sig.output;
         let args = sig.inputs.iter().map(|arg| match arg {
             syn::FnArg::Typed(syn::PatType { ty, .. }) => ty.as_ref(),
             _ => unreachable!(),
         });
         quote! {
-            #ident: fn(#(#args),*)
+            #ident: fn(#(#args),*) #output
         }
     }
     #[inline]
-    fn unwrap_recv(&self, ident: &syn::Ident, glib: &TokenStream) -> Option<TokenStream> {
+    fn unwrap_recv(&self, this: &syn::Ident, imp: &syn::Ident, glib: &TokenStream) -> Option<TokenStream> {
         if self.sig.receiver().is_some() {
             Some(quote! {
-                let #ident = #glib::subclass::prelude::ObjectSubclassIsExt::imp(&#ident);
+                let #imp = #glib::subclass::prelude::ObjectSubclassIsExt::imp(#this);
             })
         } else {
             None
@@ -261,7 +254,7 @@ impl VirtualMethod {
         let trampoline_ident = format_ident!("{}_default_trampoline", ident);
         let mut sig = self.trampoline_sig(this_ident.clone(), ty.clone());
         sig.ident = trampoline_ident.clone();
-        let unwrap_recv = self.unwrap_recv(&this_ident, glib);
+        let unwrap_recv = self.unwrap_recv(&this_ident, &this_ident, glib);
         let args = signature_args(&sig);
         quote_spanned! { Span::mixed_site() =>
             #sig {
@@ -281,6 +274,7 @@ impl VirtualMethod {
     ) -> TokenStream {
         let ident = &self.sig.ident;
         let this_ident = syn::Ident::new("____this", Span::mixed_site());
+        let imp_ident = syn::Ident::new("____imp", Span::mixed_site());
         let trampoline_ident = format_ident!("{}_trampoline", ident);
         let mut sig = self.trampoline_sig(this_ident.clone(), ty.clone());
         sig.ident = trampoline_ident.clone();
@@ -288,15 +282,15 @@ impl VirtualMethod {
             #type_ident: #glib::subclass::types::ObjectSubclass + #trait_name
         };
         sig.generics.params.push(param);
-        let unwrap_recv = self.unwrap_recv(&this_ident, glib);
+        let unwrap_recv = self.unwrap_recv(&this_ident, &imp_ident, glib);
         let args = signature_args(&sig);
         quote_spanned! { Span::mixed_site() =>
             #sig {
                 let #this_ident = #glib::Cast::dynamic_cast_ref::<<#type_ident as #glib::subclass::types::ObjectSubclass>::Type>(
-                    &#this_ident
+                    #this_ident
                 ).unwrap();
                 #unwrap_recv
-                #trait_name::#ident(#this_ident, #(#args),*)
+                #trait_name::#ident(#imp_ident, #(#args),*)
             }
             #class_ident.#ident = #trampoline_ident::<#type_ident>;
         }

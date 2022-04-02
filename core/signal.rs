@@ -52,6 +52,7 @@ struct SignalAttrs {
     no_hooks: Flag,
     must_collect: Flag,
     deprecated: Flag,
+    #[darling(rename = "override")]
     override_: Flag,
     connect: Option<bool>,
     name: Option<syn::LitStr>,
@@ -501,11 +502,12 @@ impl Signal {
         }
         let arg_names = self.arg_names();
         let args_unwrap = self.args_unwrap(wrapper_ty, glib);
+        let name = &self.name;
         let method_name = &self.sig.as_ref()?.ident;
-        let override_name = format_ident!("{}_override_handler", method_name);
+        let override_ident = format_ident!("{}_override_handler", method_name);
         Some(quote! {{
             #[inline]
-            fn #override_name(
+            fn #override_ident(
                 _token: &#glib::subclass::SignalClassHandlerToken,
                 args: &[#glib::Value]
             ) -> ::std::option::Option<#glib::Value> {
@@ -515,7 +517,8 @@ impl Signal {
             }
             #glib::subclass::object::ObjectClassSubclassExt::override_signal_class_handler(
                 #class_ident,
-                #override_name,
+                #name,
+                #override_ident,
             );
         }})
     }
@@ -525,6 +528,7 @@ impl Signal {
         }
         let sig = self.sig.as_ref()?;
         let output = &sig.output;
+        let name = &self.name;
         let method_name = format_ident!("parent_{}", self.name.to_snake_case());
         let arg_types = self.arg_types();
         let arg_names = arg_types.clone().map(|arg| match &*arg.pat {
@@ -546,13 +550,19 @@ impl Signal {
             syn::ReturnType::Type(_, ty) => Some(quote! {
                 <#ty as #glib::closure::TryFromClosureReturnValue>:: try_from_closure_return_value(
                     ::std::option::Option::Some(result),
-                )
+                ).unwrap_or_else(|e| {
+                    ::std::panic!(
+                        "Invalid return type from chained signal handler for `{}`: {}",
+                        #name,
+                        e,
+                    )
+                })
             }),
             _ => None,
         };
         Some(quote! {
             fn #method_name(&self, #(#arg_types),*) #output {
-                let mut result = Value::from_type(#return_type);
+                let mut result = #glib::Value::from_type(#return_type);
                 let values = [
                     #glib::ToValue::to_value(
                         &#glib::subclass::types::ObjectSubclassExt::instance(self)
@@ -687,5 +697,23 @@ impl Signal {
                 )
             }
         })
+    }
+    pub(crate) fn method_prototypes(&self, glib: &TokenStream) -> Vec<TokenStream> {
+        [
+            self.emit_prototype(glib),
+            self.connect_prototype(glib),
+        ]
+        .into_iter()
+        .filter_map(|d| d)
+        .collect()
+    }
+    pub(crate) fn method_definitions(&self, glib: &TokenStream) -> Vec<TokenStream> {
+        [
+            self.emit_definition(glib),
+            self.connect_definition(glib),
+        ]
+        .into_iter()
+        .filter_map(|d| d)
+        .collect()
     }
 }
