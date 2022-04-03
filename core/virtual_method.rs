@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::{util, TypeBase};
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
@@ -8,11 +10,14 @@ pub struct VirtualMethod {
     pub attrs: Vec<syn::Attribute>,
     pub vis: syn::Visibility,
     pub sig: syn::Signature,
+    pub generic_args: HashSet<usize>,
+    pub base: TypeBase,
 }
 
 impl VirtualMethod {
     pub(crate) fn many_from_items(
         items: &mut Vec<syn::ImplItem>,
+        base: TypeBase,
         errors: &mut Vec<darling::Error>,
     ) -> Vec<Self> {
         let mut virtual_methods = Vec::new();
@@ -25,7 +30,7 @@ impl VirtualMethod {
                     .position(|attr| attr.path.is_ident("virt"));
                 if let Some(method_index) = method_index {
                     let attr = method.attrs.remove(method_index);
-                    let virtual_method = Self::from_method(method, attr, errors);
+                    let virtual_method = Self::from_method(method, attr, base, errors);
                     if let Some(virtual_method) = virtual_method {
                         virtual_methods.push(virtual_method);
                     }
@@ -37,81 +42,101 @@ impl VirtualMethod {
     }
     #[inline]
     fn from_method(
-        method: &syn::ImplItemMethod,
+        method: &mut syn::ImplItemMethod,
         attr: syn::Attribute,
+        base: TypeBase,
         errors: &mut Vec<darling::Error>,
     ) -> Option<Self> {
         if !attr.tokens.is_empty() {
             util::push_error_spanned(errors, &attr.tokens, "Unknown tokens on virtual method");
         }
-        let syn::ImplItemMethod {
-            attrs, vis, sig, ..
-        } = method;
-        if sig
-            .receiver()
-            .map(|r| match r {
-                syn::FnArg::Receiver(syn::Receiver {
-                    reference,
-                    mutability,
-                    ..
-                }) => reference.is_none() || mutability.is_some(),
-                _ => true,
-            })
-            .unwrap_or(true)
-        {
-            if let Some(first) = sig.inputs.first() {
+        let syn::ImplItemMethod { attrs, vis, sig, .. } = method;
+        if sig.inputs.is_empty() {
+            util::push_error_spanned(
+                errors,
+                &sig.inputs,
+                "First argument required on virtual method, must be `self`, `&self` or the wrapper type",
+            );
+        }
+        if base == TypeBase::Interface {
+            if let Some(recv) = sig.receiver() {
                 util::push_error_spanned(
                     errors,
-                    first,
-                    "First argument to method handler must be `&self`",
+                    recv,
+                    "First argument to interface virtual method must be the wrapper type",
                 );
             }
-            return None;
         }
+        let generic_args = sig.inputs.iter_mut().enumerate().filter_map(|(i, arg)| {
+            if let syn::FnArg::Typed(t) = arg {
+                let index = t.attrs.iter().position(|a| a.path.is_ident("is_a"));
+                if let Some(index) = index {
+                    t.attrs.remove(index);
+                    return Some(i);
+                }
+            }
+            None
+        }).collect();
         Some(Self {
             attrs: attrs.clone(),
             vis: vis.clone(),
             sig: sig.clone(),
+            generic_args,
+            base,
         })
     }
     fn external_sig(&self) -> syn::Signature {
-        // TODO - impl IsA args?
         let mut sig = self.sig.clone();
         for (index, arg) in sig.inputs.iter_mut().enumerate() {
             if let syn::FnArg::Typed(syn::PatType { pat, .. }) = arg {
                 if !matches!(**pat, syn::Pat::Ident(_)) {
-                    *pat = Box::new(syn::Pat::Ident(syn::PatIdent {
-                        attrs: Default::default(),
-                        by_ref: None,
-                        mutability: None,
-                        ident: format_ident!("arg{}", index),
-                        subpat: None,
-                    }));
+                    let ident = format_ident!("arg{}", index);
+                    *pat = Box::new(parse_quote! { #ident });
+                }
+            }
+        }
+        if sig.receiver().is_none() {
+            if let Some(arg) = sig.inputs.first_mut() {
+                let ref_ = util::arg_reference(arg);
+                *arg = parse_quote!{ #ref_ self };
+            }
+        }
+        sig
+    }
+    fn public_sig(&self, glib: &TokenStream) -> syn::Signature {
+        let mut sig = self.external_sig();
+        for (index, arg) in sig.inputs.iter_mut().enumerate() {
+            if self.generic_args.contains(&index) {
+                let ref_ = util::arg_reference(arg);
+                if let syn::FnArg::Typed(t) = arg {
+                    let ty = &*t.ty;
+                    let (ref_, ty) = match ty {
+                        syn::Type::Reference(r) => (ref_, &*r.elem),
+                        ty => (None, ty)
+                    };
+                    t.ty = Box::new(parse_quote! { #ref_ impl #glib::IsA<#ty> });
+                } else {
+                    unreachable!()
                 }
             }
         }
         sig
     }
-    pub(crate) fn prototype(&self) -> TokenStream {
-        let Self { attrs, vis, .. } = self;
-        let sig = self.external_sig();
-        quote! {
-            #(#attrs)* #vis #sig
-        }
+    pub(crate) fn prototype(&self, glib: &TokenStream) -> TokenStream {
+        let sig = self.public_sig(glib);
+        quote! { #sig }
     }
     pub(crate) fn definition(
         &self,
         wrapper_ty: &TokenStream,
-        base: TypeBase,
         glib: &TokenStream,
     ) -> TokenStream {
-        let proto = self.prototype();
         let ident = &self.sig.ident;
-        let external_sig = self.external_sig();
-        let args = signature_args(&external_sig);
+        let sig = self.public_sig(glib);
+        let args = signature_args(&sig);
         let obj_ident = syn::Ident::new("____obj", Span::mixed_site());
         let vtable_ident = syn::Ident::new("____vtable", Span::mixed_site());
-        let get_vtable = match base {
+        let get_vtable = match self.base {
             TypeBase::Class => quote! {
                 #glib::ObjectExt::class(#obj_ident)
             },
@@ -119,43 +144,68 @@ impl VirtualMethod {
                 #glib::ObjectExt::interface::<#wrapper_ty>(#obj_ident).unwrap()
             },
         };
+        let cast_args = sig.inputs.iter().enumerate().skip(1).filter_map(|(i, arg)| {
+            let orig = match &self.sig.inputs[1] {
+                syn::FnArg::Typed(t) => t,
+                _ => return None,
+            };
+            self.generic_args.contains(&i)
+                .then(|| arg_name(arg))
+                .flatten()
+                .map(|name| {
+                    let (cast, ty) = match &*orig.ty {
+                        syn::Type::Reference(r) => (quote! { upcast_ref }, &*r.elem),
+                        ty => (quote! { upcast }, ty),
+                    };
+                    quote! {
+                        let #name = #glib::Cast::#cast::<#ty>(#name);
+                    }
+                })
+        });
         quote! {
-            #proto {
+            #sig {
+                #![inline]
                 let #obj_ident = #glib::Cast::upcast_ref::<#wrapper_ty>(self);
                 let #vtable_ident = #get_vtable;
                 let #vtable_ident = ::std::convert::AsRef::as_ref(#vtable_ident);
+                #(#cast_args)*
                 (#vtable_ident.#ident)(#obj_ident, #(#args),*)
             }
         }
     }
-    fn parent_sig(&self, ident: syn::Ident, glib: &TokenStream) -> syn::Signature {
+    fn parent_sig(&self, ident: &syn::Ident, glib: &TokenStream) -> syn::Signature {
         let mut sig = self.external_sig();
         sig.ident = format_ident!("parent_{}", self.sig.ident);
-        let this_index = sig.inputs.is_empty().then(|| 0).unwrap_or(1);
-        sig.inputs.insert(this_index, parse_quote! {
-            #ident: &<Self as #glib::subclass::types::ObjectSubclass>::Type
-        });
+        if !sig.inputs.is_empty() {
+            sig.inputs.insert(1, parse_quote! {
+                #ident: &<Self as #glib::subclass::types::ObjectSubclass>::Type
+            });
+        }
         sig
     }
     pub(crate) fn default_definition(&self, ext_trait: &syn::Ident, glib: &TokenStream) -> TokenStream {
         let this_ident = syn::Ident::new("____this", Span::mixed_site());
-        let mut sig = self.parent_sig(this_ident.clone(), glib);
+        let mut sig = self.parent_sig(&this_ident, glib);
         let parent_ident = std::mem::replace(&mut sig.ident, self.sig.ident.clone());
         let external_sig = self.external_sig();
         let args = signature_args(&external_sig);
         quote! {
             #sig {
+                #![inline]
                 #ext_trait::#parent_ident(self, #this_ident, #(#args),*)
             }
         }
     }
     pub(crate) fn parent_prototype(
         &self,
-        ident: Option<syn::Ident>,
         glib: &TokenStream,
     ) -> TokenStream {
-        let this_ident = ident.unwrap_or_else(|| syn::Ident::new("____this", Span::mixed_site()));
-        let sig = self.parent_sig(this_ident, glib);
+        let mut name = String::from("obj");
+        while signature_args(&self.sig).any(|i| i.to_string() == name) {
+            name.insert(0, '_');
+        }
+        let this_ident = syn::Ident::new(&name, Span::mixed_site());
+        let sig = self.parent_sig(&this_ident, glib);
         quote! { #sig }
     }
     pub(crate) fn parent_definition(
@@ -163,22 +213,21 @@ impl VirtualMethod {
         mod_name: &syn::Ident,
         type_name: &syn::Ident,
         ty: &syn::Type,
-        base: TypeBase,
         glib: &TokenStream,
     ) -> TokenStream {
         let this_ident = syn::Ident::new("____this", Span::mixed_site());
-        let proto = self.parent_prototype(Some(this_ident.clone()), glib);
+        let sig = self.parent_sig(&this_ident, glib);
         let ident = &self.sig.ident;
-        let external_sig = self.external_sig();
-        let args = signature_args(&external_sig);
+        let args = signature_args(&sig);
         let class_name = format_ident!("{}Class", type_name);
         let vtable_ident = syn::Ident::new("____vtable", Span::mixed_site());
-        let parent_vtable_method = match base {
+        let parent_vtable_method = match self.base {
             TypeBase::Class => quote! { parent_class },
             TypeBase::Interface => quote! { parent_interface::<#ty> },
         };
         quote_spanned! { Span::mixed_site() =>
-            #proto {
+            #sig {
+                #![inline]
                 let #this_ident = unsafe {
                     #glib::Cast::unsafe_cast_ref::<#ty>(#this_ident)
                 };
@@ -189,34 +238,30 @@ impl VirtualMethod {
                         as *mut self::#mod_name::#class_name
                     )
                 };
-                (#vtable_ident.#ident)(#this_ident, #(#args),*)
+                (#vtable_ident.#ident)(#(#args),*)
             }
         }
     }
     fn trampoline_sig(&self, ident: syn::Ident, ty: syn::Type) -> syn::Signature {
         let mut sig = self.external_sig();
-        if let Some(syn::FnArg::Receiver(recv)) = sig.receiver().cloned() {
-            sig.inputs[0] = syn::FnArg::Typed(syn::PatType {
-                attrs: recv.attrs,
-                pat: Box::new(syn::Pat::Ident(syn::PatIdent {
-                    attrs: Vec::new(),
-                    by_ref: None,
-                    mutability: None,
-                    ident,
-                    subpat: None,
-                })),
-                colon_token: Default::default(),
-                ty: Box::new(if let Some((and, lifetime)) = recv.reference {
-                    syn::Type::Reference(syn::TypeReference {
-                        and_token: and,
-                        lifetime,
-                        mutability: recv.mutability,
-                        elem: Box::new(ty),
-                    })
+        match sig.receiver().cloned() {
+            Some(ref arg @ syn::FnArg::Receiver(ref recv)) => {
+                let attrs = &recv.attrs;
+                let ref_ = util::arg_reference(&arg);
+                sig.inputs[0] = parse_quote! {
+                    #(#attrs)* #ident: #ref_ #ty
+                };
+            }
+            Some(syn::FnArg::Typed(mut pat)) => {
+                pat.pat = parse_quote! { #ident };
+                if let syn::Type::Reference(r) = &mut *pat.ty {
+                    r.elem = Box::new(ty);
                 } else {
-                    ty
-                }),
-            });
+                    pat.ty = Box::new(ty);
+                }
+                sig.inputs[0] = syn::FnArg::Typed(pat);
+            },
+            _ => {}
         }
         sig
     }
@@ -254,7 +299,9 @@ impl VirtualMethod {
         let trampoline_ident = format_ident!("{}_default_trampoline", ident);
         let mut sig = self.trampoline_sig(this_ident.clone(), ty.clone());
         sig.ident = trampoline_ident.clone();
-        let unwrap_recv = self.unwrap_recv(&this_ident, &this_ident, glib);
+        let unwrap_recv = self.sig.receiver().map(|_| {
+            self.unwrap_recv(&this_ident, &this_ident, glib)
+        });
         let args = signature_args(&sig);
         quote_spanned! { Span::mixed_site() =>
             #sig {
@@ -298,13 +345,16 @@ impl VirtualMethod {
 }
 
 #[inline]
-fn signature_args<'a>(sig: &'a syn::Signature) -> impl Iterator<Item = &'a syn::Ident> + 'a {
-    sig.inputs.iter().filter_map(|arg| {
-        if let syn::FnArg::Typed(syn::PatType { pat, .. }) = arg {
-            if let syn::Pat::Ident(syn::PatIdent { ident, .. }) = pat.as_ref() {
-                return Some(ident);
-            }
+fn signature_args<'a>(sig: &'a syn::Signature) -> impl Iterator<Item = &'a syn::Ident> + Clone + 'a {
+    sig.inputs.iter().filter_map(arg_name)
+}
+
+#[inline]
+fn arg_name(arg: &syn::FnArg) -> Option<&syn::Ident> {
+    if let syn::FnArg::Typed(syn::PatType { pat, .. }) = arg {
+        if let syn::Pat::Ident(syn::PatIdent { ident, .. }) = pat.as_ref() {
+            return Some(ident);
         }
-        None
-    })
+    }
+    None
 }

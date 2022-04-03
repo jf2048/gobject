@@ -46,6 +46,8 @@ impl TypeDefinitionParser {
             name: None,
             crate_ident,
             generics: None,
+            properties_item_index: None,
+            methods_item_index: None,
             properties: Vec::new(),
             signals: Vec::new(),
             public_methods: Vec::new(),
@@ -63,23 +65,23 @@ impl TypeDefinitionParser {
         let (_, items) = def.module.content.as_mut().unwrap();
         let mut struct_ = None;
         let mut impl_ = None;
-        for item in items {
-            let mut first_struct = None;
-            let mut struct_count = 0usize;
-            let mut first_impl = None;
-            let mut impl_count = 0usize;
+        let mut first_struct = None;
+        let mut first_impl = None;
+        let mut struct_count = 0usize;
+        let mut impl_count = 0usize;
+        for (index, item) in items.iter_mut().enumerate() {
             match item {
                 syn::Item::Struct(s) => {
                     if let Some(a) =
                         find_attr(&mut s.attrs, "properties", struct_.is_some(), errors)
                     {
-                        struct_ = Some((s, a));
+                        struct_ = Some((index, a));
                     } else if first_struct.is_none() {
-                        first_struct = Some(s);
+                        first_struct = Some(index);
                     }
                     struct_count += 1;
                 }
-                syn::Item::Impl(i) => {
+                syn::Item::Impl(i) if i.trait_.is_none() => {
                     if find_attr(&mut i.attrs, "methods", impl_.is_some(), errors).is_some() {
                         if let Some((_, trait_, _)) = &i.trait_ {
                             util::push_error_spanned(
@@ -88,37 +90,49 @@ impl TypeDefinitionParser {
                                 "Trait not allowed on #[methods] impl",
                             );
                         }
-                        impl_ = Some(i);
-                    } else if first_impl.is_none() && i.trait_.is_none() {
-                        first_impl = Some(i);
+                        impl_ = Some(index);
+                    } else if first_impl.is_none() {
+                        first_impl = Some(index);
                     }
                     impl_count += 1;
                 }
                 _ => {}
             }
-            if struct_count == 1 && struct_.is_none() {
-                struct_ = first_struct.map(|s| (s, parse_quote! { #[properties] }));
-            }
-            if impl_count == 1 && impl_.is_none() {
-                // only use it if the names match
-                if struct_
-                    .as_ref()
-                    .map(|(s, _)| {
-                        first_impl
-                            .as_ref()
-                            .map(|i| match i.self_ty.as_ref() {
-                                syn::Type::Path(p) => p.path.is_ident(&s.ident),
-                                _ => false,
-                            })
-                            .unwrap_or(true)
-                    })
-                    .unwrap_or(true)
-                {
-                    impl_ = first_impl;
-                }
+        }
+        if struct_count == 1 && struct_.is_none() {
+            if let Some(first_struct) = first_struct {
+                struct_ = Some((first_struct, parse_quote! { #[properties] }));
             }
         }
-        if let Some((struct_, attr)) = struct_ {
+        if impl_count == 1 && impl_.is_none() {
+            // only use it if the names match
+            if struct_
+                .as_ref()
+                .map(|(index, _)| {
+                    let s = match &items[*index] {
+                        syn::Item::Struct(s) => s,
+                        _ => unreachable!(),
+                    };
+                    let impl_ = match &items[first_impl.unwrap()] {
+                        syn::Item::Impl(i) => i,
+                        _ => unreachable!(),
+                    };
+                    match impl_.self_ty.as_ref() {
+                        syn::Type::Path(p) => p.path.is_ident(&s.ident),
+                        _ => false,
+                    }
+                })
+                .unwrap_or(true)
+            {
+                impl_ = first_impl;
+            }
+        }
+        if let Some((index, attr)) = struct_ {
+            def.properties_item_index = Some(index);
+            let struct_ = match &mut items[index] {
+                syn::Item::Struct(s) => s,
+                _ => unreachable!(),
+            };
             def.generics = Some(struct_.generics.clone());
             def.name = Some(struct_.ident.clone());
             let mut input: syn::DeriveInput = struct_.clone().into();
@@ -129,16 +143,21 @@ impl TypeDefinitionParser {
             struct_.fields = fields;
             def.properties.extend(properties);
         }
-        if let Some(impl_) = impl_ {
+        if let Some(index) = impl_ {
+            def.methods_item_index = Some(index);
+            let impl_ = match &mut items[index] {
+                syn::Item::Impl(i) => i,
+                _ => unreachable!(),
+            };
             if def.generics.is_none() {
                 def.generics = Some(impl_.generics.clone());
             }
             def.signals
                 .extend(Signal::many_from_items(&mut impl_.items, base, errors));
             def.public_methods
-                .extend(PublicMethod::many_from_items(&mut impl_.items));
+                .extend(PublicMethod::many_from_items(&mut impl_.items, base, errors));
             def.virtual_methods
-                .extend(VirtualMethod::many_from_items(&mut impl_.items, errors));
+                .extend(VirtualMethod::many_from_items(&mut impl_.items, base, errors));
 
             extract_methods(
                 &mut impl_.items,
@@ -157,6 +176,8 @@ pub struct TypeDefinition {
     pub name: Option<syn::Ident>,
     pub crate_ident: syn::Ident,
     pub generics: Option<syn::Generics>,
+    pub properties_item_index: Option<usize>,
+    pub methods_item_index: Option<usize>,
     pub properties: Vec<Property>,
     pub signals: Vec<Signal>,
     pub public_methods: Vec<PublicMethod>,
@@ -227,6 +248,20 @@ impl TypeDefinition {
             (Wrapper, Subclass, Interface) => Some(quote! {
                 <#recv as #glib::object::ObjectType>::GlibClassType
             }),
+        }
+    }
+    pub fn properties_item(&self) -> Option<&syn::ItemStruct> {
+        let index = self.properties_item_index?;
+        match self.module.content.as_ref()?.1.get(index)? {
+            syn::Item::Struct(s) => Some(s),
+            _ => None,
+        }
+    }
+    pub fn methods_item(&self) -> Option<&syn::ItemImpl> {
+        let index = self.methods_item_index?;
+        match self.module.content.as_ref()?.1.get(index)? {
+            syn::Item::Impl(i) => Some(i),
+            _ => None,
         }
     }
     pub(crate) fn properties_method(&self, method_name: &str) -> Option<TokenStream> {
@@ -316,7 +351,7 @@ impl TypeDefinition {
                     .flatten(),
             )
             .chain(self.public_methods.iter().map(|m| m.prototype()))
-            .chain(self.virtual_methods.iter().map(|m| m.prototype()))
+            .chain(self.virtual_methods.iter().map(|m| m.prototype(&glib)))
             .collect()
     }
     pub(crate) fn method_path(&self, method: &str, from: TypeMode) -> Option<TokenStream> {
@@ -372,7 +407,7 @@ impl TypeDefinition {
             .chain(
                 self.virtual_methods
                     .iter()
-                    .map(|m| m.definition(&ty, self.base, &glib)),
+                    .map(|m| m.definition(&ty, &glib)),
             )
             .collect()
     }
@@ -523,11 +558,11 @@ impl TypeDefinition {
             let parent_method_protos = self
                 .virtual_methods
                 .iter()
-                .map(|m| m.parent_prototype(None, &glib));
+                .map(|m| m.parent_prototype(&glib));
             let parent_method_definitions = self
                 .virtual_methods
                 .iter()
-                .map(|m| m.parent_definition(&self.module.ident, name, &ty, self.base, &glib));
+                .map(|m| m.parent_definition(&self.module.ident, name, &ty, &glib));
             quote! {
                 pub(crate) trait #ext_trait_name: #glib::subclass::types::ObjectSubclass {
                     #(#parent_method_protos;)*

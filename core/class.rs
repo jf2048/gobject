@@ -368,6 +368,12 @@ impl ClassDefinition {
             }
         })
     }
+    fn find_normal_method(&self, ident: &syn::Ident) -> Option<&syn::ImplItemMethod> {
+        self.inner.methods_item()?.items.iter().find_map(|item| match item {
+            syn::ImplItem::Method(m) if m.sig.ident == *ident => Some(m),
+            _ => None,
+        })
+    }
     fn unimplemented_property(glib: &TokenStream) -> TokenStream {
         quote! {
             unimplemented!(
@@ -392,7 +398,11 @@ impl ClassDefinition {
             .properties
             .iter()
             .enumerate()
-            .filter_map(|(index, prop)| prop.set_impl(index, go));
+            .filter_map(|(index, prop)| {
+                let method = prop.custom_method_path(true)
+                    .and_then(|ident| self.find_normal_method(&*ident));
+                prop.set_impl(index, method, go)
+            });
         let method_name = format_ident!("{}", method_name);
         let properties_path = self.inner.method_path("properties", TypeMode::Subclass)?;
         let unimplemented = Self::unimplemented_property(&glib);
@@ -421,7 +431,11 @@ impl ClassDefinition {
             .properties
             .iter()
             .enumerate()
-            .filter_map(|(index, prop)| prop.get_impl(index, go));
+            .filter_map(|(index, prop)| {
+                let method = prop.custom_method_path(false)
+                    .and_then(|ident| self.find_normal_method(&*ident));
+                prop.get_impl(index, method, go)
+            });
         let method_name = format_ident!("{}", method_name);
         let properties_path = self.inner.method_path("properties", TypeMode::Subclass)?;
         let unimplemented = Self::unimplemented_property(&glib);
@@ -635,11 +649,11 @@ pub fn derived_class_properties(
         let set_impls = properties
             .iter()
             .enumerate()
-            .filter_map(|(index, prop)| prop.set_impl(index, go));
+            .filter_map(|(index, prop)| prop.set_impl(index, None, go));
         let get_impls = properties
             .iter()
             .enumerate()
-            .filter_map(|(index, prop)| prop.get_impl(index, go));
+            .filter_map(|(index, prop)| prop.get_impl(index, None, go));
         let unimplemented = ClassDefinition::unimplemented_property(&glib);
         Some(quote! {
             fn derived_set_property(

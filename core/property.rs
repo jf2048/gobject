@@ -6,7 +6,10 @@ use darling::{
 use heck::ToSnakeCase;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
-use std::collections::{HashMap, HashSet};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+};
 use syn::spanned::Spanned;
 
 #[derive(FromDeriveInput)]
@@ -631,7 +634,15 @@ impl Properties {
 
         let mut prop_names = HashSet::new();
         let mut properties = vec![];
-        for (index, (attrs, field)) in std::iter::zip(data, fields.iter_mut()).enumerate() {
+        let offset = if matches!(base, TypeBase::Interface) {
+            1
+        } else {
+            0
+        };
+        for (index, (attrs, field)) in std::iter::zip(data, fields.iter_mut())
+            .skip(offset)
+            .enumerate()
+        {
             let prop = Property::new(attrs, field, index, pod, base, errors);
             if let Some(prop) = prop {
                 if field.vis == syn::Visibility::Inherited {
@@ -786,17 +797,48 @@ impl Property {
             quote! { pspec == &properties[#index] }
         }
     }
+    pub fn custom_method_path(&self, set: bool) -> Option<Cow<'_, syn::Ident>> {
+        let perm = match set {
+            true => &self.set,
+            false => &self.get,
+        };
+        match perm {
+            PropertyPermission::AllowCustomDefault => {
+                let name = self.name.to_string().to_snake_case();
+                let method = match set {
+                    true => format_ident!("set_{}", name),
+                    false => format_ident!("{}", name),
+                };
+                Some(Cow::Owned(method))
+            }
+            PropertyPermission::AllowCustom(path) if path.segments.len() == 1 => {
+                Some(Cow::Borrowed(&path.segments[0].ident))
+            }
+            _ => None,
+        }
+    }
     #[inline]
-    fn custom_call(&self, set_ty: Option<&TokenStream>) -> Option<TokenStream> {
+    fn custom_call(
+        &self,
+        set_ty: Option<&TokenStream>,
+        method: Option<&syn::ImplItemMethod>,
+    ) -> Option<TokenStream> {
         let perm = match set_ty.is_some() {
             true => &self.set,
             false => &self.get,
         };
         let set_ty = set_ty.map(|s| quote! { value.get::<#s>().unwrap() });
-        let args = if matches!(self.storage, PropertyStorage::InterfaceAbstract) {
+        let method_args = method.map(|m| m.sig.inputs.len());
+        let args = if set_ty.is_none() && method_args == Some(0) {
+            quote! {}
+        } else if set_ty.is_some() && method_args == Some(1) {
+            quote! { #set_ty }
+        } else if matches!(self.storage, PropertyStorage::InterfaceAbstract)
+            || method.map(|m| m.sig.receiver().is_none()).unwrap_or(false)
+        {
             quote! { obj, #set_ty }
         } else {
-            quote! { self, obj, #set_ty }
+            quote! { self, #set_ty }
         };
         match perm {
             PropertyPermission::AllowCustomDefault => {
@@ -817,11 +859,16 @@ impl Property {
     fn getter_name(&self) -> syn::Ident {
         format_ident!("{}", self.name.to_string().to_snake_case())
     }
-    pub(crate) fn get_impl(&self, index: usize, go: &syn::Ident) -> Option<TokenStream> {
+    pub(crate) fn get_impl(
+        &self,
+        index: usize,
+        method: Option<&syn::ImplItemMethod>,
+        go: &syn::Ident,
+    ) -> Option<TokenStream> {
         (self.get.is_allowed() && !self.is_abstract()).then(|| {
             let glib = quote! { #go::glib };
             let cmp = self.pspec_cmp(index);
-            let body = if let Some(call) = self.custom_call(None) {
+            let body = if let Some(call) = self.custom_call(None, method) {
                 quote! { #glib::ToValue::to_value(&#call) }
             } else {
                 let field = self.field_storage(None, go);
@@ -918,12 +965,17 @@ impl Property {
             }
         }
     }
-    pub(crate) fn set_impl(&self, index: usize, go: &syn::Ident) -> Option<TokenStream> {
+    pub(crate) fn set_impl(
+        &self,
+        index: usize,
+        method: Option<&syn::ImplItemMethod>,
+        go: &syn::Ident,
+    ) -> Option<TokenStream> {
         (self.set.is_allowed() && !self.is_abstract()).then(|| {
             let glib = quote! { #go::glib };
             let cmp = self.pspec_cmp(index);
             let ty = self.inner_type(go);
-            let body = if let Some(call) = self.custom_call(Some(&ty)) {
+            let body = if let Some(call) = self.custom_call(Some(&ty), method) {
                 quote! { #call; }
             } else if self.is_set_inline() {
                 let body = self.inline_set_impl(

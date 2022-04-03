@@ -1,5 +1,6 @@
 use heck::ToKebabCase;
 use proc_macro2::TokenStream;
+use quote::quote;
 use syn::parse::{Parse, ParseStream, Parser};
 
 pub fn parse<T: Parse>(input: TokenStream, errors: &mut Vec<darling::Error>) -> Option<T> {
@@ -123,5 +124,23 @@ pub(crate) fn is_valid_name(name: &str) -> bool {
         true
     } else {
         false
+    }
+}
+
+pub(crate) fn arg_reference(arg: &syn::FnArg) -> Option<TokenStream> {
+    match arg {
+        syn::FnArg::Receiver(syn::Receiver { reference, mutability, ..}) => {
+            let (and, lifetime) = reference.as_ref()?;
+            Some(quote! { #and #lifetime #mutability })
+        },
+        syn::FnArg::Typed(pat) => match &*pat.ty {
+            syn::Type::Reference(syn::TypeReference {
+                and_token,
+                lifetime,
+                mutability,
+                ..
+            }) => Some(quote! { #and_token #lifetime #mutability }),
+            _ => None,
+        }
     }
 }

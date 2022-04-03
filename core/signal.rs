@@ -3,7 +3,7 @@ use darling::{util::Flag, FromMeta};
 use heck::{ToShoutySnakeCase, ToSnakeCase};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, quote_spanned};
-use syn::spanned::Spanned;
+use syn::{spanned::Spanned, parse_quote};
 
 bitflags::bitflags! {
     pub struct SignalFlags: u32 {
@@ -181,26 +181,13 @@ impl Signal {
         errors: &mut Vec<darling::Error>,
     ) {
         let ident = &method.sig.ident;
-        match base {
-            TypeBase::Class => {
-                if method.sig.receiver().is_none() {
-                    if let Some(first) = method.sig.inputs.first() {
-                        util::push_error_spanned(
-                            errors,
-                            first,
-                            "First argument to class signal handler must be `&self`",
-                        );
-                    }
-                }
-            }
-            TypeBase::Interface => {
-                if let Some(recv) = method.sig.receiver() {
-                    util::push_error_spanned(
-                        errors,
-                        recv,
-                        "First argument to interface signal handler must be the wrapper type",
-                    );
-                }
+        if base == TypeBase::Interface {
+            if let Some(recv) = method.sig.receiver() {
+                util::push_error_spanned(
+                    errors,
+                    recv,
+                    "First argument to interface signal handler must be the wrapper type",
+                );
             }
         }
         let signal_attrs = util::parse_paren_list::<SignalAttrs>(attr.tokens.into(), errors);
@@ -299,14 +286,7 @@ impl Signal {
     fn inputs(&self) -> impl Iterator<Item = &syn::FnArg> + Clone {
         self.sig
             .as_ref()
-            /*
-            .map(|s| {
-                // if override, leave the last argument for the token
-                let count = s.sig.inputs.len() - if self.override_ { 1 } else { 0 };
-                s.sig.inputs.iter().take(s.sig.inputs.len())
-            })
-            */
-            .map(|s| s.inputs.iter().take(s.inputs.len()))
+            .map(|s| s.inputs.iter())
             .expect("no definition for signal")
     }
     fn arg_names(&self) -> impl Iterator<Item = syn::Ident> + Clone + '_ {
@@ -319,31 +299,47 @@ impl Signal {
         self_ty: &'a TokenStream,
         glib: &'a TokenStream,
     ) -> impl Iterator<Item = TokenStream> + 'a {
-        self.inputs().enumerate().map(move |(index, input)| {
-            let ty = match input {
-                syn::FnArg::Receiver(_) => {
-                    quote! { #self_ty }
+        let recv = self.sig
+            .as_ref()
+            .and_then(|s| s.receiver())
+            .map(|recv| {
+                let ty = match recv {
+                    syn::FnArg::Receiver(_) => parse_quote! { #self_ty },
+                    syn::FnArg::Typed(t) => t.ty.as_ref().clone(),
+                };
+                let ref_ = (!matches!(ty, syn::Type::Reference(_))).then(|| quote! { & });
+                quote! {
+                    let arg0 = args[0usize].get::<#ty>().unwrap_or_else(|e| {
+                        ::std::panic!(
+                            "Wrong type for argument {}: {:?}",
+                            0usize,
+                            e
+                        )
+                    });
+                    let arg0 = #glib::subclass::prelude::ObjectSubclassIsExt::imp(#ref_ arg0);
                 }
+            });
+        let offset = recv.as_ref().map(|_| 1).unwrap_or(0);
+        let rest = self.inputs().enumerate().skip(offset).map(move |(index, input)| {
+            let ty = match input {
                 syn::FnArg::Typed(t) => {
                     let ty = &t.ty;
                     quote! { #ty }
-                }
+                },
+                syn::FnArg::Receiver(_) => unreachable!(),
             };
             let arg_name = format_ident!("arg{}", index);
-            let unwrap_recv = match input {
-                syn::FnArg::Receiver(_) => Some(quote! {
-                    let #arg_name = #glib::subclass::prelude::ObjectSubclassIsExt::imp(&#arg_name);
-                }),
-                _ => None,
-            };
-            let err_msg = format!("Wrong type for argument {}: {{:?}}", index);
             quote! {
                 let #arg_name = args[#index].get::<#ty>().unwrap_or_else(|e| {
-                    panic!(#err_msg, e)
+                    ::std::panic!(
+                        "Wrong type for argument {}: {:?}",
+                        #index,
+                        e
+                    )
                 });
-                #unwrap_recv
             }
-        })
+        });
+        recv.into_iter().chain(rest)
     }
     fn arg_types(&self) -> impl Iterator<Item = syn::PatType> + Clone + '_ {
         self.inputs().skip(1).enumerate().map(|(index, arg)| {
@@ -382,7 +378,10 @@ impl Signal {
                         #name,
                         <#wrapper_ty as #glib::StaticType>::static_type(),
                     ).unwrap_or_else(|| {
-                        panic!("Signal `{}` not registered, is `derived_signals` used correctly?", #name)
+                        ::std::panic!(
+                            "Signal `{}` not registered, is `derived_signals` used correctly?",
+                            #name
+                        )
                     })
                 });
         }

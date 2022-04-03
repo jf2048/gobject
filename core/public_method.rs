@@ -1,5 +1,7 @@
+use crate::{util, TypeBase};
 use proc_macro2::{Span, TokenStream};
-use quote::{format_ident, quote, quote_spanned};
+use quote::{format_ident, quote};
+use syn::parse_quote;
 
 #[derive(Debug)]
 pub struct PublicMethod {
@@ -7,16 +9,42 @@ pub struct PublicMethod {
 }
 
 impl PublicMethod {
-    pub(crate) fn many_from_items(items: &mut Vec<syn::ImplItem>) -> Vec<Self> {
+    pub(crate) fn many_from_items(
+        items: &mut Vec<syn::ImplItem>,
+        base: TypeBase,
+        errors: &mut Vec<darling::Error>,
+    ) -> Vec<Self> {
         let mut public_methods = Vec::new();
 
         for item in items {
             if let syn::ImplItem::Method(method) = item {
-                if matches!(method.vis, syn::Visibility::Public(_)) {
-                    method.vis = syn::parse_quote! { pub(super) };
+                let index = method
+                    .attrs
+                    .iter()
+                    .position(|attr| attr.path.is_ident("public"));
+                if let Some(index) = index {
+                    let attr = method.attrs.remove(index);
+                    if !attr.tokens.is_empty() {
+                        util::push_error_spanned(
+                            errors,
+                            &attr.tokens,
+                            "Unknown tokens on public method",
+                        );
+                    }
                     let sig = method.sig.clone();
                     let public_method = Self { sig };
                     public_methods.push(public_method);
+                }
+            }
+        }
+        if base == TypeBase::Interface {
+            for method in &public_methods {
+                if let Some(recv) = method.sig.receiver() {
+                    util::push_error_spanned(
+                        errors,
+                        recv,
+                        "First argument to interface public method must be the wrapper type",
+                    );
                 }
             }
         }
@@ -25,21 +53,15 @@ impl PublicMethod {
     }
     fn external_sig(&self) -> syn::Signature {
         let mut sig = self.sig.clone();
-        if sig.receiver().is_some() && sig.inputs.len() > 1 {
-            let mut inputs = sig.inputs.into_iter().collect::<Vec<_>>();
-            inputs.remove(1);
-            sig.inputs = FromIterator::from_iter(inputs.into_iter());
+        if sig.receiver().is_none() && !sig.inputs.is_empty() {
+            let ref_ = util::arg_reference(&sig.inputs[0]);
+            sig.inputs[0] = parse_quote! { #ref_ self };
         }
         for (index, arg) in sig.inputs.iter_mut().enumerate() {
             if let syn::FnArg::Typed(syn::PatType { pat, .. }) = arg {
                 if !matches!(**pat, syn::Pat::Ident(_)) {
-                    *pat = Box::new(syn::Pat::Ident(syn::PatIdent {
-                        attrs: Default::default(),
-                        by_ref: None,
-                        mutability: None,
-                        ident: format_ident!("arg{}", index),
-                        subpat: None,
-                    }));
+                    let ident = format_ident!("arg{}", index);
+                    *pat = Box::new(parse_quote! { #ident });
                 }
             }
         }
@@ -53,34 +75,23 @@ impl PublicMethod {
         let proto = self.prototype();
         let ident = &self.sig.ident;
         let sig = self.external_sig();
-        let args = signature_args(&sig).collect::<Vec<_>>();
-        let this_ident = syn::Ident::new("____this", Span::mixed_site());
-        if let Some(r) = sig.receiver() {
-            let is_ref = match r {
-                syn::FnArg::Receiver(r) => r.reference.is_some(),
-                syn::FnArg::Typed(t) => matches!(*t.ty, syn::Type::Reference(_)),
-            };
-            let self_ = match is_ref {
-                true => quote! { self },
-                false => quote! { &self },
-            };
-            let wrapper = if self.sig.inputs.len() > 1 {
-                Some(quote! { #self_, })
-            } else {
-                None
-            };
-            quote_spanned! { Span::mixed_site() =>
+        let args = signature_args(&sig);
+        if let Some(r) = self.sig.receiver() {
+            let this_ident = syn::Ident::new("____this", Span::mixed_site());
+            let ref_ = util::arg_reference(r).is_none().then(|| quote! { & });
+            quote! {
                 #proto {
                     #![inline]
-                    let #this_ident = #glib::subclass::prelude::ObjectSubclassIsExt::imp(#self_);
-                    #sub_ty::#ident(#this_ident, #wrapper #(#args),*)
+                    let #this_ident = #glib::subclass::prelude::ObjectSubclassIsExt::imp(#ref_ self);
+                    #sub_ty::#ident(#this_ident, #(#args),*)
                 }
             }
         } else {
-            quote_spanned! { Span::mixed_site() =>
+            let first = self.sig.inputs.first().map(|_| quote! { self, });
+            quote! {
                 #proto {
                     #![inline]
-                    #sub_ty::#ident(#(#args),*)
+                    #sub_ty::#ident(#first #(#args),*)
                 }
             }
         }

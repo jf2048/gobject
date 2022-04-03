@@ -3,6 +3,7 @@ use glib::prelude::*;
 #[gobject::class(final)]
 mod basic {
     use glib::once_cell::unsync::OnceCell;
+    use glib::subclass::prelude::ObjectSubclassIsExt;
     use glib::subclass::prelude::ObjectImplExt;
     use std::cell::{Cell, RefCell};
     use std::marker::PhantomData;
@@ -63,19 +64,23 @@ mod basic {
             self.parent_constructed(obj);
             obj.connect_my_i32_notify(|obj| obj.notify_my_computed_prop());
         }
-        pub fn my_custom_accessors(&self, _obj: &super::BasicProps) -> String {
+        #[public]
+        fn my_custom_accessors(&self) -> String {
             self.my_custom_accessors.borrow().clone()
         }
-        pub fn set_my_custom_accessors(&self, obj: &super::BasicProps, value: String) {
-            let old = self.my_custom_accessors.replace(value);
-            if old != *self.my_custom_accessors.borrow() {
+        #[public]
+        fn set_my_custom_accessors(obj: &super::BasicProps, value: String) {
+            let imp = obj.imp();
+            let old = imp.my_custom_accessors.replace(value);
+            if old != *imp.my_custom_accessors.borrow() {
                 obj.notify_my_custom_accessors();
             }
         }
-        pub fn my_computed_prop(&self, _obj: &super::BasicProps) -> i32 {
+        #[public]
+        fn my_computed_prop(&self) -> i32 {
             self.my_i32.get() + 7
         }
-        fn set_my_computed_prop(&self, obj: &super::BasicProps, value: i32) {
+        fn set_my_computed_prop(obj: &super::BasicProps, value: i32) {
             obj.set_my_i32(value - 7);
         }
     }

@@ -9,7 +9,13 @@ mod iface {
     }
     impl Dummy {
         #[signal]
-        fn my_sig(iface: &super::Dummy, hello: i32) {}
+        fn my_sig(iface: &super::Dummy, hello: u64) {
+            iface.set_my_prop(hello);
+        }
+        #[virt]
+        fn my_virt(iface: &super::Dummy) -> u64 {
+            iface.my_prop() + 100
+        }
     }
 }
 
@@ -25,6 +31,29 @@ mod implement {
         my_auto_prop: Cell<i64>,
     }
     impl super::DummyImpl for Implementor {}
+}
+
+#[gobject::class(final, implements(Dummy))]
+mod implement2 {
+    use std::cell::Cell;
+    #[derive(Default)]
+    pub struct Implementor2 {
+        #[property(get, set, override_iface = "super::Dummy")]
+        my_prop: Cell<u64>,
+    }
+    impl Implementor2 {
+        #[signal(override)]
+        fn my_sig(&self, hello: u64) {
+            self.parent_my_sig(55);
+            assert_eq!(self.my_prop.get(), 55);
+            self.my_prop.set(hello + 22);
+        }
+    }
+    impl super::DummyImpl for Implementor2 {
+        fn my_virt(self, iface: &Self::Type) -> u64 {
+            iface.my_prop() + 200
+        }
+    }
 }
 
 #[test]
