@@ -493,7 +493,7 @@ impl Signal {
         &self,
         wrapper_ty: &TokenStream,
         sub_ty: &TokenStream,
-        class_ident: &syn::Ident,
+        class_ident: &TokenStream,
         glib: &TokenStream,
     ) -> Option<TokenStream> {
         if !self.override_ {
@@ -539,11 +539,19 @@ impl Signal {
                 #glib::ToValue::to_value(&#arg)
             }
         });
-        let return_type = match output {
-            syn::ReturnType::Type(_, ty) => quote! {
-                <#ty as #glib::StaticType>::static_type()
+        let declare_result = match output {
+            syn::ReturnType::Type(_, ty) => Some(quote! {
+                let mut result = #glib::Value::from_type(
+                    <#ty as #glib::StaticType>::static_type()
+                );
+            }),
+            syn::ReturnType::Default => None,
+        };
+        let result_ptr = match output {
+            syn::ReturnType::Type(_, _) => quote! {
+                #glib::translate::ToGlibPtrMut::to_glib_none_mut(&mut result).0
             },
-            _ => quote! { #glib::Type::UNIT },
+            syn::ReturnType::Default => quote! { ::std::ptr::null_mut() },
         };
         let unwrap = match output {
             syn::ReturnType::Type(_, ty) => Some(quote! {
@@ -557,11 +565,11 @@ impl Signal {
                     )
                 })
             }),
-            _ => None,
+            syn::ReturnType::Default => None,
         };
         Some(quote! {
             fn #method_name(&self, #(#arg_types),*) #output {
-                let mut result = #glib::Value::from_type(#return_type);
+                #declare_result
                 let values = [
                     #glib::ToValue::to_value(
                         &#glib::subclass::types::ObjectSubclassExt::instance(self)
@@ -571,7 +579,7 @@ impl Signal {
                 unsafe {
                     #glib::gobject_ffi::g_signal_chain_from_overridden(
                         values.as_ptr() as *mut #glib::Value as *mut #glib::gobject_ffi::GValue,
-                        #glib::translate::ToGlibPtrMut::to_glib_none_mut(&mut result).0,
+                        #result_ptr,
                     );
                 }
                 #unwrap

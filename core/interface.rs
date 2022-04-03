@@ -3,7 +3,7 @@ use darling::{util::PathList, FromMeta};
 use heck::ToUpperCamelCase;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned, ToTokens};
-use syn::spanned::Spanned;
+use syn::{spanned::Spanned, parse_quote};
 
 #[derive(Debug, Default, FromMeta)]
 #[darling(default)]
@@ -76,12 +76,33 @@ impl InterfaceDefinition {
 
         let extra = iface.extra_private_items();
 
-        let (_, items) = iface
-            .inner
-            .module
-            .content
-            .get_or_insert_with(Default::default);
-        items.extend(extra.into_iter());
+        iface.inner.ensure_items().extend(extra.into_iter());
+
+        if !iface.inner.virtual_methods.is_empty() {
+            if let Some(index) = iface.inner.properties_item_index {
+                let fields = iface.inner.type_struct_fields();
+                let items = iface.inner.ensure_items();
+                match &mut items[index] {
+                    syn::Item::Struct(s) => match &mut s.fields {
+                        syn::Fields::Named(n) => {
+                            let fields: syn::FieldsNamed = parse_quote! { {
+                                #(pub #fields),*
+                            } };
+                            n.named.extend(fields.named.into_iter());
+                        },
+                        f => util::push_error_spanned(
+                            errors,
+                            f,
+                            "Interface struct with virtual methods must have named fields",
+                        ),
+                    },
+                    _ => unreachable!(),
+                }
+            } else if let Some(def) = iface.interface_struct_definition() {
+                let items = iface.inner.ensure_items();
+                items.push(syn::Item::Verbatim(def));
+            }
+        }
 
         iface
     }
@@ -166,9 +187,8 @@ impl InterfaceDefinition {
         )
     }
     fn interface_init_method(&self, method_name: &str) -> Option<TokenStream> {
-        let iface_ident = syn::Ident::new("self", Span::mixed_site());
         let method_name = format_ident!("{}", method_name);
-        let body = self.inner.type_init_body(&iface_ident);
+        let body = self.inner.type_init_body(&quote! { self });
         let extra = &self.extra_interface_init_stmts;
         if body.is_none() && extra.is_empty() {
             return None;
@@ -181,14 +201,16 @@ impl InterfaceDefinition {
         })
     }
     fn interface_struct_definition(&self) -> Option<TokenStream> {
+        if self.inner.properties_item_index.is_some() {
+            return None;
+        }
         let fields = self.inner.type_struct_fields();
         let name = self.inner.name.as_ref()?;
         let generics = self.inner.generics.as_ref()?;
-        let iface_name = format_ident!("{}Interface", name);
         let glib = self.inner.glib()?;
         Some(quote! {
             #[repr(C)]
-            pub struct #iface_name #generics {
+            pub struct #name #generics {
                 pub ____parent_iface: #glib::gobject_ffi::GTypeInterface,
                 #(pub #fields),*
             }

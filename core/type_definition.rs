@@ -264,6 +264,9 @@ impl TypeDefinition {
             _ => None,
         }
     }
+    pub fn ensure_items(&mut self) -> &mut Vec<syn::Item> {
+        &mut self.module.content.get_or_insert_with(Default::default).1
+    }
     pub(crate) fn properties_method(&self, method_name: &str) -> Option<TokenStream> {
         if self.properties.is_empty() {
             return None;
@@ -463,7 +466,7 @@ impl TypeDefinition {
         }
     }
     #[inline]
-    fn default_vtable_assignments(&self, class_ident: &syn::Ident) -> Option<TokenStream> {
+    fn default_vtable_assignments(&self, class_ident: &TokenStream) -> Option<TokenStream> {
         if self.virtual_methods.is_empty() {
             return None;
         }
@@ -475,7 +478,7 @@ impl TypeDefinition {
             |m| m.set_default_trampoline(name, &ty, class_ident, &glib),
         )))
     }
-    pub(crate) fn type_init_body(&self, class_ident: &syn::Ident) -> Option<TokenStream> {
+    pub(crate) fn type_init_body(&self, class_ident: &TokenStream) -> Option<TokenStream> {
         let glib = self.glib()?;
         let wrapper_ty =
             self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
@@ -489,7 +492,7 @@ impl TypeDefinition {
             .signals
             .iter()
             .filter_map(|signal| {
-                signal.class_init_override(&wrapper_ty, &sub_ty, &class_ident, &glib)
+                signal.class_init_override(&wrapper_ty, &sub_ty, class_ident, &glib)
             })
             .collect::<Vec<_>>();
         if set_vtable.is_none() && overrides.is_empty() {

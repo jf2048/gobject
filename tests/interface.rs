@@ -35,6 +35,8 @@ mod implement {
 
 #[gobject::class(final, implements(Dummy))]
 mod implement2 {
+    use super::{DummyExt, DummyImplExt};
+
     use std::cell::Cell;
     #[derive(Default)]
     pub struct Implementor2 {
@@ -50,8 +52,8 @@ mod implement2 {
         }
     }
     impl super::DummyImpl for Implementor2 {
-        fn my_virt(self, iface: &Self::Type) -> u64 {
-            iface.my_prop() + 200
+        fn my_virt(&self, obj: &Self::Type) -> u64 {
+            obj.my_prop() + 200 + self.parent_my_virt(obj)
         }
     }
 }
@@ -62,4 +64,10 @@ fn interface() {
     obj.set_my_prop(4000);
     obj.set_my_auto_prop(-5);
     obj.emit_my_sig(123);
+    assert_eq!(obj.my_prop(), 123);
+    assert_eq!(obj.my_virt(), 223);
+    let obj = glib::Object::new::<Implementor2>(&[]).unwrap();
+    obj.emit_my_sig(133);
+    assert_eq!(obj.my_prop(), 155);
+    assert_eq!(obj.my_virt(), 610);
 }

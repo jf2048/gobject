@@ -223,7 +223,7 @@ impl ClassDefinition {
         let glib = self.inner.glib()?;
         let class_ident = syn::Ident::new("____class", Span::mixed_site());
         let method_name = format_ident!("{}", method_name);
-        let body = self.inner.type_init_body(&class_ident);
+        let body = self.inner.type_init_body(&quote! { #class_ident });
         let extra = &self.extra_class_init_stmts;
         if body.is_none() && extra.is_empty() {
             return None;
@@ -338,7 +338,7 @@ impl ClassDefinition {
         let abstract_ = self.abstract_;
         let parent_type = format_ident!("{}ParentType", name);
         let interfaces = format_ident!("{}Interfaces", name);
-        let class_struct_type = self.class_struct_definition().map(|_| {
+        let class_struct_type = (!self.inner.virtual_methods.is_empty()).then(|| {
             let class_name = format_ident!("{}Class", name);
             quote! { type Class = #class_name; }
         });
