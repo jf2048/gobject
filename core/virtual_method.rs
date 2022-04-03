@@ -161,7 +161,7 @@ impl VirtualMethod {
             .enumerate()
             .skip(1)
             .filter_map(|(i, arg)| {
-                let orig = match &self.sig.inputs[1] {
+                let orig = match &self.sig.inputs[i] {
                     syn::FnArg::Typed(t) => t,
                     _ => return None,
                 };
