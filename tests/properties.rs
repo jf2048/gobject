@@ -253,3 +253,40 @@ fn pod_type() {
     obj.set_int_prop(5);
     obj.set_string_prop("123".into());
 }
+
+#[derive(Clone, Debug, PartialEq, glib::Boxed)]
+#[boxed_type(name = "Point", nullable)]
+pub struct Point {
+    x: f64,
+    y: f64,
+}
+
+#[gobject::class]
+mod optionals {
+    use std::cell::RefCell;
+    #[derive(Default)]
+    pub struct Optionals {
+        #[property(get, set, borrow, object)]
+        obj: RefCell<Option<super::Pod>>,
+        #[property(get, set, borrow, boxed)]
+        point: RefCell<Option<super::Point>>,
+    }
+}
+
+#[test]
+fn optional_props() {
+    let obj = glib::Object::new::<Optionals>(&[]).unwrap();
+
+    assert!(obj.obj().is_none());
+    obj.set_obj(Some(glib::Object::new::<Pod>(&[]).unwrap()));
+    assert!(obj.obj().is_some());
+    obj.set_obj(None);
+    assert!(obj.obj().is_none());
+
+    assert!(obj.point().is_none());
+    let point = Point { x: 100., y: 200. };
+    obj.set_point(Some(point.clone()));
+    assert_eq!(obj.point().as_ref(), Some(&point));
+    obj.set_point(None);
+    assert!(obj.point().is_none());
+}
