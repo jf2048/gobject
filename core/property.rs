@@ -531,6 +531,15 @@ pub enum PropertyStorage {
     Delegate(Box<syn::Expr>),
 }
 
+impl PropertyStorage {
+    fn has_field(&self) -> bool {
+        matches!(
+            self,
+            PropertyStorage::NamedField(_) | PropertyStorage::UnnamedField(_)
+        )
+    }
+}
+
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum PropertyName {
     Field(syn::Ident),
@@ -627,27 +636,29 @@ impl Properties {
         });
         let data = data.take_struct().map(|s| s.fields).unwrap_or_default();
 
-        let mut fields = match &input.data {
-            syn::Data::Struct(syn::DataStruct { fields, .. }) => fields.clone(),
+        let fields = match &input.data {
+            syn::Data::Struct(syn::DataStruct { fields, .. }) => fields,
             _ => return Default::default(),
         };
 
         let mut prop_names = HashSet::new();
         let mut properties = vec![];
+        let mut out_fields = Vec::new();
         let offset = if matches!(base, TypeBase::Interface) {
+            if let Some(first) = fields.iter().next() {
+                out_fields.push(first.clone());
+            }
             1
         } else {
             0
         };
-        for (index, (attrs, field)) in std::iter::zip(data, fields.iter_mut())
+        for (index, (attrs, mut field)) in std::iter::zip(data, fields.clone().into_iter())
             .skip(offset)
             .enumerate()
         {
-            let prop = Property::new(attrs, field, index, pod, base, errors);
+            let prop = Property::new(attrs, &field, index, pod, base, errors);
+            let mut has_field = true;
             if let Some(prop) = prop {
-                if field.vis == syn::Visibility::Inherited {
-                    field.vis = syn::parse_quote! { pub(super) };
-                }
                 let name = prop.name.to_string();
                 if prop_names.contains(&name) {
                     util::push_error(
@@ -657,12 +668,28 @@ impl Properties {
                     );
                 }
                 prop_names.insert(name);
+                has_field = prop.storage.has_field();
                 properties.push(prop);
             }
             while let Some(index) = field.attrs.iter().position(|a| a.path.is_ident("property")) {
                 field.attrs.remove(index);
             }
+            if has_field {
+                out_fields.push(field);
+            }
         }
+
+        let fields = match fields {
+            syn::Fields::Named(_) => syn::Fields::Named(syn::FieldsNamed {
+                brace_token: Default::default(),
+                named: FromIterator::from_iter(out_fields),
+            }),
+            syn::Fields::Unnamed(_) => syn::Fields::Unnamed(syn::FieldsUnnamed {
+                paren_token: Default::default(),
+                unnamed: FromIterator::from_iter(out_fields),
+            }),
+            f => f.clone()
+        };
 
         Self {
             final_type,
