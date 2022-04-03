@@ -3,8 +3,8 @@ use glib::prelude::*;
 #[gobject::class(final)]
 mod basic {
     use glib::once_cell::unsync::OnceCell;
-    use glib::subclass::prelude::ObjectSubclassIsExt;
     use glib::subclass::prelude::ObjectImplExt;
+    use glib::subclass::prelude::ObjectSubclassIsExt;
     use std::cell::{Cell, RefCell};
     use std::marker::PhantomData;
     use std::sync::{Mutex, RwLock};

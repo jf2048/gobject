@@ -36,4 +36,3 @@ fn properties() {
         panic!("{}", darling::Error::multiple(errors));
     }
 }
-

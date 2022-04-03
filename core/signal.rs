@@ -3,7 +3,7 @@ use darling::{util::Flag, FromMeta};
 use heck::{ToShoutySnakeCase, ToSnakeCase};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, quote_spanned};
-use syn::{spanned::Spanned, parse_quote};
+use syn::{parse_quote, spanned::Spanned};
 
 bitflags::bitflags! {
     pub struct SignalFlags: u32 {
@@ -299,46 +299,47 @@ impl Signal {
         self_ty: &'a TokenStream,
         glib: &'a TokenStream,
     ) -> impl Iterator<Item = TokenStream> + 'a {
-        let recv = self.sig
-            .as_ref()
-            .and_then(|s| s.receiver())
-            .map(|recv| {
-                let ty = match recv {
-                    syn::FnArg::Receiver(_) => parse_quote! { #self_ty },
-                    syn::FnArg::Typed(t) => t.ty.as_ref().clone(),
-                };
-                let ref_ = (!matches!(ty, syn::Type::Reference(_))).then(|| quote! { & });
-                quote! {
-                    let arg0 = args[0usize].get::<#ty>().unwrap_or_else(|e| {
-                        ::std::panic!(
-                            "Wrong type for argument {}: {:?}",
-                            0usize,
-                            e
-                        )
-                    });
-                    let arg0 = #glib::subclass::prelude::ObjectSubclassIsExt::imp(#ref_ arg0);
-                }
-            });
-        let offset = recv.as_ref().map(|_| 1).unwrap_or(0);
-        let rest = self.inputs().enumerate().skip(offset).map(move |(index, input)| {
-            let ty = match input {
-                syn::FnArg::Typed(t) => {
-                    let ty = &t.ty;
-                    quote! { #ty }
-                },
-                syn::FnArg::Receiver(_) => unreachable!(),
+        let recv = self.sig.as_ref().and_then(|s| s.receiver()).map(|recv| {
+            let ty = match recv {
+                syn::FnArg::Receiver(_) => parse_quote! { #self_ty },
+                syn::FnArg::Typed(t) => t.ty.as_ref().clone(),
             };
-            let arg_name = format_ident!("arg{}", index);
+            let ref_ = (!matches!(ty, syn::Type::Reference(_))).then(|| quote! { & });
             quote! {
-                let #arg_name = args[#index].get::<#ty>().unwrap_or_else(|e| {
+                let arg0 = args[0usize].get::<#ty>().unwrap_or_else(|e| {
                     ::std::panic!(
                         "Wrong type for argument {}: {:?}",
-                        #index,
+                        0usize,
                         e
                     )
                 });
+                let arg0 = #glib::subclass::prelude::ObjectSubclassIsExt::imp(#ref_ arg0);
             }
         });
+        let offset = recv.as_ref().map(|_| 1).unwrap_or(0);
+        let rest = self
+            .inputs()
+            .enumerate()
+            .skip(offset)
+            .map(move |(index, input)| {
+                let ty = match input {
+                    syn::FnArg::Typed(t) => {
+                        let ty = &t.ty;
+                        quote! { #ty }
+                    }
+                    syn::FnArg::Receiver(_) => unreachable!(),
+                };
+                let arg_name = format_ident!("arg{}", index);
+                quote! {
+                    let #arg_name = args[#index].get::<#ty>().unwrap_or_else(|e| {
+                        ::std::panic!(
+                            "Wrong type for argument {}: {:?}",
+                            #index,
+                            e
+                        )
+                    });
+                }
+            });
         recv.into_iter().chain(rest)
     }
     fn arg_types(&self) -> impl Iterator<Item = syn::PatType> + Clone + '_ {
@@ -706,21 +707,15 @@ impl Signal {
         })
     }
     pub(crate) fn method_prototypes(&self, glib: &TokenStream) -> Vec<TokenStream> {
-        [
-            self.emit_prototype(glib),
-            self.connect_prototype(glib),
-        ]
-        .into_iter()
-        .filter_map(|d| d)
-        .collect()
+        [self.emit_prototype(glib), self.connect_prototype(glib)]
+            .into_iter()
+            .filter_map(|d| d)
+            .collect()
     }
     pub(crate) fn method_definitions(&self, glib: &TokenStream) -> Vec<TokenStream> {
-        [
-            self.emit_definition(glib),
-            self.connect_definition(glib),
-        ]
-        .into_iter()
-        .filter_map(|d| d)
-        .collect()
+        [self.emit_definition(glib), self.connect_definition(glib)]
+            .into_iter()
+            .filter_map(|d| d)
+            .collect()
     }
 }

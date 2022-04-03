@@ -129,10 +129,14 @@ pub(crate) fn is_valid_name(name: &str) -> bool {
 
 pub(crate) fn arg_reference(arg: &syn::FnArg) -> Option<TokenStream> {
     match arg {
-        syn::FnArg::Receiver(syn::Receiver { reference, mutability, ..}) => {
+        syn::FnArg::Receiver(syn::Receiver {
+            reference,
+            mutability,
+            ..
+        }) => {
             let (and, lifetime) = reference.as_ref()?;
             Some(quote! { #and #lifetime #mutability })
-        },
+        }
         syn::FnArg::Typed(pat) => match &*pat.ty {
             syn::Type::Reference(syn::TypeReference {
                 and_token,
@@ -141,6 +145,6 @@ pub(crate) fn arg_reference(arg: &syn::FnArg) -> Option<TokenStream> {
                 ..
             }) => Some(quote! { #and_token #lifetime #mutability }),
             _ => None,
-        }
+        },
     }
 }

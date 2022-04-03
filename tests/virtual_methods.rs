@@ -49,5 +49,8 @@ fn virtual_methods() {
     obj.set_my_prop(4000);
     obj.set_my_auto_prop(-5);
     assert_eq!(obj.emit_abc(), 300);
-    assert_eq!(obj.virtual_concat("Hello", "World"), "overridden: Hello World 4000");
+    assert_eq!(
+        obj.virtual_concat("Hello", "World"),
+        "overridden: Hello World 4000"
+    );
 }

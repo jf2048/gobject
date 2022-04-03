@@ -50,7 +50,9 @@ impl VirtualMethod {
         if !attr.tokens.is_empty() {
             util::push_error_spanned(errors, &attr.tokens, "Unknown tokens on virtual method");
         }
-        let syn::ImplItemMethod { attrs, vis, sig, .. } = method;
+        let syn::ImplItemMethod {
+            attrs, vis, sig, ..
+        } = method;
         if sig.inputs.is_empty() {
             util::push_error_spanned(
                 errors,
@@ -67,16 +69,21 @@ impl VirtualMethod {
                 );
             }
         }
-        let generic_args = sig.inputs.iter_mut().enumerate().filter_map(|(i, arg)| {
-            if let syn::FnArg::Typed(t) = arg {
-                let index = t.attrs.iter().position(|a| a.path.is_ident("is_a"));
-                if let Some(index) = index {
-                    t.attrs.remove(index);
-                    return Some(i);
+        let generic_args = sig
+            .inputs
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(i, arg)| {
+                if let syn::FnArg::Typed(t) = arg {
+                    let index = t.attrs.iter().position(|a| a.path.is_ident("is_a"));
+                    if let Some(index) = index {
+                        t.attrs.remove(index);
+                        return Some(i);
+                    }
                 }
-            }
-            None
-        }).collect();
+                None
+            })
+            .collect();
         Some(Self {
             attrs: attrs.clone(),
             vis: vis.clone(),
@@ -98,7 +105,7 @@ impl VirtualMethod {
         if sig.receiver().is_none() {
             if let Some(arg) = sig.inputs.first_mut() {
                 let ref_ = util::arg_reference(arg);
-                *arg = parse_quote!{ #ref_ self };
+                *arg = parse_quote! { #ref_ self };
             }
         }
         sig
@@ -112,7 +119,7 @@ impl VirtualMethod {
                     let ty = &*t.ty;
                     let (ref_, ty) = match ty {
                         syn::Type::Reference(r) => (ref_, &*r.elem),
-                        ty => (None, ty)
+                        ty => (None, ty),
                     };
                     t.ty = Box::new(parse_quote! { #ref_ impl #glib::IsA<#ty> });
                 } else {
@@ -126,11 +133,7 @@ impl VirtualMethod {
         let sig = self.public_sig(glib);
         quote! { #sig }
     }
-    pub(crate) fn definition(
-        &self,
-        wrapper_ty: &TokenStream,
-        glib: &TokenStream,
-    ) -> TokenStream {
+    pub(crate) fn definition(&self, wrapper_ty: &TokenStream, glib: &TokenStream) -> TokenStream {
         let ident = &self.sig.ident;
         let sig = self.public_sig(glib);
         let args = signature_args(&sig);
@@ -152,24 +155,30 @@ impl VirtualMethod {
                 ::std::convert::AsRef::as_ref(&*#vtable_ident)
             },
         };
-        let cast_args = sig.inputs.iter().enumerate().skip(1).filter_map(|(i, arg)| {
-            let orig = match &self.sig.inputs[1] {
-                syn::FnArg::Typed(t) => t,
-                _ => return None,
-            };
-            self.generic_args.contains(&i)
-                .then(|| arg_name(arg))
-                .flatten()
-                .map(|name| {
-                    let (cast, ty) = match &*orig.ty {
-                        syn::Type::Reference(r) => (quote! { upcast_ref }, &*r.elem),
-                        ty => (quote! { upcast }, ty),
-                    };
-                    quote! {
-                        let #name = #glib::Cast::#cast::<#ty>(#name);
-                    }
-                })
-        });
+        let cast_args = sig
+            .inputs
+            .iter()
+            .enumerate()
+            .skip(1)
+            .filter_map(|(i, arg)| {
+                let orig = match &self.sig.inputs[1] {
+                    syn::FnArg::Typed(t) => t,
+                    _ => return None,
+                };
+                self.generic_args
+                    .contains(&i)
+                    .then(|| arg_name(arg))
+                    .flatten()
+                    .map(|name| {
+                        let (cast, ty) = match &*orig.ty {
+                            syn::Type::Reference(r) => (quote! { upcast_ref }, &*r.elem),
+                            ty => (quote! { upcast }, ty),
+                        };
+                        quote! {
+                            let #name = #glib::Cast::#cast::<#ty>(#name);
+                        }
+                    })
+            });
         quote! {
             #sig {
                 #![inline]
@@ -185,13 +194,20 @@ impl VirtualMethod {
         let mut sig = self.external_sig();
         sig.ident = format_ident!("parent_{}", self.sig.ident);
         if !sig.inputs.is_empty() {
-            sig.inputs.insert(1, parse_quote! {
-                #ident: &<Self as #glib::subclass::types::ObjectSubclass>::Type
-            });
+            sig.inputs.insert(
+                1,
+                parse_quote! {
+                    #ident: &<Self as #glib::subclass::types::ObjectSubclass>::Type
+                },
+            );
         }
         sig
     }
-    pub(crate) fn default_definition(&self, ext_trait: &syn::Ident, glib: &TokenStream) -> TokenStream {
+    pub(crate) fn default_definition(
+        &self,
+        ext_trait: &syn::Ident,
+        glib: &TokenStream,
+    ) -> TokenStream {
         let this_ident = syn::Ident::new("____this", Span::mixed_site());
         let mut sig = self.parent_sig(&this_ident, glib);
         let parent_ident = std::mem::replace(&mut sig.ident, self.sig.ident.clone());
@@ -204,10 +220,7 @@ impl VirtualMethod {
             }
         }
     }
-    pub(crate) fn parent_prototype(
-        &self,
-        glib: &TokenStream,
-    ) -> TokenStream {
+    pub(crate) fn parent_prototype(&self, glib: &TokenStream) -> TokenStream {
         let mut name = String::from("obj");
         while signature_args(&self.sig).any(|i| i.to_string() == name) {
             name.insert(0, '_');
@@ -218,7 +231,6 @@ impl VirtualMethod {
     }
     pub(crate) fn parent_definition(
         &self,
-        mod_name: &syn::Ident,
         type_name: &syn::Ident,
         ty: &syn::Type,
         glib: &TokenStream,
@@ -246,7 +258,7 @@ impl VirtualMethod {
                 let #vtable_ident = unsafe {
                     &*(
                         #vtable_ident.as_ref().#parent_vtable_method()
-                        as *mut self::#mod_name::#struct_type
+                        as *mut self::#struct_type
                     )
                 };
                 (#vtable_ident.#ident)(#(#args),*)
@@ -271,7 +283,7 @@ impl VirtualMethod {
                     pat.ty = Box::new(ty);
                 }
                 sig.inputs[0] = syn::FnArg::Typed(pat);
-            },
+            }
             _ => {}
         }
         sig
@@ -300,8 +312,10 @@ impl VirtualMethod {
         let trampoline_ident = format_ident!("{}_default_trampoline", ident);
         let mut sig = self.trampoline_sig(this_ident.clone(), ty.clone());
         sig.ident = trampoline_ident.clone();
-        let unwrap_recv = self.sig.receiver().map(|_| quote! {
-            let #this_ident = #glib::subclass::prelude::ObjectSubclassIsExt::imp(#this_ident);
+        let unwrap_recv = self.sig.receiver().map(|_| {
+            quote! {
+                let #this_ident = #glib::subclass::prelude::ObjectSubclassIsExt::imp(#this_ident);
+            }
         });
         let args = signature_args(&sig);
         quote! {
@@ -345,7 +359,9 @@ impl VirtualMethod {
 }
 
 #[inline]
-fn signature_args<'a>(sig: &'a syn::Signature) -> impl Iterator<Item = &'a syn::Ident> + Clone + 'a {
+fn signature_args<'a>(
+    sig: &'a syn::Signature,
+) -> impl Iterator<Item = &'a syn::Ident> + Clone + 'a {
     sig.inputs.iter().filter_map(arg_name)
 }
 

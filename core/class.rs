@@ -107,6 +107,16 @@ impl ClassDefinition {
             );
         }
 
+        if class.final_ {
+            for virtual_method in &class.inner.virtual_methods {
+                util::push_error_spanned(
+                    errors,
+                    &virtual_method.sig,
+                    "Virtual method not allowed on final class",
+                );
+            }
+        }
+
         let extra = class.extra_private_items();
 
         let (_, items) = class
@@ -156,7 +166,10 @@ impl ClassDefinition {
                     }
                 }
             });
+
         let trait_name = self.ext_trait();
+        let parent_trait = self.parent_trait.as_ref().map(|p| quote! { #p });
+
         self.inner
             .extra_private_items()
             .into_iter()
@@ -166,6 +179,8 @@ impl ClassDefinition {
                     self.object_impl_impl(),
                     self.class_struct_definition(),
                     self.inner.public_methods(trait_name.as_ref()),
+                    self.is_subclassable_impl(),
+                    self.inner.virtual_traits(parent_trait),
                     derived_methods,
                 ]
                 .into_iter()
@@ -278,15 +293,24 @@ impl ClassDefinition {
                 <<#parent_type as #glib::Object::ObjectSubclassIs>::Subclass as #glib::subclass::types::ObjectSubclass>::Class
             }
         };
-        let class_struct_head = self.trait_head(&class_name, quote! {
-            #glib::subclass::types::ClassStruct
-        });
-        let deref_head = self.trait_head(&class_name, quote! {
-            ::std::ops::Deref
-        });
-        let deref_mut_head = self.trait_head(&class_name, quote! {
-            ::std::ops::DerefMut
-        });
+        let class_struct_head = self.trait_head(
+            &class_name,
+            quote! {
+                #glib::subclass::types::ClassStruct
+            },
+        );
+        let deref_head = self.trait_head(
+            &class_name,
+            quote! {
+                ::std::ops::Deref
+            },
+        );
+        let deref_mut_head = self.trait_head(
+            &class_name,
+            quote! {
+                ::std::ops::DerefMut
+            },
+        );
 
         Some(quote! {
             #[repr(C)]
@@ -369,10 +393,14 @@ impl ClassDefinition {
         })
     }
     fn find_normal_method(&self, ident: &syn::Ident) -> Option<&syn::ImplItemMethod> {
-        self.inner.methods_item()?.items.iter().find_map(|item| match item {
-            syn::ImplItem::Method(m) if m.sig.ident == *ident => Some(m),
-            _ => None,
-        })
+        self.inner
+            .methods_item()?
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::ImplItem::Method(m) if m.sig.ident == *ident => Some(m),
+                _ => None,
+            })
     }
     fn unimplemented_property(glib: &TokenStream) -> TokenStream {
         quote! {
@@ -399,7 +427,8 @@ impl ClassDefinition {
             .iter()
             .enumerate()
             .filter_map(|(index, prop)| {
-                let method = prop.custom_method_path(true)
+                let method = prop
+                    .custom_method_path(true)
                     .and_then(|ident| self.find_normal_method(&*ident));
                 prop.set_impl(index, method, go)
             });
@@ -432,7 +461,8 @@ impl ClassDefinition {
             .iter()
             .enumerate()
             .filter_map(|(index, prop)| {
-                let method = prop.custom_method_path(false)
+                let method = prop
+                    .custom_method_path(false)
                     .and_then(|ident| self.find_normal_method(&*ident));
                 prop.get_impl(index, method, go)
             });
@@ -500,11 +530,11 @@ impl ClassDefinition {
             let (impl_generics, _, where_clause) = generics.split_for_impl();
             quote! {
                 unsafe impl #impl_generics #glib::subclass::types::IsSubclassable<#type_ident>
-                    for #name #type_generics #where_clause
+                    for super::#name #type_generics #where_clause
             }
         } else {
             quote! {
-                unsafe impl<#param> #glib::subclass::types::IsSubclassable<#type_ident> for #name
+                unsafe impl<#param> #glib::subclass::types::IsSubclassable<#type_ident> for super::#name
             }
         };
         let class_ident = syn::Ident::new("____class", Span::mixed_site());
@@ -530,37 +560,28 @@ impl ClassDefinition {
     }
 }
 
-macro_rules! unwrap_or_return {
-    ($opt:expr, $ret:expr) => {
-        match $opt {
-            Some(val) => val,
-            None => return $ret,
-        }
-    };
-}
-
 impl ToTokens for ClassDefinition {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let glib = unwrap_or_return!(self.inner.glib(), ());
-        let name = unwrap_or_return!(self.inner.name.as_ref(), ());
+        let name = match self.inner.name.as_ref() {
+            Some(n) => n,
+            _ => return,
+        };
         let module = &self.inner.module;
 
         let wrapper = self.wrapper();
-        let use_trait = self.ext_trait().map(|ext| {
+        let use_traits = self.ext_trait().map(|ext| {
             let mod_name = &module.ident;
-            quote! { pub use #mod_name::#ext; }
+            let impl_ = format_ident!("{}Impl", name);
+            let mut use_traits = quote! {
+                pub use #mod_name::#ext;
+                pub use #mod_name::#impl_;
+            };
+            if !self.inner.virtual_methods.is_empty() {
+                let impl_ext = format_ident!("{}ImplExt", name);
+                use_traits.extend(quote! { pub use #mod_name::#impl_ext; });
+            }
+            use_traits
         });
-        let is_subclassable = self.is_subclassable_impl();
-        let parent_trait = self
-            .parent_trait
-            .as_ref()
-            .map(|p| p.to_token_stream())
-            .unwrap_or_else(|| quote! { #glib::subclass::object::ObjectImpl });
-        let virtual_traits = if !self.final_ {
-            self.inner.virtual_traits(&parent_trait)
-        } else {
-            None
-        };
         let parent_type = self.parent_type().map(|p| {
             let ident = format_ident!("{}ParentType", name);
             quote! { type #ident = #p; }
@@ -574,9 +595,7 @@ impl ToTokens for ClassDefinition {
         let class = quote_spanned! { module.span() =>
             #module
             #wrapper
-            #use_trait
-            #is_subclassable
-            #virtual_traits
+            #use_traits
             #parent_type
             #interfaces
         };

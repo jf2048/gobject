@@ -13,8 +13,12 @@ mod iface {
             iface.set_my_prop(hello);
         }
         #[virt]
-        fn my_virt(iface: &super::Dummy) -> u64 {
+        fn my_virt(iface: &super::Dummy, #[is_a] _ignore: &glib::Object) -> u64 {
             iface.my_prop() + 100
+        }
+        #[public]
+        fn dosomething(iface: &super::Dummy) -> String {
+            format!("{}", iface.my_prop())
         }
     }
 }
@@ -52,8 +56,8 @@ mod implement2 {
         }
     }
     impl super::DummyImpl for Implementor2 {
-        fn my_virt(&self, obj: &Self::Type) -> u64 {
-            obj.my_prop() + 200 + self.parent_my_virt(obj)
+        fn my_virt(&self, obj: &Self::Type, _ignore: &glib::Object) -> u64 {
+            obj.my_prop() + 200 + self.parent_my_virt(obj, _ignore)
         }
     }
 }
@@ -65,9 +69,10 @@ fn interface() {
     obj.set_my_auto_prop(-5);
     obj.emit_my_sig(123);
     assert_eq!(obj.my_prop(), 123);
-    assert_eq!(obj.my_virt(), 223);
+    assert_eq!(obj.my_virt(&obj), 223);
     let obj = glib::Object::new::<Implementor2>(&[]).unwrap();
     obj.emit_my_sig(133);
     assert_eq!(obj.my_prop(), 155);
-    assert_eq!(obj.my_virt(), 610);
+    assert_eq!(obj.my_virt(&obj), 610);
+    assert_eq!(obj.dosomething(), "155");
 }

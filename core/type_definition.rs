@@ -154,10 +154,16 @@ impl TypeDefinitionParser {
             }
             def.signals
                 .extend(Signal::many_from_items(&mut impl_.items, base, errors));
-            def.public_methods
-                .extend(PublicMethod::many_from_items(&mut impl_.items, base, errors));
-            def.virtual_methods
-                .extend(VirtualMethod::many_from_items(&mut impl_.items, base, errors));
+            def.public_methods.extend(PublicMethod::many_from_items(
+                &mut impl_.items,
+                base,
+                errors,
+            ));
+            def.virtual_methods.extend(VirtualMethod::many_from_items(
+                &mut impl_.items,
+                base,
+                errors,
+            ));
 
             extract_methods(
                 &mut impl_.items,
@@ -383,7 +389,11 @@ impl TypeDefinition {
             Vec::new()
         );
         let sub_ty = unwrap_or_return!(
-            self.type_(TypeMode::Wrapper, TypeMode::Subclass, TypeContext::Internal),
+            self.type_(
+                TypeMode::Subclass,
+                TypeMode::Subclass,
+                TypeContext::External
+            ),
             Vec::new()
         );
         let properties_path = unwrap_or_return!(
@@ -405,7 +415,7 @@ impl TypeDefinition {
             .chain(
                 self.public_methods
                     .iter()
-                    .map(|m| m.definition(&sub_ty, &glib)),
+                    .map(|m| m.definition(&ty, &sub_ty, &glib)),
             )
             .chain(
                 self.virtual_methods
@@ -498,9 +508,11 @@ impl TypeDefinition {
         if set_vtable.is_none() && overrides.is_empty() {
             return None;
         }
-        let deref_class = (!overrides.is_empty()).then(|| quote! {
-            let #class_ident = &mut *#class_ident;
-            let #class_ident = #glib::Class::upcast_ref_mut::<#glib::Object>(#class_ident);
+        let deref_class = (!overrides.is_empty()).then(|| {
+            quote! {
+                let #class_ident = &mut *#class_ident;
+                let #class_ident = #glib::Class::upcast_ref_mut::<#glib::Object>(#class_ident);
+            }
         });
         Some(quote! {
             #set_vtable
@@ -519,7 +531,7 @@ impl TypeDefinition {
         }
         let glib = self.glib()?;
         let name = self.name.as_ref()?;
-        let ty = self.type_(TypeMode::Wrapper, TypeMode::Wrapper, TypeContext::External)?;
+        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
         let ty = parse_quote! { #ty };
         let trait_name = format_ident!("{}Impl", name);
         Some(FromIterator::from_iter(self.virtual_methods.iter().map(
@@ -544,13 +556,18 @@ impl TypeDefinition {
             .map(|method| method.vtable_field(&ty))
             .collect()
     }
-    pub(crate) fn virtual_traits(&self, parent_trait: &TokenStream) -> Option<TokenStream> {
+    pub(crate) fn virtual_traits(&self, parent_trait: Option<TokenStream>) -> Option<TokenStream> {
         let glib = self.glib()?;
         let name = self.name.as_ref()?;
-        let ty = self.type_(TypeMode::Wrapper, TypeMode::Wrapper, TypeContext::External)?;
+        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
         let ty = parse_quote! { #ty };
         let trait_name = format_ident!("{}Impl", name);
         let ext_trait_name = format_ident!("{}ImplExt", name);
+        let parent_trait = parent_trait.unwrap_or_else(|| {
+            quote! {
+                #glib::subclass::object::ObjectImpl
+            }
+        });
         let type_ident = syn::Ident::new("____Object", Span::mixed_site());
 
         let virtual_methods_default = self
@@ -565,9 +582,9 @@ impl TypeDefinition {
             let parent_method_definitions = self
                 .virtual_methods
                 .iter()
-                .map(|m| m.parent_definition(&self.module.ident, name, &ty, &glib));
+                .map(|m| m.parent_definition(name, &ty, &glib));
             quote! {
-                pub(crate) trait #ext_trait_name: #glib::subclass::types::ObjectSubclass {
+                pub trait #ext_trait_name: #glib::subclass::types::ObjectSubclass {
                     #(#parent_method_protos;)*
                 }
                 impl<#type_ident: #trait_name> #ext_trait_name for #type_ident {
@@ -577,7 +594,7 @@ impl TypeDefinition {
         });
 
         Some(quote! {
-            pub(crate) trait #trait_name: #parent_trait + 'static {
+            pub trait #trait_name: #parent_trait + 'static {
                 #(#virtual_methods_default)*
             }
             #ext_trait

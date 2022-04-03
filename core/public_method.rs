@@ -71,27 +71,49 @@ impl PublicMethod {
         let sig = self.external_sig();
         quote! { #sig }
     }
-    pub(crate) fn definition(&self, sub_ty: &TokenStream, glib: &TokenStream) -> TokenStream {
+    pub(crate) fn definition(
+        &self,
+        ty: &TokenStream,
+        sub_ty: &TokenStream,
+        glib: &TokenStream,
+    ) -> TokenStream {
         let proto = self.prototype();
         let ident = &self.sig.ident;
         let sig = self.external_sig();
         let args = signature_args(&sig);
-        if let Some(r) = self.sig.receiver() {
-            let this_ident = syn::Ident::new("____this", Span::mixed_site());
-            let ref_ = util::arg_reference(r).is_none().then(|| quote! { & });
+        let this_ident = syn::Ident::new("____this", Span::mixed_site());
+        if let Some(recv) = self.sig.receiver() {
+            let has_ref = util::arg_reference(recv).is_some();
+            let cast = match has_ref {
+                true => quote! { upcast_ref },
+                false => quote! { upcast },
+            };
+            let ref_ = (!has_ref).then(|| quote! { & });
             quote! {
                 #proto {
                     #![inline]
-                    let #this_ident = #glib::subclass::prelude::ObjectSubclassIsExt::imp(#ref_ self);
+                    let #this_ident = #glib::Cast::#cast::<#ty>(self);
+                    let #this_ident = #glib::subclass::prelude::ObjectSubclassIsExt::imp(#ref_ #this_ident);
+                    #sub_ty::#ident(#this_ident, #(#args),*)
+                }
+            }
+        } else if let Some(first) = self.sig.inputs.first() {
+            let cast = match util::arg_reference(first) {
+                Some(_) => quote! { upcast_ref },
+                None => quote! { upcast },
+            };
+            quote! {
+                #proto {
+                    #![inline]
+                    let #this_ident = #glib::Cast::#cast::<#ty>(self);
                     #sub_ty::#ident(#this_ident, #(#args),*)
                 }
             }
         } else {
-            let first = self.sig.inputs.first().map(|_| quote! { self, });
             quote! {
                 #proto {
                     #![inline]
-                    #sub_ty::#ident(#first #(#args),*)
+                    #sub_ty::#ident()
                 }
             }
         }

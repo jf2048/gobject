@@ -3,7 +3,7 @@ use darling::{util::PathList, FromMeta};
 use heck::ToUpperCamelCase;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned, ToTokens};
-use syn::{spanned::Spanned, parse_quote};
+use syn::{parse_quote, spanned::Spanned};
 
 #[derive(Debug, Default, FromMeta)]
 #[darling(default)]
@@ -89,7 +89,7 @@ impl InterfaceDefinition {
                                 #(pub #fields),*
                             } };
                             n.named.extend(fields.named.into_iter());
-                        },
+                        }
                         f => util::push_error_spanned(
                             errors,
                             f,
@@ -141,7 +141,10 @@ impl InterfaceDefinition {
                     }
                 }
             });
+
         let trait_name = self.ext_trait();
+        let parent_trait = self.parent_trait.as_ref().map(|p| quote! { #p });
+
         self.inner
             .extra_private_items()
             .into_iter()
@@ -150,6 +153,8 @@ impl InterfaceDefinition {
                     self.object_interface_impl(),
                     self.interface_struct_definition(),
                     self.inner.public_methods(trait_name.as_ref()),
+                    self.is_implementable_impl(),
+                    self.inner.virtual_traits(parent_trait),
                     derived_methods,
                 ]
                 .into_iter()
@@ -283,11 +288,11 @@ impl InterfaceDefinition {
             let (impl_generics, _, where_clause) = generics.split_for_impl();
             quote! {
                 unsafe impl #impl_generics #glib::subclass::types::IsImplementable<#type_ident>
-                    for #name #type_generics #where_clause
+                    for super::#name #type_generics #where_clause
             }
         } else {
             quote! {
-                unsafe impl<#param> #glib::subclass::types::IsImplementable<#type_ident> for #name
+                unsafe impl<#param> #glib::subclass::types::IsImplementable<#type_ident> for super::#name
                 where #pred
             }
         };
@@ -311,33 +316,28 @@ impl InterfaceDefinition {
     }
 }
 
-macro_rules! unwrap_or_return {
-    ($opt:expr, $ret:expr) => {
-        match $opt {
-            Some(val) => val,
-            None => return $ret,
-        }
-    };
-}
-
 impl ToTokens for InterfaceDefinition {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let glib = unwrap_or_return!(self.inner.glib(), ());
-        let name = unwrap_or_return!(self.inner.name.as_ref(), ());
+        let name = match self.inner.name.as_ref() {
+            Some(n) => n,
+            _ => return,
+        };
         let module = &self.inner.module;
 
         let wrapper = self.wrapper();
-        let use_trait = self.ext_trait().map(|ext| {
+        let use_traits = self.ext_trait().map(|ext| {
             let mod_name = &module.ident;
-            quote! { pub use #mod_name::#ext; }
+            let impl_ = format_ident!("{}Impl", name);
+            let mut use_traits = quote! {
+                pub use #mod_name::#ext;
+                pub use #mod_name::#impl_;
+            };
+            if !self.inner.virtual_methods.is_empty() {
+                let impl_ext = format_ident!("{}ImplExt", name);
+                use_traits.extend(quote! { pub use #mod_name::#impl_ext; });
+            }
+            use_traits
         });
-        let is_implementable = self.is_implementable_impl();
-        let parent_trait = self
-            .parent_trait
-            .as_ref()
-            .map(|p| p.to_token_stream())
-            .unwrap_or_else(|| quote! { #glib::subclass::object::ObjectImpl });
-        let virtual_traits = self.inner.virtual_traits(&parent_trait);
         let requires_ident = format_ident!("{}Prerequisites", name);
         let requires = &self.requires;
         let requires = quote! {
@@ -347,9 +347,7 @@ impl ToTokens for InterfaceDefinition {
         let iface = quote_spanned! { module.span() =>
             #module
             #wrapper
-            #use_trait
-            #is_implementable
-            #virtual_traits
+            #use_traits
             #requires
         };
         iface.to_tokens(tokens);
