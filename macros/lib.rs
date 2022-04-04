@@ -29,17 +29,15 @@ pub fn derive_properties(item: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
-    use gobject_core::{ClassDefinition, ClassOptions, TypeBase};
+    use gobject_core::{ClassDefinition, ClassOptions};
 
     let mut errors = vec![];
     let opts = ClassOptions::parse(attr.into(), &mut errors);
-    let parser = ClassDefinition::type_parser();
     let module = util::parse::<syn::ItemMod>(item.into(), &mut errors);
     let tokens = module
         .map(|module| {
             let go = crate_ident();
-            let type_def = parser.parse(module, TypeBase::Class, go, &mut errors);
-            let class_def = ClassDefinition::from_type(type_def, opts, &mut errors);
+            let class_def = ClassDefinition::parse(module, opts, go, &mut errors);
             class_def.to_token_stream()
         })
         .unwrap_or_default();
@@ -48,17 +46,15 @@ pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn interface(attr: TokenStream, item: TokenStream) -> TokenStream {
-    use gobject_core::{InterfaceDefinition, InterfaceOptions, TypeBase};
+    use gobject_core::{InterfaceDefinition, InterfaceOptions};
 
     let mut errors = vec![];
     let opts = InterfaceOptions::parse(attr.into(), &mut errors);
-    let parser = InterfaceDefinition::type_parser();
     let module = util::parse::<syn::ItemMod>(item.into(), &mut errors);
     let tokens = module
         .map(|module| {
             let go = crate_ident();
-            let type_def = parser.parse(module, TypeBase::Interface, go, &mut errors);
-            let class_def = InterfaceDefinition::from_type(type_def, opts, &mut errors);
+            let class_def = InterfaceDefinition::parse(module, opts, go, &mut errors);
             class_def.to_token_stream()
         })
         .unwrap_or_default();

@@ -6,32 +6,58 @@ use crate::{
     virtual_method::VirtualMethod,
 };
 use proc_macro2::{Span, TokenStream};
-use quote::{format_ident, quote};
-use std::collections::{HashMap, HashSet};
+use quote::{format_ident, quote, quote_spanned};
 use syn::{parse_quote, spanned::Spanned};
 
 #[derive(Debug)]
-pub struct TypeDefinitionParser {
-    custom_methods: HashSet<String>,
+pub struct TypeDefinition {
+    pub module: syn::ItemMod,
+    pub base: TypeBase,
+    pub name: Option<syn::Ident>,
+    pub crate_ident: syn::Ident,
+    pub generics: Option<syn::Generics>,
+    pub properties_item_index: Option<usize>,
+    pub methods_item_index: Option<usize>,
+    pub properties: Vec<Property>,
+    pub signals: Vec<Signal>,
+    pub public_methods: Vec<PublicMethod>,
+    pub virtual_methods: Vec<VirtualMethod>,
 }
 
-impl TypeDefinitionParser {
-    pub(crate) fn new() -> Self {
-        Self {
-            custom_methods: Default::default(),
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Copy, Clone)]
+pub enum TypeMode {
+    Subclass,
+    Wrapper,
+}
+
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Copy, Clone)]
+pub enum TypeContext {
+    Internal,
+    External,
+}
+
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Copy, Clone)]
+pub enum TypeBase {
+    Class,
+    Interface,
+}
+
+macro_rules! unwrap_or_return {
+    ($opt:expr, $ret:expr) => {
+        match $opt {
+            Some(val) => val,
+            None => return $ret,
         }
-    }
-    pub(crate) fn add_custom_method(&mut self, name: &str) -> &mut Self {
-        self.custom_methods.insert(name.to_owned());
-        self
-    }
+    };
+}
+
+impl TypeDefinition {
     pub fn parse(
-        &self,
         module: syn::ItemMod,
         base: TypeBase,
         crate_ident: syn::Ident,
         errors: &mut Vec<darling::Error>,
-    ) -> TypeDefinition {
+    ) -> Self {
         let mut syn_errors = vec![];
         let mut item = syn::Item::Mod(module);
         super::closures(&mut item, crate_ident.clone(), &mut syn_errors);
@@ -40,7 +66,7 @@ impl TypeDefinitionParser {
             syn::Item::Mod(m) => m,
             _ => unreachable!(),
         };
-        let mut def = TypeDefinition {
+        let mut def = Self {
             module,
             base,
             name: None,
@@ -52,7 +78,6 @@ impl TypeDefinitionParser {
             signals: Vec::new(),
             public_methods: Vec::new(),
             virtual_methods: Vec::new(),
-            custom_methods: HashMap::new(),
         };
         if def.module.content.is_none() {
             util::push_error_spanned(
@@ -139,7 +164,9 @@ impl TypeDefinitionParser {
             let mut input: syn::DeriveInput = struct_.clone().into();
             input.attrs.insert(0, attr);
             let Properties {
-                properties, mut fields, ..
+                properties,
+                mut fields,
+                ..
             } = Properties::from_derive_input(&input, Some(base), errors);
             if base == TypeBase::Interface {
                 match &mut fields {
@@ -148,14 +175,15 @@ impl TypeDefinitionParser {
                             { ____parent: #glib::gobject_ffi::GTypeInterface }
                         };
                         f.named.insert(0, fields.named.into_iter().next().unwrap());
-                    },
+                    }
                     syn::Fields::Unnamed(f) => {
                         let fields: syn::FieldsUnnamed = parse_quote! {
                             (#glib::gobject_ffi::GTypeInterface)
                         };
-                        f.unnamed.insert(0, fields.unnamed.into_iter().next().unwrap());
-                    },
-                    _ => {},
+                        f.unnamed
+                            .insert(0, fields.unnamed.into_iter().next().unwrap());
+                    }
+                    _ => {}
                 };
             }
             struct_.fields = fields;
@@ -182,63 +210,8 @@ impl TypeDefinitionParser {
                 base,
                 errors,
             ));
-
-            extract_methods(
-                &mut impl_.items,
-                |m| self.custom_methods.contains(&m.sig.ident.to_string()),
-                |m| def.custom_methods.insert(m.sig.ident.to_string(), m),
-            );
         }
         def
-    }
-}
-
-#[derive(Debug)]
-pub struct TypeDefinition {
-    pub module: syn::ItemMod,
-    pub base: TypeBase,
-    pub name: Option<syn::Ident>,
-    pub crate_ident: syn::Ident,
-    pub generics: Option<syn::Generics>,
-    pub properties_item_index: Option<usize>,
-    pub methods_item_index: Option<usize>,
-    pub properties: Vec<Property>,
-    pub signals: Vec<Signal>,
-    pub public_methods: Vec<PublicMethod>,
-    pub virtual_methods: Vec<VirtualMethod>,
-    pub custom_methods: HashMap<String, syn::ImplItemMethod>,
-}
-
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Copy, Clone)]
-pub enum TypeMode {
-    Subclass,
-    Wrapper,
-}
-
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Copy, Clone)]
-pub enum TypeContext {
-    Internal,
-    External,
-}
-
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Copy, Clone)]
-pub enum TypeBase {
-    Class,
-    Interface,
-}
-
-macro_rules! unwrap_or_return {
-    ($opt:expr, $ret:expr) => {
-        match $opt {
-            Some(val) => val,
-            None => return $ret,
-        }
-    };
-}
-
-impl TypeDefinition {
-    pub fn set_name(&mut self, name: syn::Ident) {
-        self.name.replace(name);
     }
     pub fn glib(&self) -> TokenStream {
         let go = &self.crate_ident;
@@ -291,19 +264,56 @@ impl TypeDefinition {
     pub fn ensure_items(&mut self) -> &mut Vec<syn::Item> {
         &mut self.module.content.get_or_insert_with(Default::default).1
     }
-    pub(crate) fn properties_method(&self, method_name: &str) -> Option<TokenStream> {
+    pub fn find_method(&self, ident: &syn::Ident) -> Option<&syn::ImplItemMethod> {
+        self.methods_item()?
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::ImplItem::Method(m) if m.sig.ident == *ident => Some(m),
+                _ => None,
+            })
+    }
+    pub fn method_wrapper<F>(&self, name: &str, sig_func: F) -> Option<TokenStream>
+    where
+        F: FnOnce(&syn::Ident) -> syn::Signature,
+    {
+        let ident = format_ident!("{}", name);
+        self.find_method(&ident).map(|_| {
+            let sig = sig_func(&ident);
+            let input_names = sig.inputs.iter().map(|arg| match arg {
+                syn::FnArg::Receiver(_) => quote! { self },
+                syn::FnArg::Typed(arg) => match &*arg.pat {
+                    syn::Pat::Ident(syn::PatIdent { ident, .. }) => quote! { #ident },
+                    _ => unimplemented!(),
+                },
+            });
+            quote! {
+                #sig {
+                    Self::#ident(#(#input_names),*)
+                }
+            }
+        })
+    }
+    pub(crate) fn properties_method(&self) -> Option<TokenStream> {
         if self.properties.is_empty() {
             return None;
         }
         let go = &self.crate_ident;
         let glib = self.glib();
         let defs = self.properties.iter().map(|p| p.definition(go));
-        let method_name = format_ident!("{}", method_name);
+        let extra = self.find_method(&format_ident!("properties")).map(|_| {
+            quote! {
+                properties.extend(Self::properties());
+            }
+        });
         Some(quote! {
-            fn #method_name() -> &'static [#glib::ParamSpec] {
+            fn properties() -> &'static [#glib::ParamSpec] {
                 static PROPS: #glib::once_cell::sync::Lazy<::std::vec::Vec<#glib::ParamSpec>> =
                     #glib::once_cell::sync::Lazy::new(|| {
-                        vec![#(#defs),*]
+                        let mut properties ::std::vec::Vec::<#glib::ParamSpec>::new();
+                        #extra
+                        properties.extend([#(#defs),*]);
+                        properties
                     });
                 ::std::convert::AsRef::as_ref(::std::ops::Deref::deref(&PROPS))
             }
@@ -324,45 +334,23 @@ impl TypeDefinition {
             .signals
             .iter()
             .map(|s| s.definition(&ty, &sub_ty, &glib));
+        let extra = self.find_method(&format_ident!("signals")).map(|_| {
+            quote! {
+                signals.extend(Self::signals());
+            }
+        });
         Some(quote! {
             fn signals() -> &'static [#glib::subclass::Signal] {
                 static SIGNALS: #glib::once_cell::sync::Lazy<::std::vec::Vec<#glib::subclass::Signal>> =
                     #glib::once_cell::sync::Lazy::new(|| {
-                        vec![#(#defs),*]
+                        let mut signals = ::std::vec::Vec::<#glib::subclass::Signal>::new();
+                        #extra
+                        signals.extend([#(#defs),*]);
+                        signals
                     });
                 ::std::convert::AsRef::as_ref(::std::ops::Deref::deref(&SIGNALS))
             }
         })
-    }
-    pub(crate) fn derived_signals_method(&self) -> Option<TokenStream> {
-        if self.signals.is_empty() {
-            return None;
-        }
-        let glib = self.glib();
-        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
-        let sub_ty = self.type_(
-            TypeMode::Subclass,
-            TypeMode::Subclass,
-            TypeContext::External,
-        )?;
-        let defs = self
-            .signals
-            .iter()
-            .map(|s| s.definition(&ty, &sub_ty, &glib));
-        Some(quote! {
-            fn derived_signals() -> ::std::vec::Vec<#glib::subclass::Signal> {
-                vec![#(#defs),*]
-            }
-        })
-    }
-    pub(crate) fn has_custom_method(&self, method: &str) -> bool {
-        self.custom_methods.contains_key(method)
-    }
-    pub(crate) fn custom_method(&self, method: &str) -> Option<TokenStream> {
-        self.custom_methods.get(method).map(|m| quote! { #m })
-    }
-    pub(crate) fn custom_methods(&self, methods: &[&str]) -> TokenStream {
-        FromIterator::from_iter(methods.iter().filter_map(|m| self.custom_method(m)))
     }
     fn public_method_prototypes(&self) -> Vec<TokenStream> {
         let go = &self.crate_ident;
@@ -384,19 +372,14 @@ impl TypeDefinition {
     pub(crate) fn method_path(&self, method: &str, from: TypeMode) -> Option<TokenStream> {
         let glib = self.glib();
         let subclass_ty = self.type_(from, TypeMode::Subclass, TypeContext::External)?;
-        Some(if self.has_custom_method(method) {
-            let method = format_ident!("derived_{}", method);
-            quote! { #subclass_ty::#method }
-        } else {
-            let method = format_ident!("{}", method);
-            match self.base {
-                TypeBase::Class => quote! {
-                    <#subclass_ty as #glib::subclass::object::ObjectImpl>::#method
-                },
-                TypeBase::Interface => quote! {
-                    <#subclass_ty as #glib::subclass::prelude::ObjectInterface>::#method
-                },
-            }
+        let method = format_ident!("{}", method);
+        Some(match self.base {
+            TypeBase::Class => quote! {
+                <#subclass_ty as #glib::subclass::object::ObjectImpl>::#method
+            },
+            TypeBase::Interface => quote! {
+                <#subclass_ty as #glib::subclass::prelude::ObjectInterface>::#method
+            },
         })
     }
     fn public_method_definitions(&self) -> Vec<TokenStream> {
@@ -516,11 +499,12 @@ impl TypeDefinition {
             TypeContext::External,
         )?;
         let set_vtable = self.default_vtable_assignments(class_ident);
+        let object_class = quote_spanned! { Span::mixed_site() => ____object_class };
         let overrides = self
             .signals
             .iter()
             .filter_map(|signal| {
-                signal.class_init_override(&wrapper_ty, &sub_ty, class_ident, &glib)
+                signal.class_init_override(&wrapper_ty, &sub_ty, &object_class, &glib)
             })
             .collect::<Vec<_>>();
         if set_vtable.is_none() && overrides.is_empty() {
@@ -528,14 +512,16 @@ impl TypeDefinition {
         }
         let deref_class = (!overrides.is_empty()).then(|| {
             quote! {
-                let #class_ident = &mut *#class_ident;
-                let #class_ident = #glib::Class::upcast_ref_mut::<#glib::Object>(#class_ident);
+                let #object_class = &mut *#class_ident;
+                let #object_class = #glib::Class::upcast_ref_mut::<#glib::Object>(#object_class);
             }
         });
         Some(quote! {
             #set_vtable
-            #deref_class
-            #(#overrides)*
+            {
+                #deref_class
+                #(#overrides)*
+            }
         })
     }
     #[inline]
@@ -692,30 +678,4 @@ fn find_attr(
     } else {
         None
     }
-}
-
-#[inline]
-fn extract_methods<P, M, O>(items: &mut Vec<syn::ImplItem>, predicate: P, mut mapping: M) -> Vec<O>
-where
-    P: Fn(&mut syn::ImplItemMethod) -> bool,
-    M: FnMut(syn::ImplItemMethod) -> O,
-{
-    let mut methods = Vec::new();
-    let mut index = 0;
-    while index < items.len() {
-        let mut matched = false;
-        if let syn::ImplItem::Method(method) = &mut items[index] {
-            matched = predicate(method);
-        }
-        if matched {
-            let item = items.remove(index);
-            match item {
-                syn::ImplItem::Method(method) => methods.push(mapping(method)),
-                _ => unreachable!(),
-            }
-        } else {
-            index += 1;
-        }
-    }
-    methods
 }

@@ -1,4 +1,4 @@
-use crate::{util, TypeDefinition, TypeDefinitionParser};
+use crate::{util, TypeBase, TypeDefinition};
 use darling::{util::PathList, FromMeta};
 use heck::ToUpperCamelCase;
 use proc_macro2::{Span, TokenStream};
@@ -33,38 +33,30 @@ pub struct InterfaceDefinition {
     pub parent_trait: Option<syn::Path>,
     pub wrapper: bool,
     pub requires: Vec<syn::Path>,
-    pub extra_interface_init_stmts: Vec<TokenStream>,
 }
 
 impl InterfaceDefinition {
-    pub fn type_parser() -> TypeDefinitionParser {
-        let mut parser = TypeDefinitionParser::new();
-        parser
-            .add_custom_method("properties")
-            .add_custom_method("signals")
-            .add_custom_method("interface_init")
-            .add_custom_method("type_init");
-        parser
-    }
-    pub fn from_type(
-        def: TypeDefinition,
+    pub fn parse(
+        module: syn::ItemMod,
         opts: InterfaceOptions,
+        crate_ident: syn::Ident,
         errors: &mut Vec<darling::Error>,
     ) -> Self {
         let attrs = opts.0;
 
+        let inner = TypeDefinition::parse(module, TypeBase::Interface, crate_ident, errors);
+
         let mut iface = Self {
-            inner: def,
+            inner,
             ns: attrs.ns,
             ext_trait: attrs.ext_trait,
             parent_trait: attrs.parent_trait,
             wrapper: attrs.wrapper.unwrap_or(true),
             requires: (*attrs.requires).clone(),
-            extra_interface_init_stmts: Vec::new(),
         };
 
         if let Some(name) = attrs.name {
-            iface.inner.set_name(name);
+            iface.inner.name = Some(name);
         }
         if iface.inner.name.is_none() {
             util::push_error(
@@ -106,42 +98,7 @@ impl InterfaceDefinition {
 
         iface
     }
-    #[inline]
-    fn derived_method<F>(&self, method: &str, func: F) -> Option<TokenStream>
-    where
-        F: FnOnce(&str) -> Option<TokenStream>,
-    {
-        self.inner
-            .has_custom_method(method)
-            .then(|| func(format!("derived_{}", method).as_str()))
-            .flatten()
-    }
     fn extra_private_items(&self) -> Vec<syn::Item> {
-        let derived_methods = [
-            self.derived_method("properties", |n| self.inner.properties_method(n)),
-            self.derived_method("signals", |_| self.inner.derived_signals_method()),
-            self.derived_method("interface_init", |n| self.interface_init_method(n)),
-        ]
-        .into_iter()
-        .filter_map(|t| t)
-        .collect::<Vec<_>>();
-        let derived_methods = (!derived_methods.is_empty())
-            .then(|| self.inner.name.as_ref())
-            .flatten()
-            .map(|name| {
-                let head = if let Some(generics) = &self.inner.generics {
-                    let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
-                    quote! { impl #impl_generics #name #type_generics #where_clause }
-                } else {
-                    quote! { impl #name }
-                };
-                quote! {
-                    #head {
-                        #(pub(super) #derived_methods)*
-                    }
-                }
-            });
-
         let trait_name = self.ext_trait();
         let parent_trait = self.parent_trait.as_ref().map(|p| quote! { #p });
 
@@ -155,7 +112,6 @@ impl InterfaceDefinition {
                     self.inner.public_methods(trait_name.as_ref()),
                     self.is_implementable_impl(),
                     self.inner.virtual_traits(parent_trait),
-                    derived_methods,
                 ]
                 .into_iter()
                 .filter_map(|t| t),
@@ -191,17 +147,21 @@ impl InterfaceDefinition {
                 .unwrap_or_else(|| format_ident!("{}Ext", name)),
         )
     }
-    fn interface_init_method(&self, method_name: &str) -> Option<TokenStream> {
-        let method_name = format_ident!("{}", method_name);
+    fn interface_init_method(&self) -> Option<TokenStream> {
         let body = self.inner.type_init_body(&quote! { self });
-        let extra = &self.extra_interface_init_stmts;
-        if body.is_none() && extra.is_empty() {
+        let custom = self
+            .inner
+            .find_method(&format_ident!("interface_init"))
+            .map(|_| {
+                quote! { Self::interface_init(self); }
+            });
+        if body.is_none() && custom.is_none() {
             return None;
         }
         Some(quote! {
-            fn #method_name(&mut self) {
+            fn interface_init(&mut self) {
                 #body
-                #(#extra)*
+                #custom
             }
         })
     }
@@ -241,28 +201,23 @@ impl InterfaceDefinition {
         }
         .to_upper_camel_case();
         let prerequisites = format_ident!("{}Prerequisites", name);
-        let interface_init = self
-            .inner
-            .custom_method("interface_init")
-            .or_else(|| self.interface_init_method("interface_init"));
-        let properties = self
-            .inner
-            .custom_method("properties")
-            .or_else(|| self.inner.properties_method("properties"));
-        let signals = self
-            .inner
-            .custom_method("signals")
-            .or_else(|| self.inner.signals_method());
-        let extra = self.inner.custom_methods(&["type_init"]);
+        let interface_init = self.interface_init_method();
+        let properties = self.inner.properties_method();
+        let signals = self.inner.signals_method();
+        let type_init = self.inner.method_wrapper("type_init", |ident| {
+            parse_quote! {
+                fn #ident(type_: &mut #glib::subclass::types::InitializingType<Self>)
+            }
+        });
         Some(quote! {
             #[#glib::object_interface]
             #head {
                 const NAME: &'static ::std::primitive::str = #gtype_name;
                 type Prerequisites = super::#prerequisites;
-                #extra
                 #interface_init
                 #properties
                 #signals
+                #type_init
             }
         })
     }

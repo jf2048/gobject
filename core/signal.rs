@@ -380,7 +380,7 @@ impl Signal {
                         <#wrapper_ty as #glib::StaticType>::static_type(),
                     ).unwrap_or_else(|| {
                         ::std::panic!(
-                            "Signal `{}` not registered, is `derived_signals` used correctly?",
+                            "Signal `{}` not registered",
                             #name
                         )
                     })
