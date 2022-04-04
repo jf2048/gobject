@@ -190,7 +190,7 @@ impl ClassDefinition {
             .collect()
     }
     fn parent_type(&self) -> Option<TokenStream> {
-        let glib = self.inner.glib()?;
+        let glib = self.inner.glib();
         Some(
             self.extends
                 .first()
@@ -214,7 +214,7 @@ impl ClassDefinition {
         }
         let mod_name = &self.inner.module.ident;
         let name = self.inner.name.as_ref()?;
-        let glib = self.inner.glib()?;
+        let glib = self.inner.glib();
         let generics = self.inner.generics.as_ref();
         Some(quote! {
             #glib::wrapper! {
@@ -235,7 +235,7 @@ impl ClassDefinition {
         )
     }
     fn class_init_method(&self, method_name: &str) -> Option<TokenStream> {
-        let glib = self.inner.glib()?;
+        let glib = self.inner.glib();
         let class_ident = syn::Ident::new("____class", Span::mixed_site());
         let method_name = format_ident!("{}", method_name);
         let body = self.inner.type_init_body(&quote! { #class_ident });
@@ -251,7 +251,7 @@ impl ClassDefinition {
         })
     }
     fn instance_init_method(&self, method_name: &str) -> Option<TokenStream> {
-        let glib = self.inner.glib()?;
+        let glib = self.inner.glib();
         let obj_ident = syn::Ident::new("____obj", Span::mixed_site());
         let method_name = format_ident!("{}", method_name);
         let extra = &self.extra_instance_init_stmts;
@@ -284,7 +284,7 @@ impl ClassDefinition {
         let name = self.inner.name.as_ref()?;
         let generics = self.inner.generics.as_ref()?;
         let class_name = format_ident!("{}Class", name);
-        let glib = self.inner.glib()?;
+        let glib = self.inner.glib();
         let parent_class = if self.extends.is_empty() {
             quote! { #glib::gobject_ffi::GObjectClass }
         } else {
@@ -342,7 +342,7 @@ impl ClassDefinition {
     }
     #[inline]
     fn object_subclass_impl(&self) -> Option<TokenStream> {
-        let glib = self.inner.glib()?;
+        let glib = self.inner.glib();
         let name = self.inner.name.as_ref()?;
         let head = if let Some(generics) = &self.inner.generics {
             let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
@@ -420,7 +420,7 @@ impl ClassDefinition {
             return None;
         }
         let go = &self.inner.crate_ident;
-        let glib = self.inner.glib()?;
+        let glib = self.inner.glib();
         let set_impls = self
             .inner
             .properties
@@ -454,7 +454,7 @@ impl ClassDefinition {
             return None;
         }
         let go = &self.inner.crate_ident;
-        let glib = self.inner.glib()?;
+        let glib = self.inner.glib();
         let get_impls = self
             .inner
             .properties
@@ -484,7 +484,7 @@ impl ClassDefinition {
     }
     #[inline]
     fn object_impl_impl(&self) -> Option<TokenStream> {
-        let glib = self.inner.glib()?;
+        let glib = self.inner.glib();
         let name = self.inner.name.as_ref()?;
         let properties = self
             .inner
@@ -518,7 +518,7 @@ impl ClassDefinition {
         if self.final_ {
             return None;
         }
-        let glib = self.inner.glib()?;
+        let glib = self.inner.glib();
         let name = self.inner.name.as_ref()?;
         let type_ident = syn::Ident::new("____Object", Span::mixed_site());
         let trait_name = format_ident!("{}Impl", name);

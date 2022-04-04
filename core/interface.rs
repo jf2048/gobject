@@ -174,7 +174,7 @@ impl InterfaceDefinition {
         });
         let mod_name = &self.inner.module.ident;
         let name = self.inner.name.as_ref()?;
-        let glib = self.inner.glib()?;
+        let glib = self.inner.glib();
         let generics = self.inner.generics.as_ref();
         Some(quote! {
             #glib::wrapper! {
@@ -212,7 +212,7 @@ impl InterfaceDefinition {
         let fields = self.inner.type_struct_fields();
         let name = self.inner.name.as_ref()?;
         let generics = self.inner.generics.as_ref()?;
-        let glib = self.inner.glib()?;
+        let glib = self.inner.glib();
         Some(quote! {
             #[repr(C)]
             pub struct #name #generics {
@@ -223,7 +223,7 @@ impl InterfaceDefinition {
     }
     #[inline]
     fn object_interface_impl(&self) -> Option<TokenStream> {
-        let glib = self.inner.glib()?;
+        let glib = self.inner.glib();
         let name = self.inner.name.as_ref()?;
         let head = if let Some(generics) = &self.inner.generics {
             let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
@@ -268,7 +268,7 @@ impl InterfaceDefinition {
     }
     #[inline]
     fn is_implementable_impl(&self) -> Option<TokenStream> {
-        let glib = self.inner.glib()?;
+        let glib = self.inner.glib();
         let name = self.inner.name.as_ref()?;
         let type_ident = syn::Ident::new("____Object", Span::mixed_site());
         let trait_name = format_ident!("{}Impl", name);

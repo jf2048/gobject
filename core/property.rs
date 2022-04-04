@@ -644,17 +644,8 @@ impl Properties {
         let mut prop_names = HashSet::new();
         let mut properties = vec![];
         let mut out_fields = Vec::new();
-        let offset = if matches!(base, TypeBase::Interface) {
-            if let Some(first) = fields.iter().next() {
-                out_fields.push(first.clone());
-            }
-            1
-        } else {
-            0
-        };
-        for (index, (attrs, mut field)) in std::iter::zip(data, fields.clone().into_iter())
-            .skip(offset)
-            .enumerate()
+        for (index, (attrs, mut field)) in
+            std::iter::zip(data, fields.clone().into_iter()).enumerate()
         {
             let prop = Property::new(attrs, &field, index, pod, base, errors);
             let mut has_field = true;
@@ -688,7 +679,7 @@ impl Properties {
                 paren_token: Default::default(),
                 unnamed: FromIterator::from_iter(out_fields),
             }),
-            f => f.clone()
+            f => f.clone(),
         };
 
         Self {

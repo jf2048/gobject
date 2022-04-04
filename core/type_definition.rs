@@ -62,6 +62,7 @@ impl TypeDefinitionParser {
             );
             return def;
         }
+        let glib = def.glib();
         let (_, items) = def.module.content.as_mut().unwrap();
         let mut struct_ = None;
         let mut impl_ = None;
@@ -138,8 +139,25 @@ impl TypeDefinitionParser {
             let mut input: syn::DeriveInput = struct_.clone().into();
             input.attrs.insert(0, attr);
             let Properties {
-                properties, fields, ..
+                properties, mut fields, ..
             } = Properties::from_derive_input(&input, Some(base), errors);
+            if base == TypeBase::Interface {
+                match &mut fields {
+                    syn::Fields::Named(f) => {
+                        let fields: syn::FieldsNamed = parse_quote! {
+                            { ____parent: #glib::gobject_ffi::GTypeInterface }
+                        };
+                        f.named.insert(0, fields.named.into_iter().next().unwrap());
+                    },
+                    syn::Fields::Unnamed(f) => {
+                        let fields: syn::FieldsUnnamed = parse_quote! {
+                            (#glib::gobject_ffi::GTypeInterface)
+                        };
+                        f.unnamed.insert(0, fields.unnamed.into_iter().next().unwrap());
+                    },
+                    _ => {},
+                };
+            }
             struct_.fields = fields;
             def.properties.extend(properties);
         }
@@ -222,9 +240,9 @@ impl TypeDefinition {
     pub fn set_name(&mut self, name: syn::Ident) {
         self.name.replace(name);
     }
-    pub fn glib(&self) -> Option<TokenStream> {
+    pub fn glib(&self) -> TokenStream {
         let go = &self.crate_ident;
-        Some(quote! { #go::glib })
+        quote! { #go::glib }
     }
     pub fn type_(&self, from: TypeMode, to: TypeMode, ctx: TypeContext) -> Option<TokenStream> {
         use TypeBase::*;
@@ -232,7 +250,7 @@ impl TypeDefinition {
         use TypeMode::*;
 
         let name = self.name.as_ref()?;
-        let glib = self.glib()?;
+        let glib = self.glib();
         let generics = self.generics.as_ref();
 
         let recv = match ctx {
@@ -278,7 +296,7 @@ impl TypeDefinition {
             return None;
         }
         let go = &self.crate_ident;
-        let glib = self.glib()?;
+        let glib = self.glib();
         let defs = self.properties.iter().map(|p| p.definition(go));
         let method_name = format_ident!("{}", method_name);
         Some(quote! {
@@ -295,7 +313,7 @@ impl TypeDefinition {
         if self.signals.is_empty() {
             return None;
         }
-        let glib = self.glib()?;
+        let glib = self.glib();
         let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
         let sub_ty = self.type_(
             TypeMode::Subclass,
@@ -320,7 +338,7 @@ impl TypeDefinition {
         if self.signals.is_empty() {
             return None;
         }
-        let glib = self.glib()?;
+        let glib = self.glib();
         let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
         let sub_ty = self.type_(
             TypeMode::Subclass,
@@ -348,7 +366,7 @@ impl TypeDefinition {
     }
     fn public_method_prototypes(&self) -> Vec<TokenStream> {
         let go = &self.crate_ident;
-        let glib = unwrap_or_return!(self.glib(), Vec::new());
+        let glib = self.glib();
         self.properties
             .iter()
             .map(|p| p.method_prototypes(go))
@@ -364,7 +382,7 @@ impl TypeDefinition {
             .collect()
     }
     pub(crate) fn method_path(&self, method: &str, from: TypeMode) -> Option<TokenStream> {
-        let glib = self.glib()?;
+        let glib = self.glib();
         let subclass_ty = self.type_(from, TypeMode::Subclass, TypeContext::External)?;
         Some(if self.has_custom_method(method) {
             let method = format_ident!("derived_{}", method);
@@ -383,7 +401,7 @@ impl TypeDefinition {
     }
     fn public_method_definitions(&self) -> Vec<TokenStream> {
         let go = &self.crate_ident;
-        let glib = unwrap_or_return!(self.glib(), Vec::new());
+        let glib = self.glib();
         let ty = unwrap_or_return!(
             self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External),
             Vec::new()
@@ -425,7 +443,7 @@ impl TypeDefinition {
             .collect()
     }
     pub(crate) fn public_methods(&self, trait_name: Option<&syn::Ident>) -> Option<TokenStream> {
-        let glib = self.glib()?;
+        let glib = self.glib();
         let items = self.public_method_definitions();
         if items.is_empty() {
             return None;
@@ -480,7 +498,7 @@ impl TypeDefinition {
         if self.virtual_methods.is_empty() {
             return None;
         }
-        let glib = self.glib()?;
+        let glib = self.glib();
         let name = self.name.as_ref()?;
         let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
         let ty = parse_quote! { #ty };
@@ -489,7 +507,7 @@ impl TypeDefinition {
         )))
     }
     pub(crate) fn type_init_body(&self, class_ident: &TokenStream) -> Option<TokenStream> {
-        let glib = self.glib()?;
+        let glib = self.glib();
         let wrapper_ty =
             self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
         let sub_ty = self.type_(
@@ -529,7 +547,7 @@ impl TypeDefinition {
         if self.virtual_methods.is_empty() {
             return None;
         }
-        let glib = self.glib()?;
+        let glib = self.glib();
         let name = self.name.as_ref()?;
         let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
         let ty = parse_quote! { #ty };
@@ -557,7 +575,7 @@ impl TypeDefinition {
             .collect()
     }
     pub(crate) fn virtual_traits(&self, parent_trait: Option<TokenStream>) -> Option<TokenStream> {
-        let glib = self.glib()?;
+        let glib = self.glib();
         let name = self.name.as_ref()?;
         let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
         let ty = parse_quote! { #ty };
@@ -602,7 +620,7 @@ impl TypeDefinition {
     }
     fn private_methods(&self) -> Vec<TokenStream> {
         let mut methods = Vec::new();
-        let glib = unwrap_or_return!(self.glib(), methods);
+        let glib = self.glib();
 
         for signal in &self.signals {
             if let Some(chain) = signal.chain_definition(&glib) {
@@ -616,7 +634,7 @@ impl TypeDefinition {
         let mut items = Vec::new();
 
         let name = unwrap_or_return!(self.name.as_ref(), items);
-        let glib = unwrap_or_return!(self.glib(), items);
+        let glib = self.glib();
         let wrapper_ty = unwrap_or_return!(
             self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External),
             items

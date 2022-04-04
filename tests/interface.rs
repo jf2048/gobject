@@ -3,7 +3,6 @@ mod iface {
     use std::marker::PhantomData;
     #[derive(Copy, Clone)]
     pub struct Dummy {
-        _parent: glib::gobject_ffi::GTypeInterface,
         #[property(get, set)]
         _my_prop: PhantomData<u64>,
     }
