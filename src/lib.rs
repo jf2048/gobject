@@ -16,18 +16,18 @@
 //!     }
 //! }
 //!
-//! fn main() {
+//! # fn main() {
 //!     let obj: MyObj = glib::Object::new(&[]).unwrap();
 //!     obj.set_my_prop(52);
 //!     obj.emit_abc();
-//! }
+//! # }
 //! ```
 //!
 //! ## `clone_block` macro
 //!
 //! ```
 //! #[gobject::clone_block]
-//! fn main() {
+//! fn myfunc() {
 //!     use glib::prelude::ObjectExt;
 //!
 //!     let get_cell = {
@@ -102,6 +102,8 @@
 //!     };
 //!     assert_eq!(get_cell.invoke::<u32>(&[]), 0);
 //! }
+//!
+//! # myfunc();
 //! ```
 
 #[doc(hidden)]

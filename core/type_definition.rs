@@ -135,8 +135,7 @@ impl TypeDefinition {
             }
         }
         if impl_count == 1 && impl_.is_none() {
-            // only use it if the names match
-            if struct_
+            let names_match = struct_
                 .as_ref()
                 .map(|(index, _)| {
                     let s = match &items[*index] {
@@ -152,8 +151,8 @@ impl TypeDefinition {
                         _ => false,
                     }
                 })
-                .unwrap_or(true)
-            {
+                .unwrap_or(true);
+            if names_match {
                 impl_ = first_impl;
             }
         }
@@ -423,14 +422,8 @@ impl TypeDefinition {
         let glib = self.glib();
         self.properties
             .iter()
-            .map(|p| p.method_prototypes(go))
-            .flatten()
-            .chain(
-                self.signals
-                    .iter()
-                    .map(|s| s.method_prototypes(&glib))
-                    .flatten(),
-            )
+            .flat_map(|p| p.method_prototypes(go))
+            .chain(self.signals.iter().flat_map(|s| s.method_prototypes(&glib)))
             .chain(self.public_methods.iter().map(|m| m.prototype()))
             .chain(self.virtual_methods.iter().map(|m| m.prototype(&glib)))
             .collect()
@@ -471,13 +464,11 @@ impl TypeDefinition {
         self.properties
             .iter()
             .enumerate()
-            .map(|(i, p)| p.method_definitions(i, &ty, &properties_path, go))
-            .flatten()
+            .flat_map(|(i, p)| p.method_definitions(i, &ty, &properties_path, go))
             .chain(
                 self.signals
                     .iter()
-                    .map(|s| s.method_definitions(&glib))
-                    .flatten(),
+                    .flat_map(|s| s.method_definitions(&glib)),
             )
             .chain(
                 self.public_methods
@@ -522,24 +513,22 @@ impl TypeDefinition {
                     }
                 })
             }
+        } else if let Some(trait_name) = trait_name {
+            let protos = self.public_method_prototypes();
+            Some(quote! {
+                pub trait #trait_name: 'static {
+                    #(#protos;)*
+                }
+                impl<#type_ident: #glib::IsA<super::#name>> #trait_name for #type_ident {
+                    #(#items)*
+                }
+            })
         } else {
-            if let Some(trait_name) = trait_name {
-                let protos = self.public_method_prototypes();
-                Some(quote! {
-                    pub trait #trait_name: 'static {
-                        #(#protos;)*
-                    }
-                    impl<#type_ident: #glib::IsA<super::#name>> #trait_name for #type_ident {
-                        #(#items)*
-                    }
-                })
-            } else {
-                Some(quote! {
-                    impl super::#name {
-                        #(pub #items)*
-                    }
-                })
-            }
+            Some(quote! {
+                impl super::#name {
+                    #(pub #items)*
+                }
+            })
         }
     }
     #[inline]

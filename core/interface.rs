@@ -114,7 +114,7 @@ impl InterfaceDefinition {
                     self.inner.virtual_traits(parent_trait),
                 ]
                 .into_iter()
-                .filter_map(|t| t),
+                .flatten(),
             )
             .map(syn::Item::Verbatim)
             .collect()

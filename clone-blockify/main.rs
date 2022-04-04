@@ -72,7 +72,7 @@ async fn convert_stdin() -> anyhow::Result<()> {
     tokio::io::stdin().read_to_string(&mut old).await?;
     let source = convert(&old)
         .await
-        .map_err(|e| ConvertError::new(e.into(), "stdin".into()))?;
+        .map_err(|e| ConvertError::new(e, "stdin".into()))?;
     if let Some(source) = source {
         println!("{}", source);
     } else {
@@ -154,7 +154,7 @@ async fn convert_path(path: PathBuf, backup: bool) -> Vec<anyhow::Result<Output>
         .unwrap()
         .into_iter()
         .map(|entry| async {
-            let entry = entry.map_err(|e| anyhow::Error::from(e))?;
+            let entry = entry.map_err(anyhow::Error::from)?;
             convert_file(entry.path(), backup).await
         });
         join_all(tasks).await

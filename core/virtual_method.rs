@@ -222,7 +222,7 @@ impl VirtualMethod {
     }
     pub(crate) fn parent_prototype(&self, glib: &TokenStream) -> TokenStream {
         let mut name = String::from("obj");
-        while signature_args(&self.sig).any(|i| i.to_string() == name) {
+        while signature_args(&self.sig).any(|i| *i == name) {
             name.insert(0, '_');
         }
         let this_ident = syn::Ident::new(&name, Span::mixed_site());
@@ -270,7 +270,7 @@ impl VirtualMethod {
         match sig.receiver().cloned() {
             Some(ref arg @ syn::FnArg::Receiver(ref recv)) => {
                 let attrs = &recv.attrs;
-                let ref_ = util::arg_reference(&arg);
+                let ref_ = util::arg_reference(arg);
                 sig.inputs[0] = parse_quote! {
                     #(#attrs)* #ident: #ref_ #ty
                 };
@@ -359,9 +359,7 @@ impl VirtualMethod {
 }
 
 #[inline]
-fn signature_args<'a>(
-    sig: &'a syn::Signature,
-) -> impl Iterator<Item = &'a syn::Ident> + Clone + 'a {
+fn signature_args(sig: &syn::Signature) -> impl Iterator<Item = &syn::Ident> + Clone {
     sig.inputs.iter().filter_map(arg_name)
 }
 

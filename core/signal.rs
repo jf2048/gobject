@@ -190,7 +190,7 @@ impl Signal {
                 );
             }
         }
-        let signal_attrs = util::parse_paren_list::<SignalAttrs>(attr.tokens.into(), errors);
+        let signal_attrs = util::parse_paren_list::<SignalAttrs>(attr.tokens, errors);
         let name = signal_attrs
             .name
             .as_ref()
@@ -247,7 +247,7 @@ impl Signal {
             );
         }
         let ident = &method.sig.ident;
-        let acc_attrs = util::parse_paren_list::<AccumulatorAttrs>(attr.tokens.into(), errors);
+        let acc_attrs = util::parse_paren_list::<AccumulatorAttrs>(attr.tokens, errors);
         let name = acc_attrs
             .signal
             .as_ref()
@@ -709,13 +709,13 @@ impl Signal {
     pub(crate) fn method_prototypes(&self, glib: &TokenStream) -> Vec<TokenStream> {
         [self.emit_prototype(glib), self.connect_prototype(glib)]
             .into_iter()
-            .filter_map(|d| d)
+            .flatten()
             .collect()
     }
     pub(crate) fn method_definitions(&self, glib: &TokenStream) -> Vec<TokenStream> {
         [self.emit_definition(glib), self.connect_definition(glib)]
             .into_iter()
-            .filter_map(|d| d)
+            .flatten()
             .collect()
     }
 }

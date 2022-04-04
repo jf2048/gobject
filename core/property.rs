@@ -148,10 +148,10 @@ impl PropertyAttrs {
     fn override_(&self) -> Option<PropertyOverride> {
         if let Some(path) = &self.override_class {
             Some(PropertyOverride::Class(path.clone()))
-        } else if let Some(path) = &self.override_iface {
-            Some(PropertyOverride::Interface(path.clone()))
         } else {
-            None
+            self.override_iface
+                .as_ref()
+                .map(|path| PropertyOverride::Interface(path.clone()))
         }
     }
     fn flags(&self, pod: bool) -> PropertyFlags {
@@ -204,15 +204,8 @@ impl PropertyAttrs {
                     self.explicit_notify = SpannedValue::new(Some(true), self.ident.span());
                 }
             }
-        } else {
-            if field
-                .attrs
-                .iter()
-                .find(|a| a.path.is_ident("property"))
-                .is_none()
-            {
-                self.skip = SpannedValue::new(Flag::present(), Span::call_site());
-            }
+        } else if !field.attrs.iter().any(|a| a.path.is_ident("property")) {
+            self.skip = SpannedValue::new(Flag::present(), Span::call_site());
         }
         let computed = self.computed.is_some();
         if let Some(get) = self.get.as_mut() {
@@ -393,7 +386,7 @@ struct PropertyStorageAttr(syn::Expr);
 
 impl FromMeta for PropertyStorageAttr {
     fn from_string(value: &str) -> darling::Result<Self> {
-        Ok(Self(syn::parse_str(&value)?))
+        Ok(Self(syn::parse_str(value)?))
     }
 }
 
@@ -426,7 +419,7 @@ impl FromMeta for PropertyPermission {
         if value == "_" {
             return Ok(Self::AllowCustomDefault);
         }
-        Ok(Self::AllowCustom(syn::parse_str(&value)?))
+        Ok(Self::AllowCustom(syn::parse_str(value)?))
     }
 }
 
@@ -612,10 +605,10 @@ impl Properties {
             final_type,
             interface,
             data,
-        } = match PropertiesAttrs::from_derive_input(&input) {
+        } = match PropertiesAttrs::from_derive_input(input) {
             Ok(attrs) => attrs,
             Err(e) => {
-                errors.push(e.into());
+                errors.push(e);
                 Default::default()
             }
         };
@@ -623,10 +616,8 @@ impl Properties {
             if let Some(final_type) = &final_type {
                 util::push_error_spanned(errors, final_type, "`final_type` not allowed here");
             }
-        } else {
-            if interface.is_some() {
-                util::push_error(errors, interface.span(), "`interface` not allowed here");
-            }
+        } else if interface.is_some() {
+            util::push_error(errors, interface.span(), "`interface` not allowed here");
         }
         let pod = pod.is_some();
         let base = base.unwrap_or_else(|| {
@@ -1137,7 +1128,7 @@ impl Property {
             self.connect_prototype(&glib),
         ]
         .into_iter()
-        .filter_map(|d| d)
+        .flatten()
         .collect()
     }
     pub(crate) fn method_definitions(
@@ -1149,14 +1140,14 @@ impl Property {
     ) -> Vec<TokenStream> {
         let glib = quote! { #go::glib };
         [
-            self.setter_definition(index, &ty, &properties_path, go),
-            self.getter_definition(&ty, go),
-            self.borrow_definition(&ty, go),
-            self.notify_definition(index, &properties_path, &glib),
+            self.setter_definition(index, ty, properties_path, go),
+            self.getter_definition(ty, go),
+            self.borrow_definition(ty, go),
+            self.notify_definition(index, properties_path, &glib),
             self.connect_definition(&glib),
         ]
         .into_iter()
-        .filter_map(|d| d)
+        .flatten()
         .collect()
     }
 }

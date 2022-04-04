@@ -121,7 +121,7 @@ impl PublicMethod {
 }
 
 #[inline]
-fn signature_args<'a>(sig: &'a syn::Signature) -> impl Iterator<Item = &'a syn::Ident> + 'a {
+fn signature_args(sig: &syn::Signature) -> impl Iterator<Item = &syn::Ident> {
     sig.inputs.iter().filter_map(|arg| {
         if let syn::FnArg::Typed(syn::PatType { pat, .. }) = arg {
             if let syn::Pat::Ident(syn::PatIdent { ident, .. }) = pat.as_ref() {

@@ -129,7 +129,7 @@ impl ClassDefinition {
                     self.inner.virtual_traits(parent_trait),
                 ]
                 .into_iter()
-                .filter_map(|t| t),
+                .flatten(),
             )
             .map(syn::Item::Verbatim)
             .collect()
@@ -613,8 +613,7 @@ pub fn derived_class_properties(
 
         let protos = properties
             .iter()
-            .map(|p| p.method_prototypes(go))
-            .flatten()
+            .flat_map(|p| p.method_prototypes(go))
             .collect::<Vec<_>>();
 
         quote! {

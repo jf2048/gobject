@@ -242,11 +242,11 @@ fn test_clone_macro_rename() {
     closure(0i8); // to prevent compiler error for unknown `x` type.
     let _ = move |#[strong(v)] y| println!("v: {}", y);
 
-    let closure = move |#[weak(v or_return ())] y, _x| {
+    let closure = move |#[weak(v or_return )] y, _x| {
         println!("v: {}", y);
     };
     closure(0i8); // to prevent compiler error for unknown `x` type.
-    let _ = move |#[weak(v or return ())] y| println!("v: {}", y);
+    let _ = move |#[weak(v or_return )] y| println!("v: {}", y);
 
     let closure = move |#[strong(v)] y, _x| {
         println!("v: {}", y);
@@ -576,7 +576,7 @@ fn test_clone_macro_typed_args() {
     let v = Rc::new(RefCell::new(1));
     let w = Rc::new(RefCell::new(1));
     let closure = move |#[weak(or_return)] v,
-                        #[weak(w or_return ())] x,
+                        #[weak(w or_return )] x,
                         #[weak(or_return)] check,
                         arg: i8,
                         arg2| {

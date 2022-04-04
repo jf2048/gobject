@@ -344,7 +344,7 @@ impl Visitor {
 
         if watch_index.is_some() {
             for pat in &body.inputs {
-                for attrs in pat_attrs(pat) {
+                if let Some(attrs) = pat_attrs(pat) {
                     for attr in attrs {
                         if attr.path.is_ident("watch") {
                             self.errors.push(syn::Error::new_spanned(
