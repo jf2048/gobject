@@ -274,6 +274,9 @@ impl TypeDefinition {
     pub fn ensure_items(&mut self) -> &mut Vec<syn::Item> {
         &mut self.module.content.get_or_insert_with(Default::default).1
     }
+    pub fn has_method(&self, method: &str) -> bool {
+        self.find_method(&format_ident!("{}", method)).is_some()
+    }
     pub fn find_method(&self, ident: &syn::Ident) -> Option<&syn::ImplItemMethod> {
         self.methods_item()?
             .items
@@ -287,8 +290,8 @@ impl TypeDefinition {
     where
         F: FnOnce(&syn::Ident) -> syn::Signature,
     {
-        let ident = format_ident!("{}", name);
-        self.find_method(&ident).map(|_| {
+        self.has_method(name).then(|| {
+            let ident = format_ident!("{}", name);
             let sig = sig_func(&ident);
             let input_names = sig.inputs.iter().map(|arg| match arg {
                 syn::FnArg::Receiver(_) => quote! { self },
@@ -310,18 +313,26 @@ impl TypeDefinition {
         }
         let go = &self.crate_ident;
         let glib = self.glib();
+        let sub_ty = self.type_(
+            TypeMode::Subclass,
+            TypeMode::Subclass,
+            TypeContext::External,
+        )?;
         let defs = self.properties.iter().map(|p| p.definition(go));
-        let extra = self.find_method(&format_ident!("properties")).map(|_| {
-            quote! {
-                properties.extend(Self::properties());
-            }
+        let extra = self.has_method("properties").then(|| quote! {
+            properties.extend(#sub_ty::properties());
         });
+        let base_index_set = (self.base == TypeBase::Class && !self.properties.is_empty() && extra.is_some())
+            .then(|| quote! {
+                _GENERATED_PROPERTIES_BASE_INDEX.set(properties.len()).unwrap();
+            });
         Some(quote! {
             fn properties() -> &'static [#glib::ParamSpec] {
                 static PROPS: #glib::once_cell::sync::Lazy<::std::vec::Vec<#glib::ParamSpec>> =
                     #glib::once_cell::sync::Lazy::new(|| {
-                        let mut properties ::std::vec::Vec::<#glib::ParamSpec>::new();
+                        let mut properties = ::std::vec::Vec::<#glib::ParamSpec>::new();
                         #extra
+                        #base_index_set
                         properties.extend([#(#defs),*]);
                         properties
                     });
@@ -344,10 +355,8 @@ impl TypeDefinition {
             .signals
             .iter()
             .map(|s| s.definition(&ty, &sub_ty, &glib));
-        let extra = self.find_method(&format_ident!("signals")).map(|_| {
-            quote! {
-                signals.extend(Self::signals());
-            }
+        let extra = self.has_method("signals").then(|| quote! {
+            signals.extend(#sub_ty::signals());
         });
         Some(quote! {
             fn signals() -> &'static [#glib::subclass::Signal] {

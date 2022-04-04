@@ -50,54 +50,44 @@ mod obj_inner {
     impl ObjInner {
         #[signal]
         fn abc(&self) {}
-        fn properties() -> &'static [glib::ParamSpec] {
-            use glib::once_cell::sync::Lazy as SyncLazy;
-            static PROPERTIES: SyncLazy<Vec<glib::ParamSpec>> = SyncLazy::new(|| {
-                let mut props = ObjInner::derived_properties().to_owned();
-                props.push(glib::ParamSpecUInt::new(
-                    "my-uint",
-                    "my-uint",
-                    "my-uint",
-                    0,
-                    u32::MAX,
-                    0,
-                    glib::ParamFlags::READWRITE,
-                ));
-                props
-            });
-            PROPERTIES.as_ref()
+        fn properties() -> Vec<glib::ParamSpec> {
+            vec![
+                glib::ParamSpecUInt::new(
+                "my-uint",
+                "my-uint",
+                "my-uint",
+                0,
+                u32::MAX,
+                0,
+                glib::ParamFlags::READWRITE,
+                )
+            ]
         }
 
         fn set_property(
             &self,
-            obj: &Self::Type,
-            id: usize,
+            _obj: &super::ObjInner,
+            _id: usize,
             value: &glib::Value,
             pspec: &glib::ParamSpec,
         ) {
             match pspec.name() {
                 "my-uint" => self.my_uint.set(value.get().unwrap()),
-                _ => self.derived_set_property(obj, id, value, pspec),
+                _ => unimplemented!(),
             }
         }
 
-        fn property(&self, obj: &Self::Type, id: usize, pspec: &glib::ParamSpec) -> glib::Value {
+        fn property(&self, _obj: &super::ObjInner, _id: usize, pspec: &glib::ParamSpec) -> glib::Value {
             match pspec.name() {
                 "my-uint" => glib::ToValue::to_value(&self.my_uint.get()),
-                _ => self.derived_property(obj, id, pspec),
+                _ => unimplemented!(),
             }
         }
 
-        fn signals() -> &'static [glib::subclass::Signal] {
-            use glib::once_cell::sync::Lazy as SyncLazy;
-            static SIGNALS: SyncLazy<Vec<glib::subclass::Signal>> = SyncLazy::new(|| {
-                let mut signals = ObjInner::derived_signals();
-                signals.push(
-                    glib::subclass::Signal::builder("xyz", &[], glib::Type::UNIT.into()).build(),
-                );
-                signals
-            });
-            SIGNALS.as_ref()
+        fn signals() -> Vec<glib::subclass::Signal> {
+            vec![
+                glib::subclass::Signal::builder("xyz", &[], glib::Type::UNIT.into()).build()
+            ]
         }
     }
 }

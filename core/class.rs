@@ -1,4 +1,4 @@
-use crate::{util, Properties, TypeBase, TypeDefinition, TypeMode};
+use crate::{util, Properties, TypeBase, TypeDefinition};
 use darling::{
     util::{Flag, PathList, SpannedValue},
     FromMeta,
@@ -120,6 +120,7 @@ impl ClassDefinition {
             .into_iter()
             .chain(
                 [
+                    self.properties_base_index_definition(),
                     self.object_subclass_impl(),
                     self.object_impl_impl(),
                     self.class_struct_definition(),
@@ -184,10 +185,8 @@ impl ClassDefinition {
         let body = self.inner.type_init_body(&quote! { #class_ident });
         let custom = self
             .inner
-            .find_method(&format_ident!("class_init"))
-            .map(|_| {
-                quote! { Self::class_init(#class_ident); }
-            });
+            .has_method("class_init")
+            .then(|| quote! { Self::class_init(#class_ident); });
         let mut _extra = Vec::<TokenStream>::new();
         #[cfg(feature = "gtk4")]
         {
@@ -362,6 +361,22 @@ impl ClassDefinition {
             }
         })
     }
+    pub(crate) fn properties_base_index_definition(&self) -> Option<TokenStream> {
+        if self.inner.properties.is_empty() || !self.inner.has_method("properties") {
+            return None;
+        }
+        let glib = self.inner.glib();
+        Some(quote! {
+            #[doc(hidden)]
+            static _GENERATED_PROPERTIES_BASE_INDEX: #glib::once_cell::sync::OnceCell<usize>
+                = #glib::once_cell::sync::OnceCell::new();
+        })
+    }
+    fn adjust_property_index(&self) -> Option<TokenStream> {
+        self.inner.has_method("properties").then(|| quote! {
+            let id = id - _GENERATED_PROPERTIES_BASE_INDEX.get().unwrap();
+        })
+    }
     fn unimplemented_property(glib: &TokenStream) -> TokenStream {
         quote! {
             unimplemented!(
@@ -381,6 +396,7 @@ impl ClassDefinition {
         }
         let go = &self.inner.crate_ident;
         let glib = self.inner.glib();
+        let adjust_index = self.adjust_property_index();
         let set_impls = self
             .inner
             .properties
@@ -392,13 +408,12 @@ impl ClassDefinition {
                     .and_then(|ident| self.inner.find_method(&*ident));
                 prop.set_impl(index, method, go)
             });
-        let properties_path = self.inner.method_path("properties", TypeMode::Subclass)?;
         let rest = self
             .inner
-            .find_method(&format_ident!("set_property"))
-            .map(|_| {
+            .has_method("set_property")
+            .then(|| {
                 quote! {
-                    Self::set_property(obj, id, value, pspec)
+                    Self::set_property(self, obj, id, value, pspec)
                 }
             })
             .unwrap_or_else(|| Self::unimplemented_property(&glib));
@@ -410,7 +425,7 @@ impl ClassDefinition {
                 value: &#glib::Value,
                 pspec: &#glib::ParamSpec
             ) {
-                let properties = #properties_path();
+                #adjust_index
                 #(#set_impls)*
                 #rest
             }
@@ -422,6 +437,7 @@ impl ClassDefinition {
         }
         let go = &self.inner.crate_ident;
         let glib = self.inner.glib();
+        let adjust_index = self.adjust_property_index();
         let get_impls = self
             .inner
             .properties
@@ -433,13 +449,12 @@ impl ClassDefinition {
                     .and_then(|ident| self.inner.find_method(&*ident));
                 prop.get_impl(index, method, go)
             });
-        let properties_path = self.inner.method_path("properties", TypeMode::Subclass)?;
         let rest = self
             .inner
-            .find_method(&format_ident!("property"))
-            .map(|_| {
+            .has_method("property")
+            .then(|| {
                 quote! {
-                    Self::property(obj, id, pspec)
+                    Self::property(self, obj, id, pspec)
                 }
             })
             .unwrap_or_else(|| Self::unimplemented_property(&glib));
@@ -450,7 +465,7 @@ impl ClassDefinition {
                 id: usize,
                 pspec: &#glib::ParamSpec
             ) -> #glib::Value {
-                let properties = #properties_path();
+                #adjust_index
                 #(#get_impls)*
                 #rest
             }

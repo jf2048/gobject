@@ -808,12 +808,8 @@ impl Property {
     }
     #[inline]
     fn pspec_cmp(&self, index: usize) -> TokenStream {
-        if self.override_.is_some() {
-            let name = self.name.to_string();
-            quote! { pspec.name() == #name }
-        } else {
-            quote! { pspec == &properties[#index] }
-        }
+        let index = index + 1;
+        quote! { id == #index }
     }
     pub fn custom_method_path(&self, set: bool) -> Option<Cow<'_, syn::Ident>> {
         let perm = match set {

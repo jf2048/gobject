@@ -151,8 +151,8 @@ impl InterfaceDefinition {
         let body = self.inner.type_init_body(&quote! { self });
         let custom = self
             .inner
-            .find_method(&format_ident!("interface_init"))
-            .map(|_| {
+            .has_method("interface_init")
+            .then(|| {
                 quote! { Self::interface_init(self); }
             });
         if body.is_none() && custom.is_none() {

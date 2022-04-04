@@ -60,7 +60,7 @@ mod basic {
     }
 
     impl BasicProps {
-        fn constructed(&self, obj: &Self::Type) {
+        fn constructed(&self, obj: &super::BasicProps) {
             self.parent_constructed(obj);
             obj.connect_my_i32_notify(|obj| obj.notify_my_computed_prop());
         }
