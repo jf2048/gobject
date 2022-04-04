@@ -189,6 +189,29 @@ impl ClassDefinition {
                 quote! { Self::class_init(#class_ident); }
             });
         let mut _extra = Vec::<TokenStream>::new();
+        #[cfg(feature = "gtk4")]
+        {
+            let gtk4 = self.inner.gtk4();
+            if let Some(struct_) = self.inner.properties_item() {
+                if struct_.attrs.iter().any(|a| a.path.is_ident("template")) {
+                    _extra.push(syn::parse_quote! {
+                        #gtk4::subclass::widget::CompositeTemplateClass::bind_template(#class_ident);
+                    });
+                }
+            }
+            if let Some(impl_) = self.inner.methods_item() {
+                if impl_.items.iter().any(|a| match a {
+                    syn::ImplItem::Method(m) => {
+                        m.attrs.iter().any(|a| a.path.is_ident("template_callback"))
+                    }
+                    _ => false,
+                }) {
+                    _extra.push(syn::parse_quote! {
+                        #gtk4::subclass::widget::CompositeTemplateCallbacksClass::bind_template_callbacks(#class_ident);
+                    });
+                }
+            }
+        };
         let extra = (!_extra.is_empty()).then(|| quote! {{ #(#_extra)* };});
         if body.is_none() && custom.is_none() && extra.is_none() {
             return None;

@@ -217,6 +217,16 @@ impl TypeDefinition {
         let go = &self.crate_ident;
         quote! { #go::glib }
     }
+    #[cfg(feature = "gio")]
+    pub fn gio(&self) -> TokenStream {
+        let go = &self.crate_ident;
+        quote! { #go::gio }
+    }
+    #[cfg(feature = "gtk4")]
+    pub fn gtk4(&self) -> TokenStream {
+        let go = &self.crate_ident;
+        quote! { #go::gtk4 }
+    }
     pub fn type_(&self, from: TypeMode, to: TypeMode, ctx: TypeContext) -> Option<TokenStream> {
         use TypeBase::*;
         use TypeContext::*;

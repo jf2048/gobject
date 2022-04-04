@@ -104,8 +104,15 @@
 //! }
 //! ```
 
+#[doc(hidden)]
+#[cfg(feature = "gio_macros")]
+pub use gio;
+#[doc(hidden)]
 pub use glib;
 pub use gobject_macros::*;
+#[doc(hidden)]
+#[cfg(feature = "gtk4_macros")]
+pub use gtk4;
 
 mod buildable;
 pub use buildable::*;
