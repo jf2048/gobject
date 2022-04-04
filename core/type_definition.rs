@@ -1,3 +1,5 @@
+use std::{cell::RefCell, collections::HashMap};
+
 use crate::{
     property::{Properties, Property},
     public_method::PublicMethod,
@@ -22,6 +24,7 @@ pub struct TypeDefinition {
     pub signals: Vec<Signal>,
     pub public_methods: Vec<PublicMethod>,
     pub virtual_methods: Vec<VirtualMethod>,
+    custom_stmts: RefCell<HashMap<String, Vec<syn::Stmt>>>,
 }
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Copy, Clone)]
@@ -78,6 +81,7 @@ impl TypeDefinition {
             signals: Vec::new(),
             public_methods: Vec::new(),
             virtual_methods: Vec::new(),
+            custom_stmts: RefCell::new(HashMap::new()),
         };
         if def.module.content.is_none() {
             util::push_error_spanned(
@@ -217,16 +221,6 @@ impl TypeDefinition {
         let go = &self.crate_ident;
         quote! { #go::glib }
     }
-    #[cfg(feature = "gio")]
-    pub fn gio(&self) -> TokenStream {
-        let go = &self.crate_ident;
-        quote! { #go::gio }
-    }
-    #[cfg(feature = "gtk4")]
-    pub fn gtk4(&self) -> TokenStream {
-        let go = &self.crate_ident;
-        quote! { #go::gtk4 }
-    }
     pub fn type_(&self, from: TypeMode, to: TypeMode, ctx: TypeContext) -> Option<TokenStream> {
         use TypeBase::*;
         use TypeContext::*;
@@ -264,9 +258,23 @@ impl TypeDefinition {
             _ => None,
         }
     }
+    pub fn properties_item_mut(&mut self) -> Option<&mut syn::ItemStruct> {
+        let index = self.properties_item_index?;
+        match self.module.content.as_mut()?.1.get_mut(index)? {
+            syn::Item::Struct(s) => Some(s),
+            _ => None,
+        }
+    }
     pub fn methods_item(&self) -> Option<&syn::ItemImpl> {
         let index = self.methods_item_index?;
         match self.module.content.as_ref()?.1.get(index)? {
+            syn::Item::Impl(i) => Some(i),
+            _ => None,
+        }
+    }
+    pub fn methods_item_mut(&mut self) -> Option<&mut syn::ItemImpl> {
+        let index = self.methods_item_index?;
+        match self.module.content.as_mut()?.1.get_mut(index)? {
             syn::Item::Impl(i) => Some(i),
             _ => None,
         }
@@ -286,13 +294,36 @@ impl TypeDefinition {
                 _ => None,
             })
     }
+    pub fn add_custom_stmt(&self, name: &str, stmt: syn::Stmt) {
+        let mut stmts = self.custom_stmts.borrow_mut();
+        if let Some(stmts) = stmts.get_mut(name) {
+            stmts.push(stmt);
+        } else {
+            stmts.insert(name.to_owned(), vec![stmt]);
+        }
+    }
+    pub fn has_custom_stmts(&self, name: &str) -> bool {
+        self.custom_stmts.borrow().contains_key(name)
+    }
+
+    pub fn custom_stmts_for(&self, name: &str) -> Option<TokenStream> {
+        self.custom_stmts
+            .borrow()
+            .get(name)
+            .map(|stmts| quote! {{ #(#stmts)* };})
+    }
     pub fn method_wrapper<F>(&self, name: &str, sig_func: F) -> Option<TokenStream>
     where
         F: FnOnce(&syn::Ident) -> syn::Signature,
     {
-        self.has_method(name).then(|| {
-            let ident = format_ident!("{}", name);
-            let sig = sig_func(&ident);
+        let has_method = self.has_method(name);
+        let custom = self.custom_stmts_for(name);
+        if !has_method && custom.is_none() {
+            return None;
+        }
+        let ident = format_ident!("{}", name);
+        let sig = sig_func(&ident);
+        let call_user_method = has_method.then(|| {
             let input_names = sig.inputs.iter().map(|arg| match arg {
                 syn::FnArg::Receiver(_) => quote! { self },
                 syn::FnArg::Typed(arg) => match &*arg.pat {
@@ -300,15 +331,19 @@ impl TypeDefinition {
                     _ => unimplemented!(),
                 },
             });
-            quote! {
-                #sig {
-                    Self::#ident(#(#input_names),*)
-                }
+            quote! { Self::#ident(#(#input_names),*) }
+        });
+        Some(quote! {
+            #sig {
+                #custom
+                #call_user_method
             }
         })
     }
     pub(crate) fn properties_method(&self) -> Option<TokenStream> {
-        if self.properties.is_empty() {
+        let has_method = self.has_method("properties");
+        let custom = self.custom_stmts_for("properties");
+        if self.properties.is_empty() && !has_method && custom.is_none() {
             return None;
         }
         let go = &self.crate_ident;
@@ -319,18 +354,25 @@ impl TypeDefinition {
             TypeContext::External,
         )?;
         let defs = self.properties.iter().map(|p| p.definition(go));
-        let extra = self.has_method("properties").then(|| quote! {
-            properties.extend(#sub_ty::properties());
+        let extra = has_method.then(|| {
+            quote! {
+                properties.extend(#sub_ty::properties());
+            }
         });
-        let base_index_set = (self.base == TypeBase::Class && !self.properties.is_empty() && extra.is_some())
-            .then(|| quote! {
+        let base_index_set = (self.base == TypeBase::Class
+            && !self.properties.is_empty()
+            && extra.is_some())
+        .then(|| {
+            quote! {
                 _GENERATED_PROPERTIES_BASE_INDEX.set(properties.len()).unwrap();
-            });
+            }
+        });
         Some(quote! {
             fn properties() -> &'static [#glib::ParamSpec] {
                 static PROPS: #glib::once_cell::sync::Lazy<::std::vec::Vec<#glib::ParamSpec>> =
                     #glib::once_cell::sync::Lazy::new(|| {
                         let mut properties = ::std::vec::Vec::<#glib::ParamSpec>::new();
+                        #custom
                         #extra
                         #base_index_set
                         properties.extend([#(#defs),*]);
@@ -341,7 +383,9 @@ impl TypeDefinition {
         })
     }
     pub(crate) fn signals_method(&self) -> Option<TokenStream> {
-        if self.signals.is_empty() {
+        let has_method = self.has_method("signals");
+        let custom = self.custom_stmts_for("signals");
+        if self.signals.is_empty() && !has_method && custom.is_none() {
             return None;
         }
         let glib = self.glib();
@@ -355,14 +399,17 @@ impl TypeDefinition {
             .signals
             .iter()
             .map(|s| s.definition(&ty, &sub_ty, &glib));
-        let extra = self.has_method("signals").then(|| quote! {
-            signals.extend(#sub_ty::signals());
+        let extra = has_method.then(|| {
+            quote! {
+                signals.extend(#sub_ty::signals());
+            }
         });
         Some(quote! {
             fn signals() -> &'static [#glib::subclass::Signal] {
                 static SIGNALS: #glib::once_cell::sync::Lazy<::std::vec::Vec<#glib::subclass::Signal>> =
                     #glib::once_cell::sync::Lazy::new(|| {
                         let mut signals = ::std::vec::Vec::<#glib::subclass::Signal>::new();
+                        #custom
                         #extra
                         signals.extend([#(#defs),*]);
                         signals

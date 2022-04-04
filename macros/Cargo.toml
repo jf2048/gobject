@@ -8,8 +8,8 @@ path = "lib.rs"
 proc-macro = true
 
 [features]
-gtk4 = ["gobject-core/gtk4"]
-gio = ["gobject-core/gio"]
+gtk4 = []
+gio = []
 
 [dependencies]
 darling = "0.13.1"

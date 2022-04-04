@@ -187,31 +187,7 @@ impl ClassDefinition {
             .inner
             .has_method("class_init")
             .then(|| quote! { Self::class_init(#class_ident); });
-        let mut _extra = Vec::<TokenStream>::new();
-        #[cfg(feature = "gtk4")]
-        {
-            let gtk4 = self.inner.gtk4();
-            if let Some(struct_) = self.inner.properties_item() {
-                if struct_.attrs.iter().any(|a| a.path.is_ident("template")) {
-                    _extra.push(syn::parse_quote! {
-                        #gtk4::subclass::widget::CompositeTemplateClass::bind_template(#class_ident);
-                    });
-                }
-            }
-            if let Some(impl_) = self.inner.methods_item() {
-                if impl_.items.iter().any(|a| match a {
-                    syn::ImplItem::Method(m) => {
-                        m.attrs.iter().any(|a| a.path.is_ident("template_callback"))
-                    }
-                    _ => false,
-                }) {
-                    _extra.push(syn::parse_quote! {
-                        #gtk4::subclass::widget::CompositeTemplateCallbacksClass::bind_template_callbacks(#class_ident);
-                    });
-                }
-            }
-        };
-        let extra = (!_extra.is_empty()).then(|| quote! {{ #(#_extra)* };});
+        let extra = self.inner.custom_stmts_for("class_init");
         if body.is_none() && custom.is_none() && extra.is_none() {
             return None;
         }
@@ -338,7 +314,7 @@ impl ClassDefinition {
         });
         let new = self
             .inner
-            .method_wrapper("new", |ident| parse_quote! { fn #ident() });
+            .method_wrapper("new", |ident| parse_quote! { fn #ident() -> Self });
         let with_class = self.inner.method_wrapper("with_class", |ident| {
             parse_quote! {
                 fn #ident(klass: &<Self as #glib::subclass::types::ObjectSubclass>::Class) -> Self
@@ -362,7 +338,9 @@ impl ClassDefinition {
         })
     }
     pub(crate) fn properties_base_index_definition(&self) -> Option<TokenStream> {
-        if self.inner.properties.is_empty() || !self.inner.has_method("properties") {
+        if self.inner.properties.is_empty()
+            || (!self.inner.has_method("properties") && !self.inner.has_custom_stmts("properties"))
+        {
             return None;
         }
         let glib = self.inner.glib();
@@ -373,8 +351,10 @@ impl ClassDefinition {
         })
     }
     fn adjust_property_index(&self) -> Option<TokenStream> {
-        self.inner.has_method("properties").then(|| quote! {
-            let id = id - _GENERATED_PROPERTIES_BASE_INDEX.get().unwrap();
+        self.inner.has_method("properties").then(|| {
+            quote! {
+                let id = id - _GENERATED_PROPERTIES_BASE_INDEX.get().unwrap();
+            }
         })
     }
     fn unimplemented_property(glib: &TokenStream) -> TokenStream {
@@ -397,6 +377,7 @@ impl ClassDefinition {
         let go = &self.inner.crate_ident;
         let glib = self.inner.glib();
         let adjust_index = self.adjust_property_index();
+        let extra = self.inner.custom_stmts_for("set_property");
         let set_impls = self
             .inner
             .properties
@@ -426,6 +407,7 @@ impl ClassDefinition {
                 pspec: &#glib::ParamSpec
             ) {
                 #adjust_index
+                #extra
                 #(#set_impls)*
                 #rest
             }
@@ -438,6 +420,7 @@ impl ClassDefinition {
         let go = &self.inner.crate_ident;
         let glib = self.inner.glib();
         let adjust_index = self.adjust_property_index();
+        let extra = self.inner.custom_stmts_for("property");
         let get_impls = self
             .inner
             .properties
@@ -466,6 +449,7 @@ impl ClassDefinition {
                 pspec: &#glib::ParamSpec
             ) -> #glib::Value {
                 #adjust_index
+                #extra
                 #(#get_impls)*
                 #rest
             }

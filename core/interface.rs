@@ -149,19 +149,18 @@ impl InterfaceDefinition {
     }
     fn interface_init_method(&self) -> Option<TokenStream> {
         let body = self.inner.type_init_body(&quote! { self });
-        let custom = self
-            .inner
-            .has_method("interface_init")
-            .then(|| {
-                quote! { Self::interface_init(self); }
-            });
-        if body.is_none() && custom.is_none() {
+        let custom = self.inner.has_method("interface_init").then(|| {
+            quote! { Self::interface_init(self); }
+        });
+        let extra = self.inner.custom_stmts_for("interface_init");
+        if body.is_none() && custom.is_none() && extra.is_none() {
             return None;
         }
         Some(quote! {
             fn interface_init(&mut self) {
                 #body
                 #custom
+                #extra
             }
         })
     }

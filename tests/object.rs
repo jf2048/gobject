@@ -51,8 +51,7 @@ mod obj_inner {
         #[signal]
         fn abc(&self) {}
         fn properties() -> Vec<glib::ParamSpec> {
-            vec![
-                glib::ParamSpecUInt::new(
+            vec![glib::ParamSpecUInt::new(
                 "my-uint",
                 "my-uint",
                 "my-uint",
@@ -60,8 +59,7 @@ mod obj_inner {
                 u32::MAX,
                 0,
                 glib::ParamFlags::READWRITE,
-                )
-            ]
+            )]
         }
 
         fn set_property(
@@ -77,7 +75,12 @@ mod obj_inner {
             }
         }
 
-        fn property(&self, _obj: &super::ObjInner, _id: usize, pspec: &glib::ParamSpec) -> glib::Value {
+        fn property(
+            &self,
+            _obj: &super::ObjInner,
+            _id: usize,
+            pspec: &glib::ParamSpec,
+        ) -> glib::Value {
             match pspec.name() {
                 "my-uint" => glib::ToValue::to_value(&self.my_uint.get()),
                 _ => unimplemented!(),
@@ -85,9 +88,7 @@ mod obj_inner {
         }
 
         fn signals() -> Vec<glib::subclass::Signal> {
-            vec![
-                glib::subclass::Signal::builder("xyz", &[], glib::Type::UNIT.into()).build()
-            ]
+            vec![glib::subclass::Signal::builder("xyz", &[], glib::Type::UNIT.into()).build()]
         }
     }
 }
