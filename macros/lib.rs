@@ -37,10 +37,8 @@ pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
     let tokens = module
         .map(|module| {
             let go = crate_ident();
-            let mut _class_def = ClassDefinition::parse(module, opts, go, &mut errors);
-            #[cfg(features = "gtk4")]
-            extend_gtk4(&mut _class_def);
-            _class_def.to_token_stream()
+            let class_def = ClassDefinition::parse(module, opts, go, &mut errors);
+            class_def.to_token_stream()
         })
         .unwrap_or_default();
     tokens_or_error(tokens, errors)
@@ -63,7 +61,24 @@ pub fn interface(attr: TokenStream, item: TokenStream) -> TokenStream {
     tokens_or_error(tokens, errors)
 }
 
-#[cfg(features = "gtk4")]
+#[proc_macro_attribute]
+pub fn gtk4_widget(attr: TokenStream, item: TokenStream) -> TokenStream {
+    use gobject_core::{ClassDefinition, ClassOptions};
+
+    let mut errors = vec![];
+    let opts = ClassOptions::parse(attr.into(), &mut errors);
+    let module = util::parse::<syn::ItemMod>(item.into(), &mut errors);
+    let tokens = module
+        .map(|module| {
+            let go = crate_ident();
+            let mut class_def = ClassDefinition::parse(module, opts, go, &mut errors);
+            extend_gtk4(&mut class_def);
+            class_def.to_token_stream()
+        })
+        .unwrap_or_default();
+    tokens_or_error(tokens, errors)
+}
+
 fn extend_gtk4(def: &mut gobject_core::ClassDefinition) {
     use proc_macro2::Span;
     use syn::{parse_quote, parse_quote_spanned};
@@ -76,6 +91,12 @@ fn extend_gtk4(def: &mut gobject_core::ClassDefinition) {
                 "class_init",
                 parse_quote_spanned! { Span::mixed_site() =>
                     #gtk4::subclass::widget::CompositeTemplateClass::bind_template(____class);
+                },
+            );
+            def.inner.add_custom_stmt(
+                "instance_init",
+                parse_quote_spanned! { Span::mixed_site() =>
+                    #gtk4::prelude::InitializingWidgetExt::init_template(obj);
                 },
             );
         }

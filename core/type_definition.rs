@@ -354,7 +354,7 @@ impl TypeDefinition {
         )?;
         let defs = self.properties.iter().map(|p| p.definition(go));
         let extra = has_method.then(|| {
-            quote! {
+            quote_spanned! { Span::mixed_site() =>
                 properties.extend(#sub_ty::properties());
             }
         });
@@ -362,17 +362,17 @@ impl TypeDefinition {
             && !self.properties.is_empty()
             && extra.is_some())
         .then(|| {
-            quote! {
+            quote_spanned! { Span::mixed_site() =>
                 _GENERATED_PROPERTIES_BASE_INDEX.set(properties.len()).unwrap();
             }
         });
-        Some(quote! {
+        Some(quote_spanned! { Span::mixed_site() =>
             fn properties() -> &'static [#glib::ParamSpec] {
                 static PROPS: #glib::once_cell::sync::Lazy<::std::vec::Vec<#glib::ParamSpec>> =
                     #glib::once_cell::sync::Lazy::new(|| {
                         let mut properties = ::std::vec::Vec::<#glib::ParamSpec>::new();
-                        #custom
                         #extra
+                        #custom
                         #base_index_set
                         properties.extend([#(#defs),*]);
                         properties
@@ -399,17 +399,17 @@ impl TypeDefinition {
             .iter()
             .map(|s| s.definition(&ty, &sub_ty, &glib));
         let extra = has_method.then(|| {
-            quote! {
+            quote_spanned! { Span::mixed_site() =>
                 signals.extend(#sub_ty::signals());
             }
         });
-        Some(quote! {
+        Some(quote_spanned! { Span::mixed_site() =>
             fn signals() -> &'static [#glib::subclass::Signal] {
                 static SIGNALS: #glib::once_cell::sync::Lazy<::std::vec::Vec<#glib::subclass::Signal>> =
                     #glib::once_cell::sync::Lazy::new(|| {
                         let mut signals = ::std::vec::Vec::<#glib::subclass::Signal>::new();
-                        #custom
                         #extra
+                        #custom
                         signals.extend([#(#defs),*]);
                         signals
                     });

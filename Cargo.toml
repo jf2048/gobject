@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-gtk4_macros = ["gtk4", "gobject-macros/gtk4"]
-gio_macros = ["gio", "gobject-macros/gio"]
+gtk4_macros = ["gtk4"]
+gio_macros = ["gio"]
 
 [dependencies]
 glib = { git = "https://github.com/gtk-rs/gtk-rs-core", version = "0.16" }
