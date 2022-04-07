@@ -115,9 +115,9 @@ pub use glib;
 #[cfg(feature = "gtk4_macros")]
 pub use gtk4;
 
-pub use gobject_macros::{class, clone_block, interface, Properties};
 #[cfg(feature = "gtk4_macros")]
 pub use gobject_macros::gtk4_widget;
+pub use gobject_macros::{class, clone_block, interface, Properties};
 
 mod buildable;
 pub use buildable::*;
