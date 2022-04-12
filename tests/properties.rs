@@ -36,6 +36,8 @@ mod basic {
         my_attributed: Cell<u8>,
         #[property(get, set, construct_only, builder(default_value = 100.0))]
         my_construct_only: Cell<f64>,
+        #[property(get, set, lax_validation)]
+        my_lax: Cell<u32>,
         #[property(get, set, explicit_notify, lax_validation)]
         my_explicit: Cell<u64>,
         #[property(get, set, explicit_notify, lax_validation)]
@@ -91,8 +93,8 @@ fn basic_properties() {
     use glib::subclass::prelude::ObjectImpl;
 
     let props = glib::Object::new::<BasicProps>(&[]).unwrap();
-    assert_eq!(<basic::BasicProps as ObjectImpl>::properties().len(), 15);
-    assert_eq!(props.list_properties().len(), 15);
+    assert_eq!(<basic::BasicProps as ObjectImpl>::properties().len(), 16);
+    assert_eq!(props.list_properties().len(), 16);
     props.connect_my_i32_notify(|props| props.set_my_str("Updated".into()));
     assert_eq!(props.my_str(), "");
     props.set_my_i32(5);

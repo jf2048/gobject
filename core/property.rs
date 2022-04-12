@@ -938,8 +938,7 @@ impl Property {
     }
     #[inline]
     fn is_set_inline(&self) -> bool {
-        self.flags
-            .contains(PropertyFlags::EXPLICIT_NOTIFY | PropertyFlags::LAX_VALIDATION)
+        self.flags.contains(PropertyFlags::LAX_VALIDATION)
     }
     #[inline]
     fn setter_name(&self) -> syn::Ident {
@@ -949,7 +948,7 @@ impl Property {
     fn inline_set_impl<N>(
         &self,
         object_type: Option<&TokenStream>,
-        notify: N,
+        notify: Option<N>,
         go: &syn::Ident,
     ) -> TokenStream
     where
@@ -958,16 +957,17 @@ impl Property {
         let field = self.field_storage(object_type, go);
         let construct_only = self.flags.contains(PropertyFlags::CONSTRUCT_ONLY);
         if self.get.is_allowed() && !construct_only {
-            let notify = notify();
-            quote! {
-                if #go::ParamStoreWriteChanged::set_owned_checked(&#field, value) {
-                    #notify
-                }
+            if let Some(notify) = notify {
+                let notify = notify();
+                return quote! {
+                    if #go::ParamStoreWriteChanged::set_owned_checked(&#field, value) {
+                        #notify
+                    }
+                };
             }
-        } else {
-            quote! {
-                #go::ParamStoreWrite::set_owned(&#field, value);
-            }
+        }
+        quote! {
+            #go::ParamStoreWrite::set_owned(&#field, value);
         }
     }
     pub(crate) fn set_impl(
@@ -985,12 +985,13 @@ impl Property {
             } else if self.is_set_inline() {
                 let body = self.inline_set_impl(
                     None,
-                    || quote! {
+                    self.flags.contains(PropertyFlags::EXPLICIT_NOTIFY)
+                    .then(|| || quote! {
                         <<Self as #glib::subclass::types::ObjectSubclass>::Type as #glib::object::ObjectExt>::notify_by_pspec(
                             obj,
                             pspec
                         );
-                    },
+                    }),
                     go
                 );
                 let ty = self.inner_type(go);
@@ -1038,14 +1039,14 @@ impl Property {
             let body = if !self.is_abstract() && self.is_set_inline() {
                 self.inline_set_impl(
                     Some(object_type),
-                    || {
+                    Some(|| {
                         quote! {
                             <Self as #go::glib::object::ObjectExt>::notify_by_pspec(
                                 self,
                                 &#properties_path()[#index]
                             );
                         }
-                    },
+                    }),
                     go,
                 )
             } else {
