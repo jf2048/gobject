@@ -506,7 +506,7 @@ impl Drop for VariantBuilder {
 trait VariantBuilderExt {
     fn as_ptr(&self) -> *mut ffi::GVariantBuilder;
     unsafe fn add<T: ToVariant>(&self, value: &T) {
-        self.add(&value.to_variant());
+        self.add_value(&value.to_variant());
     }
     unsafe fn add_value(&self, value: &glib::Variant) {
         ffi::g_variant_builder_add_value(self.as_ptr(), value.to_glib_none().0);
