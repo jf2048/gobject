@@ -139,7 +139,7 @@ impl InterfaceDefinition {
         })
     }
     #[inline]
-    fn ext_trait(&self) -> Option<syn::Ident> {
+    pub fn ext_trait(&self) -> Option<syn::Ident> {
         let name = self.inner.name.as_ref()?;
         Some(
             self.ext_trait
@@ -184,15 +184,12 @@ impl InterfaceDefinition {
     fn object_interface_impl(&self) -> Option<TokenStream> {
         let glib = self.inner.glib();
         let name = self.inner.name.as_ref()?;
-        let head = if let Some(generics) = &self.inner.generics {
-            let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
+        let head = self.inner.trait_head(
+            &parse_quote! { #name },
             quote! {
-                unsafe impl #impl_generics #glib::subclass::prelude::ObjectInterface
-                    for #name #type_generics #where_clause
-            }
-        } else {
-            quote! { unsafe impl #glib::subclass::prelude::ObjectInterface for #name }
-        };
+                #glib::subclass::prelude::ObjectInterface
+            },
+        );
         let gtype_name = if let Some(ns) = &self.ns {
             format!("{}{}", ns, name)
         } else {
@@ -210,7 +207,7 @@ impl InterfaceDefinition {
         });
         Some(quote! {
             #[#glib::object_interface]
-            #head {
+            unsafe #head {
                 const NAME: &'static ::std::primitive::str = #gtype_name;
                 type Prerequisites = super::#prerequisites;
                 #interface_init
@@ -295,6 +292,7 @@ impl ToTokens for InterfaceDefinition {
         let requires_ident = format_ident!("{}Prerequisites", name);
         let requires = &self.requires;
         let requires = quote! {
+            #[doc(hidden)]
             type #requires_ident = (#(#requires,)*);
         };
 

@@ -339,6 +339,36 @@ impl TypeDefinition {
             }
         })
     }
+    pub fn trait_head_with_params(
+        &self,
+        ty: &syn::Path,
+        trait_: TokenStream,
+        params: Option<impl IntoIterator<Item = syn::GenericParam>>,
+    ) -> TokenStream {
+        if let Some(params) = params {
+            let type_generics = self.generics.as_ref().map(|g| g.split_for_impl().1);
+            let where_clause = self.generics.as_ref().map(|g| g.split_for_impl().2);
+            let mut generics = self.generics.clone().unwrap_or_default();
+            generics.params.extend(params);
+            let (impl_generics, _, _) = generics.split_for_impl();
+            quote! {
+                impl #impl_generics #trait_ for #ty #type_generics #where_clause
+            }
+        } else if let Some(generics) = &self.generics {
+            let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
+            quote! {
+                impl #impl_generics #trait_ for #ty #type_generics #where_clause
+            }
+        } else {
+            quote! {
+                impl #trait_ for #ty
+            }
+        }
+    }
+    #[inline]
+    pub fn trait_head(&self, ty: &syn::Path, trait_: TokenStream) -> TokenStream {
+        self.trait_head_with_params(ty, trait_, None::<[syn::GenericParam; 0]>)
+    }
     pub(crate) fn properties_method(&self) -> Option<TokenStream> {
         let has_method = self.has_method("properties");
         let custom = self.custom_stmts_for("properties");

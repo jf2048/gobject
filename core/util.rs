@@ -36,7 +36,7 @@ impl Parse for AttributeArgs {
     }
 }
 
-pub(crate) fn parse_list<T>(input: TokenStream, errors: &mut Vec<darling::Error>) -> T
+pub fn parse_list<T>(input: TokenStream, errors: &mut Vec<darling::Error>) -> T
 where
     T: darling::FromMeta + Default,
 {
@@ -67,7 +67,7 @@ impl Parse for ParenAttributeArgs {
     }
 }
 
-pub(crate) fn parse_paren_list<T>(input: TokenStream, errors: &mut Vec<darling::Error>) -> T
+pub fn parse_paren_list<T>(input: TokenStream, errors: &mut Vec<darling::Error>) -> T
 where
     T: darling::FromMeta + Default,
 {

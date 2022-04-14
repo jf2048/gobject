@@ -168,7 +168,7 @@ impl ClassDefinition {
         })
     }
     #[inline]
-    fn ext_trait(&self) -> Option<syn::Ident> {
+    pub fn ext_trait(&self) -> Option<syn::Ident> {
         if self.final_ {
             return None;
         }
@@ -199,18 +199,6 @@ impl ClassDefinition {
             }
         })
     }
-    fn trait_head(&self, ty: &syn::Ident, trait_: TokenStream) -> TokenStream {
-        if let Some(generics) = &self.inner.generics {
-            let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
-            quote! {
-                impl #impl_generics #trait_ for #ty #type_generics #where_clause
-            }
-        } else {
-            quote! {
-                impl #trait_ for #ty
-            }
-        }
-    }
     fn class_struct_definition(&self) -> Option<TokenStream> {
         let fields = self.inner.type_struct_fields();
         if fields.is_empty() {
@@ -228,19 +216,20 @@ impl ClassDefinition {
                 <<#parent_type as #glib::Object::ObjectSubclassIs>::Subclass as #glib::subclass::types::ObjectSubclass>::Class
             }
         };
-        let class_struct_head = self.trait_head(
+        let class_name = parse_quote! { #class_name };
+        let class_struct_head = self.inner.trait_head(
             &class_name,
             quote! {
                 #glib::subclass::types::ClassStruct
             },
         );
-        let deref_head = self.trait_head(
+        let deref_head = self.inner.trait_head(
             &class_name,
             quote! {
                 ::std::ops::Deref
             },
         );
-        let deref_mut_head = self.trait_head(
+        let deref_mut_head = self.inner.trait_head(
             &class_name,
             quote! {
                 ::std::ops::DerefMut
@@ -279,15 +268,12 @@ impl ClassDefinition {
     fn object_subclass_impl(&self) -> Option<TokenStream> {
         let glib = self.inner.glib();
         let name = self.inner.name.as_ref()?;
-        let head = if let Some(generics) = &self.inner.generics {
-            let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
+        let head = self.inner.trait_head(
+            &parse_quote! { #name },
             quote! {
-                impl #impl_generics #glib::subclass::types::ObjectSubclass
-                for #name #type_generics #where_clause
-            }
-        } else {
-            quote! { impl #glib::subclass::types::ObjectSubclass for #name }
-        };
+                #glib::subclass::types::ObjectSubclass
+            },
+        );
         let gtype_name = if let Some(ns) = &self.ns {
             format!("{}{}", ns, name)
         } else {
@@ -359,7 +345,7 @@ impl ClassDefinition {
     }
     fn unimplemented_property(glib: &TokenStream) -> TokenStream {
         quote! {
-            unimplemented!(
+            ::std::unimplemented!(
                 "invalid property id {} for \"{}\" of type '{}' in '{}'",
                 id,
                 pspec.name(),
@@ -493,21 +479,11 @@ impl ClassDefinition {
         let name = self.inner.name.as_ref()?;
         let type_ident = syn::Ident::new("____Object", Span::mixed_site());
         let trait_name = format_ident!("{}Impl", name);
-        let param = syn::parse_quote! { #type_ident: #trait_name };
-        let head = if let Some(generics) = &self.inner.generics {
-            let (_, type_generics, _) = generics.split_for_impl();
-            let mut generics = generics.clone();
-            generics.params.push(param);
-            let (impl_generics, _, where_clause) = generics.split_for_impl();
-            quote! {
-                unsafe impl #impl_generics #glib::subclass::types::IsSubclassable<#type_ident>
-                    for super::#name #type_generics #where_clause
-            }
-        } else {
-            quote! {
-                unsafe impl<#param> #glib::subclass::types::IsSubclassable<#type_ident> for super::#name
-            }
-        };
+        let head = self.inner.trait_head_with_params(
+            &parse_quote! { super::#name },
+            quote! { #glib::subclass::types::IsSubclassable<#type_ident> },
+            Some([parse_quote! { #type_ident: #trait_name }]),
+        );
         let class_ident = syn::Ident::new("____class", Span::mixed_site());
         let class_init = self
             .inner
@@ -524,7 +500,7 @@ impl ClassDefinition {
                 }
             });
         Some(quote! {
-            #head {
+            unsafe #head {
                 #class_init
             }
         })
@@ -555,11 +531,15 @@ impl ToTokens for ClassDefinition {
         });
         let parent_type = self.parent_type().map(|p| {
             let ident = format_ident!("{}ParentType", name);
-            quote! { type #ident = #p; }
+            quote! {
+                #[doc(hidden)]
+                type #ident = #p;
+            }
         });
         let interfaces_ident = format_ident!("{}Interfaces", name);
         let interfaces = &self.implements;
         let interfaces = quote! {
+            #[doc(hidden)]
             type #interfaces_ident = (#(#interfaces,)*);
         };
 
@@ -607,7 +587,7 @@ pub fn derived_class_properties(
     let public_methods = if let Some(trait_name) = trait_name {
         let type_ident = format_ident!("____Object");
         let mut generics = generics.clone();
-        let param = syn::parse_quote! { #type_ident: #glib::IsA<#wrapper_ty> };
+        let param = parse_quote! { #type_ident: #glib::IsA<#wrapper_ty> };
         generics.params.push(param);
         let (impl_generics, _, where_clause) = generics.split_for_impl();
 
@@ -677,7 +657,7 @@ pub fn derived_class_properties(
             fn derived_properties() -> &'static [#glib::ParamSpec] {
                 static PROPS: #glib::once_cell::sync::Lazy<::std::vec::Vec<#glib::ParamSpec>> =
                     #glib::once_cell::sync::Lazy::new(|| {
-                        vec![#(#defs),*]
+                        ::std::vec![#(#defs),*]
                     });
                 ::std::convert::AsRef::as_ref(::std::ops::Deref::deref(&PROPS))
             }

@@ -114,6 +114,9 @@ pub use glib;
 #[doc(hidden)]
 #[cfg(feature = "gtk4_macros")]
 pub use gtk4;
+#[doc(hidden)]
+#[cfg(feature = "serde_macros")]
+pub use serde;
 
 #[cfg(feature = "gtk4_macros")]
 pub use gobject_macros::gtk4_widget;
@@ -125,6 +128,10 @@ mod construct_cell;
 pub use construct_cell::*;
 mod store;
 pub use store::*;
+#[cfg(feature = "serde_macros")]
+mod serde_traits;
+#[cfg(feature = "serde_macros")]
+pub use serde_traits::*;
 
 pub use glib::once_cell::race::{OnceBool, OnceBox};
 pub use glib::once_cell::sync::OnceCell as SyncOnceCell;

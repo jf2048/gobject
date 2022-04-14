@@ -7,6 +7,9 @@ edition = "2021"
 path = "lib.rs"
 proc-macro = true
 
+[features]
+serde = []
+
 [dependencies]
 darling = "0.13.1"
 gobject-core = { path = "../core" }

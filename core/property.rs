@@ -429,7 +429,7 @@ impl PropertyPermission {
             *self = Self::AllowCustomDefault;
         }
     }
-    fn is_allowed(&self) -> bool {
+    pub fn is_allowed(&self) -> bool {
         !matches!(self, Self::Deny)
     }
 }
@@ -537,6 +537,12 @@ impl PropertyStorage {
 pub enum PropertyName {
     Field(syn::Ident),
     Custom(syn::LitStr),
+}
+
+impl PropertyName {
+    pub fn field_name(&self) -> syn::Ident {
+        format_ident!("{}", self.to_string().to_snake_case())
+    }
 }
 
 impl Spanned for PropertyName {
@@ -767,7 +773,7 @@ impl Property {
             .build()
         }
     }
-    fn inner_type(&self, go: &syn::Ident) -> TokenStream {
+    pub fn inner_type(&self, go: &syn::Ident) -> TokenStream {
         let ty = &self.field.ty;
         quote! { <#ty as #go::ParamStore>::Type }
     }
@@ -809,7 +815,7 @@ impl Property {
         };
         match perm {
             PropertyPermission::AllowCustomDefault => {
-                let name = self.name.to_string().to_snake_case();
+                let name = self.name.field_name();
                 let method = match set {
                     true => format_ident!("set_{}", name),
                     false => format_ident!("{}", name),
@@ -847,7 +853,7 @@ impl Property {
         };
         match perm {
             PropertyPermission::AllowCustomDefault => {
-                let name = self.name.to_string().to_snake_case();
+                let name = self.name.field_name();
                 let method = match set_ty.is_some() {
                     true => format_ident!("set_{}", name),
                     false => format_ident!("{}", name),
@@ -862,7 +868,7 @@ impl Property {
     }
     #[inline]
     fn getter_name(&self) -> syn::Ident {
-        format_ident!("{}", self.name.to_string().to_snake_case())
+        format_ident!("{}", self.name.field_name())
     }
     pub(crate) fn get_impl(
         &self,
@@ -912,7 +918,7 @@ impl Property {
     }
     #[inline]
     fn borrow_name(&self) -> syn::Ident {
-        format_ident!("borrow_{}", self.name.to_string().to_snake_case())
+        format_ident!("borrow_{}", self.name.field_name())
     }
     fn borrow_prototype(&self, go: &syn::Ident) -> Option<TokenStream> {
         self.borrow.then(|| {
@@ -942,7 +948,7 @@ impl Property {
     }
     #[inline]
     fn setter_name(&self) -> syn::Ident {
-        format_ident!("set_{}", self.name.to_string().to_snake_case())
+        format_ident!("set_{}", self.name.field_name())
     }
     #[inline]
     fn inline_set_impl<N>(
@@ -1069,7 +1075,7 @@ impl Property {
             && !self.flags.contains(PropertyFlags::CONSTRUCT_ONLY)
             && self.notify)
             .then(|| {
-                let method_name = format_ident!("notify_{}", self.name.to_string().to_snake_case());
+                let method_name = format_ident!("notify_{}", self.name.field_name());
                 quote_spanned! { self.span() => fn #method_name(&self) }
             })
     }
@@ -1098,7 +1104,7 @@ impl Property {
             && self.connect_notify)
             .then(|| {
                 let method_name =
-                    format_ident!("connect_{}_notify", self.name.to_string().to_snake_case());
+                    format_ident!("connect_{}_notify", self.name.field_name());
                 quote_spanned! { self.span() =>
                     fn #method_name<____Func: Fn(&Self) + 'static>(&self, f: ____Func) -> #glib::SignalHandlerId
                 }

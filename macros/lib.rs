@@ -2,6 +2,9 @@ use gobject_core::util;
 use proc_macro::TokenStream;
 use quote::ToTokens;
 
+#[cfg(feature = "serde")]
+mod serde;
+
 #[proc_macro_attribute]
 #[proc_macro_error::proc_macro_error]
 pub fn clone_block(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -37,8 +40,28 @@ pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
     let tokens = module
         .map(|module| {
             let go = crate_ident();
-            let class_def = ClassDefinition::parse(module, opts, go, &mut errors);
-            class_def.to_token_stream()
+            let mut _class_def = ClassDefinition::parse(module, opts, go, &mut errors);
+            #[cfg(feature = "serde")]
+            {
+                let parent_type = (!_class_def.extends.is_empty())
+                    .then(|| {
+                        let name = _class_def.inner.name.as_ref()?;
+                        let ident = quote::format_ident!("{}ParentType", name);
+                        Some(syn::parse_quote! { super::#ident })
+                    })
+                    .flatten();
+                let ext_trait = _class_def.ext_trait();
+                serde::extend_serde(
+                    &mut _class_def.inner,
+                    _class_def.final_,
+                    _class_def.abstract_,
+                    parent_type.as_ref(),
+                    ext_trait.as_ref(),
+                    _class_def.ns.as_ref(),
+                    &mut errors,
+                );
+            }
+            _class_def.to_token_stream()
         })
         .unwrap_or_default();
     tokens_or_error(tokens, errors)
@@ -54,11 +77,33 @@ pub fn interface(attr: TokenStream, item: TokenStream) -> TokenStream {
     let tokens = module
         .map(|module| {
             let go = crate_ident();
-            let class_def = InterfaceDefinition::parse(module, opts, go, &mut errors);
-            class_def.to_token_stream()
+            let mut _iface_def = InterfaceDefinition::parse(module, opts, go, &mut errors);
+            #[cfg(feature = "serde")]
+            {
+                let ext_trait = _iface_def.ext_trait();
+                serde::extend_serde(
+                    &mut _iface_def.inner,
+                    false,
+                    true,
+                    None,
+                    ext_trait.as_ref(),
+                    _iface_def.ns.as_ref(),
+                    &mut errors,
+                );
+            }
+            _iface_def.to_token_stream()
         })
         .unwrap_or_default();
     tokens_or_error(tokens, errors)
+}
+
+#[cfg(feature = "serde")]
+#[proc_macro]
+pub fn serde_cast(input: TokenStream) -> TokenStream {
+    let mut errors = vec![];
+    let go = crate_ident();
+    let output = serde::downcast_enum(input.into(), &go, &mut errors);
+    tokens_or_error(output, errors)
 }
 
 #[proc_macro_attribute]
