@@ -1,4 +1,7 @@
-use crate::{util, Properties, TypeBase, TypeDefinition};
+use crate::{
+    util::{self, Errors},
+    Properties, TypeBase, TypeDefinition,
+};
 use darling::{
     util::{Flag, PathList, SpannedValue},
     FromMeta,
@@ -25,7 +28,7 @@ struct Attrs {
 }
 
 impl Attrs {
-    fn validate(&self, errors: &mut Vec<darling::Error>) {
+    fn validate(&self, errors: &Errors) {
         use crate::validations::*;
         let abstract_ = ("abstract", check_flag(&self.abstract_));
         let final_ = ("final", check_flag(&self.final_));
@@ -37,7 +40,7 @@ impl Attrs {
 pub struct ClassOptions(Attrs);
 
 impl ClassOptions {
-    pub fn parse(tokens: TokenStream, errors: &mut Vec<darling::Error>) -> Self {
+    pub fn parse(tokens: TokenStream, errors: &Errors) -> Self {
         Self(util::parse_list(tokens, errors))
     }
 }
@@ -60,7 +63,7 @@ impl ClassDefinition {
         module: syn::ItemMod,
         opts: ClassOptions,
         crate_ident: syn::Ident,
-        errors: &mut Vec<darling::Error>,
+        errors: &Errors,
     ) -> Self {
         let attrs = opts.0;
         attrs.validate(errors);
@@ -83,8 +86,7 @@ impl ClassDefinition {
             class.inner.name = Some(name);
         }
         if class.inner.name.is_none() {
-            util::push_error(
-                errors,
+            errors.push(
                 class.inner.span(),
                 "Class must have a `name = \"...\"` parameter or a #[properties] struct",
             );
@@ -92,8 +94,7 @@ impl ClassDefinition {
 
         if class.final_ {
             for virtual_method in &class.inner.virtual_methods {
-                util::push_error_spanned(
-                    errors,
+                errors.push_spanned(
                     &virtual_method.sig,
                     "Virtual method not allowed on final class",
                 );
@@ -557,7 +558,7 @@ impl ToTokens for ClassDefinition {
 pub fn derived_class_properties(
     input: &syn::DeriveInput,
     go: &syn::Ident,
-    errors: &mut Vec<darling::Error>,
+    errors: &Errors,
 ) -> TokenStream {
     let Properties {
         final_type,

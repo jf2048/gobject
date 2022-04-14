@@ -1,4 +1,7 @@
-use crate::{util, TypeBase};
+use crate::{
+    util::{self, Errors},
+    TypeBase,
+};
 use darling::{
     util::{Flag, SpannedValue},
     FromDeriveInput, FromField, FromMeta,
@@ -215,18 +218,11 @@ impl PropertyAttrs {
             set.normalize(computed);
         }
     }
-    fn validate(
-        &self,
-        field: &syn::Field,
-        pod: bool,
-        base: TypeBase,
-        errors: &mut Vec<darling::Error>,
-    ) {
+    fn validate(&self, field: &syn::Field, pod: bool, base: TypeBase, errors: &Errors) {
         use crate::validations::*;
 
         if self.skip.is_none() && self.ident.is_none() && self.name.is_none() {
-            util::push_error_spanned(
-                errors,
+            errors.push_spanned(
                 field,
                 "#[property(name = \"...\")] required for tuple struct properties",
             );
@@ -234,8 +230,7 @@ impl PropertyAttrs {
 
         let name = self.name(0);
         if !util::is_valid_name(&name.to_string()) {
-            util::push_error(
-                errors,
+            errors.push(
                 name.span(),
                 format!(
                     "Invalid property name '{}'. Property names must start with an ASCII letter and only contain ASCII letters, numbers, '-' or '_'",
@@ -254,7 +249,7 @@ impl PropertyAttrs {
                 .map(|p| p.is_allowed())
                 .unwrap_or(false)
         {
-            util::push_error_spanned(errors, field, "Property must be readable or writable");
+            errors.push_spanned(field, "Property must be readable or writable");
         }
 
         let interface = (
@@ -370,8 +365,7 @@ impl PropertyAttrs {
             let checks = [&interface, &write_only, &abstract_, &computed];
             for (attr_name, fail_span) in checks {
                 if fail_span.is_some() {
-                    util::push_error(
-                        errors,
+                    errors.push(
                         self.borrow.span(),
                         format!("`borrow` not allowed on {} property", attr_name),
                     );
@@ -604,7 +598,7 @@ impl Properties {
     pub(crate) fn from_derive_input(
         input: &syn::DeriveInput,
         base: Option<TypeBase>,
-        errors: &mut Vec<darling::Error>,
+        errors: &Errors,
     ) -> Self {
         let PropertiesAttrs {
             pod,
@@ -614,16 +608,16 @@ impl Properties {
         } = match PropertiesAttrs::from_derive_input(input) {
             Ok(attrs) => attrs,
             Err(e) => {
-                errors.push(e);
+                errors.push_darling(e);
                 Default::default()
             }
         };
         if base.is_none() {
             if let Some(final_type) = &final_type {
-                util::push_error_spanned(errors, final_type, "`final_type` not allowed here");
+                errors.push_spanned(final_type, "`final_type` not allowed here");
             }
         } else if interface.is_some() {
-            util::push_error(errors, interface.span(), "`interface` not allowed here");
+            errors.push(interface.span(), "`interface` not allowed here");
         }
         let pod = pod.is_some();
         let base = base.unwrap_or_else(|| {
@@ -649,8 +643,7 @@ impl Properties {
             if let Some(prop) = prop {
                 let name = prop.name.to_string();
                 if prop_names.contains(&name) {
-                    util::push_error(
-                        errors,
+                    errors.push(
                         prop.name.span(),
                         format!("Duplicate definition for property `{}`", name),
                     );
@@ -714,7 +707,7 @@ impl Property {
         index: usize,
         pod: bool,
         base: TypeBase,
-        errors: &mut Vec<darling::Error>,
+        errors: &Errors,
     ) -> Option<Self> {
         attrs.normalize(field, pod);
         attrs.validate(field, pod, base, errors);

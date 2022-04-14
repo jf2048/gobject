@@ -1,4 +1,4 @@
-use crate::util;
+use crate::util::Errors;
 use darling::util::{Flag, SpannedValue};
 use proc_macro2::Span;
 
@@ -15,22 +15,18 @@ pub(crate) fn check_bool(flag: &SpannedValue<Option<bool>>) -> Option<Span> {
 pub(crate) fn disallow<'t>(
     name: &str,
     flags: impl IntoIterator<Item = &'t (&'static str, Option<Span>)>,
-    errors: &mut Vec<darling::Error>,
+    errors: &Errors,
 ) {
     for (attr_name, span) in flags.into_iter() {
         if let Some(span) = *span {
-            util::push_error(
-                errors,
-                span,
-                format!("`{}` not allowed on {}", attr_name, name),
-            );
+            errors.push(span, format!("`{}` not allowed on {}", attr_name, name));
         }
     }
 }
 
 pub(crate) fn only_one<'t>(
     flags: impl IntoIterator<Item = &'t (&'static str, Option<Span>)> + Clone,
-    errors: &mut Vec<darling::Error>,
+    errors: &Errors,
 ) {
     let present_spans = flags
         .clone()
@@ -47,7 +43,7 @@ pub(crate) fn only_one<'t>(
             }
         });
         for span in present_spans {
-            util::push_error(errors, span, format!("Only one of {} is allowed", names));
+            errors.push(span, format!("Only one of {} is allowed", names));
         }
     }
 }

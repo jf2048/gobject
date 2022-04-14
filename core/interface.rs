@@ -1,4 +1,7 @@
-use crate::{util, TypeBase, TypeDefinition};
+use crate::{
+    util::{self, Errors},
+    TypeBase, TypeDefinition,
+};
 use darling::{util::PathList, FromMeta};
 use heck::ToUpperCamelCase;
 use proc_macro2::{Span, TokenStream};
@@ -20,7 +23,7 @@ struct Attrs {
 pub struct InterfaceOptions(Attrs);
 
 impl InterfaceOptions {
-    pub fn parse(tokens: TokenStream, errors: &mut Vec<darling::Error>) -> Self {
+    pub fn parse(tokens: TokenStream, errors: &Errors) -> Self {
         Self(util::parse_list(tokens, errors))
     }
 }
@@ -40,7 +43,7 @@ impl InterfaceDefinition {
         module: syn::ItemMod,
         opts: InterfaceOptions,
         crate_ident: syn::Ident,
-        errors: &mut Vec<darling::Error>,
+        errors: &Errors,
     ) -> Self {
         let attrs = opts.0;
 
@@ -59,8 +62,7 @@ impl InterfaceDefinition {
             iface.inner.name = Some(name);
         }
         if iface.inner.name.is_none() {
-            util::push_error(
-                errors,
+            errors.push(
                 iface.inner.span(),
                 "Interface must have a `name = \"...\"` parameter or a #[properties] struct",
             );
@@ -82,8 +84,7 @@ impl InterfaceDefinition {
                             } };
                             n.named.extend(fields.named.into_iter());
                         }
-                        f => util::push_error_spanned(
-                            errors,
+                        f => errors.push_spanned(
                             f,
                             "Interface struct with virtual methods must have named fields",
                         ),

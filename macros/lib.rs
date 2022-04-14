@@ -1,4 +1,4 @@
-use gobject_core::util;
+use gobject_core::util::{self, Errors};
 use proc_macro::TokenStream;
 use quote::ToTokens;
 
@@ -11,38 +11,35 @@ mod serde;
 #[proc_macro_error::proc_macro_error]
 pub fn clone_block(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut item = syn::parse_macro_input!(item as syn::Item);
-    let mut errors = vec![];
+    let errors = Errors::new();
     let go = crate_ident();
-    gobject_core::closures(&mut item, go, &mut errors);
-    for error in errors {
-        proc_macro_error::Diagnostic::from(error).emit();
-    }
-    item.to_token_stream().into()
+    gobject_core::closures(&mut item, go, &errors);
+    append_errors(item.to_token_stream(), errors)
 }
 
 #[proc_macro_derive(Properties, attributes(properties, property))]
 pub fn derive_properties(item: TokenStream) -> TokenStream {
-    let mut errors = vec![];
-    let tokens = util::parse::<syn::DeriveInput>(item.into(), &mut errors)
+    let errors = Errors::new();
+    let tokens = util::parse::<syn::DeriveInput>(item.into(), &errors)
         .map(|input| {
             let go = crate_ident();
-            gobject_core::derived_class_properties(&input, &go, &mut errors)
+            gobject_core::derived_class_properties(&input, &go, &errors)
         })
         .unwrap_or_default();
-    tokens_or_error(tokens, errors)
+    append_errors(tokens, errors)
 }
 
 #[proc_macro_attribute]
 pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
     use gobject_core::{ClassDefinition, ClassOptions};
 
-    let mut errors = vec![];
-    let opts = ClassOptions::parse(attr.into(), &mut errors);
-    let module = util::parse::<syn::ItemMod>(item.into(), &mut errors);
+    let errors = Errors::new();
+    let opts = ClassOptions::parse(attr.into(), &errors);
+    let module = util::parse::<syn::ItemMod>(item.into(), &errors);
     let tokens = module
         .map(|module| {
             let go = crate_ident();
-            let mut _class_def = ClassDefinition::parse(module, opts, go, &mut errors);
+            let mut _class_def = ClassDefinition::parse(module, opts, go, &errors);
             #[cfg(feature = "serde")]
             {
                 let parent_type = (!_class_def.extends.is_empty())
@@ -60,26 +57,26 @@ pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
                     parent_type.as_ref(),
                     ext_trait.as_ref(),
                     _class_def.ns.as_ref(),
-                    &mut errors,
+                    &errors,
                 );
             }
             _class_def.to_token_stream()
         })
         .unwrap_or_default();
-    tokens_or_error(tokens, errors)
+    append_errors(tokens, errors)
 }
 
 #[proc_macro_attribute]
 pub fn interface(attr: TokenStream, item: TokenStream) -> TokenStream {
     use gobject_core::{InterfaceDefinition, InterfaceOptions};
 
-    let mut errors = vec![];
-    let opts = InterfaceOptions::parse(attr.into(), &mut errors);
-    let module = util::parse::<syn::ItemMod>(item.into(), &mut errors);
+    let errors = Errors::new();
+    let opts = InterfaceOptions::parse(attr.into(), &errors);
+    let module = util::parse::<syn::ItemMod>(item.into(), &errors);
     let tokens = module
         .map(|module| {
             let go = crate_ident();
-            let mut _iface_def = InterfaceDefinition::parse(module, opts, go, &mut errors);
+            let mut _iface_def = InterfaceDefinition::parse(module, opts, go, &errors);
             #[cfg(feature = "serde")]
             {
                 let ext_trait = _iface_def.ext_trait();
@@ -90,22 +87,22 @@ pub fn interface(attr: TokenStream, item: TokenStream) -> TokenStream {
                     None,
                     ext_trait.as_ref(),
                     _iface_def.ns.as_ref(),
-                    &mut errors,
+                    &errors,
                 );
             }
             _iface_def.to_token_stream()
         })
         .unwrap_or_default();
-    tokens_or_error(tokens, errors)
+    append_errors(tokens, errors)
 }
 
 #[cfg(feature = "serde")]
 #[proc_macro]
 pub fn serde_cast(input: TokenStream) -> TokenStream {
-    let mut errors = vec![];
+    let errors = Errors::new();
     let go = crate_ident();
-    let output = serde::downcast_enum(input.into(), &go, &mut errors);
-    tokens_or_error(output, errors)
+    let output = serde::downcast_enum(input.into(), &go, &errors);
+    append_errors(output, errors)
 }
 
 #[cfg(feature = "gtk4")]
@@ -113,27 +110,26 @@ pub fn serde_cast(input: TokenStream) -> TokenStream {
 pub fn gtk4_widget(attr: TokenStream, item: TokenStream) -> TokenStream {
     use gobject_core::{ClassDefinition, ClassOptions};
 
-    let mut errors = vec![];
-    let opts = ClassOptions::parse(attr.into(), &mut errors);
-    let module = util::parse::<syn::ItemMod>(item.into(), &mut errors);
+    let errors = Errors::new();
+    let opts = ClassOptions::parse(attr.into(), &errors);
+    let module = util::parse::<syn::ItemMod>(item.into(), &errors);
     let tokens = module
         .map(|module| {
             let go = crate_ident();
-            let mut class_def = ClassDefinition::parse(module, opts, go, &mut errors);
+            let mut class_def = ClassDefinition::parse(module, opts, go, &errors);
             gtk4::extend_gtk4(&mut class_def);
             class_def.to_token_stream()
         })
         .unwrap_or_default();
-    tokens_or_error(tokens, errors)
+    append_errors(tokens, errors)
 }
 
 #[inline]
-fn tokens_or_error(tokens: proc_macro2::TokenStream, errors: Vec<darling::Error>) -> TokenStream {
-    if errors.is_empty() {
-        tokens.into()
-    } else {
-        darling::Error::multiple(errors).write_errors().into()
+fn append_errors(mut tokens: proc_macro2::TokenStream, errors: Errors) -> TokenStream {
+    if let Some(errors) = errors.into_compile_errors() {
+        tokens.extend(errors);
     }
+    tokens.into()
 }
 
 #[inline]

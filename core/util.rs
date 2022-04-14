@@ -1,13 +1,50 @@
 use heck::ToKebabCase;
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::quote;
+use std::cell::RefCell;
 use syn::parse::{Parse, ParseStream, Parser};
 
-pub fn parse<T: Parse>(input: TokenStream, errors: &mut Vec<darling::Error>) -> Option<T> {
+#[derive(Default)]
+pub struct Errors {
+    errors: RefCell<Vec<darling::Error>>,
+}
+
+impl Errors {
+    #[inline]
+    pub fn new() -> Self {
+        Default::default()
+    }
+    #[inline]
+    pub fn push<T: std::fmt::Display>(&self, span: Span, message: T) {
+        self.push_syn(syn::Error::new(span, message));
+    }
+    #[inline]
+    pub fn push_spanned<T, U>(&self, tokens: T, message: U)
+    where
+        T: quote::ToTokens,
+        U: std::fmt::Display,
+    {
+        self.push_syn(syn::Error::new_spanned(tokens, message));
+    }
+    #[inline]
+    pub fn push_syn(&self, error: syn::Error) {
+        self.push_darling(error.into());
+    }
+    #[inline]
+    pub fn push_darling(&self, error: darling::Error) {
+        self.errors.borrow_mut().push(error);
+    }
+    pub fn into_compile_errors(self) -> Option<TokenStream> {
+        let errors = self.errors.take();
+        (!errors.is_empty()).then(|| darling::Error::multiple(errors).write_errors())
+    }
+}
+
+pub fn parse<T: Parse>(input: TokenStream, errors: &Errors) -> Option<T> {
     match <T as Parse>::parse.parse2(input) {
         Ok(t) => Some(t),
         Err(e) => {
-            errors.push(e.into());
+            errors.push_syn(e);
             None
         }
     }
@@ -36,7 +73,7 @@ impl Parse for AttributeArgs {
     }
 }
 
-pub fn parse_list<T>(input: TokenStream, errors: &mut Vec<darling::Error>) -> T
+pub fn parse_list<T>(input: TokenStream, errors: &Errors) -> T
 where
     T: darling::FromMeta + Default,
 {
@@ -44,7 +81,7 @@ where
     match T::from_list(&args) {
         Ok(args) => args,
         Err(e) => {
-            errors.push(e);
+            errors.push_darling(e);
             Default::default()
         }
     }
@@ -67,7 +104,7 @@ impl Parse for ParenAttributeArgs {
     }
 }
 
-pub fn parse_paren_list<T>(input: TokenStream, errors: &mut Vec<darling::Error>) -> T
+pub fn parse_paren_list<T>(input: TokenStream, errors: &Errors) -> T
 where
     T: darling::FromMeta + Default,
 {
@@ -77,28 +114,10 @@ where
     match T::from_list(&args) {
         Ok(args) => args,
         Err(e) => {
-            errors.push(e);
+            errors.push_darling(e);
             Default::default()
         }
     }
-}
-
-#[inline]
-pub(crate) fn push_error<T: std::fmt::Display>(
-    errors: &mut Vec<darling::Error>,
-    span: proc_macro2::Span,
-    message: T,
-) {
-    errors.push(syn::Error::new(span, message).into());
-}
-
-#[inline]
-pub(crate) fn push_error_spanned<T: quote::ToTokens, U: std::fmt::Display>(
-    errors: &mut Vec<darling::Error>,
-    tokens: T,
-    message: U,
-) {
-    errors.push(syn::Error::new_spanned(tokens, message).into());
 }
 
 pub(crate) fn format_name(ident: &syn::Ident) -> String {

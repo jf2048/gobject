@@ -1,3 +1,4 @@
+use crate::util::Errors;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned, ToTokens};
 use syn::{parse::Parser, parse_quote, parse_quote_spanned, spanned::Spanned, visit_mut::VisitMut};
@@ -253,12 +254,12 @@ fn has_captures<'p>(mut inputs: impl Iterator<Item = &'p syn::Pat>) -> bool {
     })
 }
 
-struct Visitor {
+struct Visitor<'v> {
     crate_ident: syn::Ident,
-    errors: Vec<syn::Error>,
+    errors: &'v Errors,
 }
 
-impl Visitor {
+impl<'v> Visitor<'v> {
     fn create_gclosure(&mut self, closure: &syn::ExprClosure) -> Option<syn::Expr> {
         let closure_index = closure
             .attrs
@@ -274,10 +275,10 @@ impl Visitor {
         }
         let has_captures = has_captures(closure.inputs.iter());
         if (has_captures || watch_index.is_some()) && closure.capture.is_none() {
-            self.errors.push(syn::Error::new_spanned(
+            self.errors.push_spanned(
                 closure,
                 "Closure must be `move` to use #[watch] or #[strong] or #[weak]",
-            ));
+            );
         }
 
         let mut body = closure.clone();
@@ -287,7 +288,7 @@ impl Visitor {
             let attr = attrs.remove(closure_index);
             body.attrs = attrs;
             parse_closure.parse2(attr.tokens).unwrap_or_else(|e| {
-                self.errors.push(e);
+                self.errors.push_syn(e);
                 false
             })
         } else {
@@ -303,13 +304,13 @@ impl Visitor {
                 let strong = attrs.remove(index);
                 let span = strong.span();
                 for attr in attrs {
-                    self.errors.push(syn::Error::new_spanned(
+                    self.errors.push_spanned(
                         attr,
                         "Extra attributes not allowed after #[watch]",
-                    ));
+                    );
                 }
                 let from = parse_strong.parse2(strong.tokens).unwrap_or_else(|e| {
-                    self.errors.push(e);
+                    self.errors.push_syn(e);
                     None
                 });
                 if matches!(pat, syn::Pat::Wild(_)) {
@@ -320,10 +321,10 @@ impl Visitor {
                         from,
                     });
                 } else {
-                    self.errors.push(syn::Error::new(
+                    self.errors.push(
                         span,
                         "#[watch] capture must be named or provide a source expression using #[watch(...)]",
-                    ));
+                    );
                 }
             }
             let captures = if has_captures {
@@ -347,10 +348,10 @@ impl Visitor {
                 if let Some(attrs) = pat_attrs(pat) {
                     for attr in attrs {
                         if attr.path.is_ident("watch") {
-                            self.errors.push(syn::Error::new_spanned(
+                            self.errors.push_spanned(
                                 attr,
                                 "Only one watch capture is allowed per closure",
-                            ));
+                            );
                         }
                     }
                 }
@@ -439,10 +440,10 @@ impl Visitor {
             return None;
         }
         if closure.capture.is_none() {
-            self.errors.push(syn::Error::new_spanned(
+            self.errors.push_spanned(
                 closure,
                 "Closure must be `move` to use #[strong] or #[weak]",
-            ));
+            );
         }
         let mut inputs = closure.inputs.iter().cloned().collect::<Vec<_>>();
         self.get_captures(&mut inputs).map(|mut captures| {
@@ -497,10 +498,8 @@ impl Visitor {
         match pat {
             syn::Pat::Ident(syn::PatIdent { ident, .. }) => Some(ident),
             _ => {
-                self.errors.push(syn::Error::new_spanned(
-                    pat,
-                    "Pattern for captured variable must be an identifier",
-                ));
+                self.errors
+                    .push_spanned(pat, "Pattern for captured variable must be an identifier");
                 None
             }
         }
@@ -524,16 +523,16 @@ impl Visitor {
                         weak = Some(attr);
                     }
                     for attr in attrs {
-                        self.errors.push(syn::Error::new_spanned(
+                        self.errors.push_spanned(
                             attr,
                             "Extra attributes not allowed after #[strong] or #[weak]",
-                        ));
+                        );
                     }
                 }
             }
             if let Some(strong) = strong {
                 let from = parse_strong.parse2(strong.tokens).unwrap_or_else(|e| {
-                    self.errors.push(e);
+                    self.errors.push_syn(e);
                     None
                 });
                 let pat = inputs.remove(index);
@@ -542,7 +541,7 @@ impl Visitor {
                 }
             } else if let Some(weak) = weak {
                 let (from, or) = parse_weak.parse2(weak.tokens).unwrap_or_else(|e| {
-                    self.errors.push(e);
+                    self.errors.push_syn(e);
                     (None, None)
                 });
                 let pat = inputs.remove(index);
@@ -576,13 +575,13 @@ impl Visitor {
             let attr = closure.attrs.remove(index);
             if attr.path.is_ident("default_panic") {
                 if let Err(e) = syn::parse2::<syn::parse::Nothing>(attr.tokens) {
-                    self.errors.push(e);
+                    self.errors.push_syn(e);
                 }
                 return Some(UpgradeFailAction::Panic);
             }
             if attr.path.is_ident("default_allow_none") {
                 if let Err(e) = syn::parse2::<syn::parse::Nothing>(attr.tokens) {
-                    self.errors.push(e);
+                    self.errors.push_syn(e);
                 }
                 return Some(UpgradeFailAction::AllowNone);
             }
@@ -601,7 +600,7 @@ impl Visitor {
                 .parse2(attr.tokens);
                 match ret {
                     Ok(expr) => return Some(UpgradeFailAction::Return(expr)),
-                    Err(e) => self.errors.push(e),
+                    Err(e) => self.errors.push_syn(e),
                 }
             }
         }
@@ -609,7 +608,7 @@ impl Visitor {
     }
 }
 
-impl VisitMut for Visitor {
+impl<'v> VisitMut for Visitor<'v> {
     fn visit_expr_mut(&mut self, expr: &mut syn::Expr) {
         let new_expr = if let syn::Expr::Closure(closure) = expr {
             syn::visit_mut::visit_expr_mut(self, closure.body.as_mut());
@@ -625,11 +624,10 @@ impl VisitMut for Visitor {
     }
 }
 
-pub fn closures(item: &mut syn::Item, crate_ident: syn::Ident, errors: &mut Vec<syn::Error>) {
+pub fn closures(item: &mut syn::Item, crate_ident: syn::Ident, errors: &Errors) {
     let mut visitor = Visitor {
         crate_ident,
-        errors: Vec::new(),
+        errors,
     };
     visitor.visit_item_mut(item);
-    errors.extend(visitor.errors.into_iter());
 }

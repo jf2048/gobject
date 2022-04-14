@@ -1,4 +1,7 @@
-use crate::{util, TypeBase};
+use crate::{
+    util::{self, Errors},
+    TypeBase,
+};
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::parse_quote;
@@ -12,7 +15,7 @@ impl PublicMethod {
     pub(crate) fn many_from_items(
         items: &mut Vec<syn::ImplItem>,
         base: TypeBase,
-        errors: &mut Vec<darling::Error>,
+        errors: &Errors,
     ) -> Vec<Self> {
         let mut public_methods = Vec::new();
 
@@ -25,11 +28,7 @@ impl PublicMethod {
                 if let Some(index) = index {
                     let attr = method.attrs.remove(index);
                     if !attr.tokens.is_empty() {
-                        util::push_error_spanned(
-                            errors,
-                            &attr.tokens,
-                            "Unknown tokens on public method",
-                        );
+                        errors.push_spanned(&attr.tokens, "Unknown tokens on public method");
                     }
                     let sig = method.sig.clone();
                     let public_method = Self { sig };
@@ -40,8 +39,7 @@ impl PublicMethod {
         if base == TypeBase::Interface {
             for method in &public_methods {
                 if let Some(recv) = method.sig.receiver() {
-                    util::push_error_spanned(
-                        errors,
+                    errors.push_spanned(
                         recv,
                         "First argument to interface public method must be the wrapper type",
                     );

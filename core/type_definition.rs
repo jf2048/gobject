@@ -4,7 +4,7 @@ use crate::{
     property::{Properties, Property},
     public_method::PublicMethod,
     signal::Signal,
-    util,
+    util::Errors,
     virtual_method::VirtualMethod,
 };
 use proc_macro2::{Span, TokenStream};
@@ -59,12 +59,10 @@ impl TypeDefinition {
         module: syn::ItemMod,
         base: TypeBase,
         crate_ident: syn::Ident,
-        errors: &mut Vec<darling::Error>,
+        errors: &Errors,
     ) -> Self {
-        let mut syn_errors = vec![];
         let mut item = syn::Item::Mod(module);
-        super::closures(&mut item, crate_ident.clone(), &mut syn_errors);
-        errors.extend(syn_errors.into_iter().map(|e| e.into()));
+        super::closures(&mut item, crate_ident.clone(), errors);
         let module = match item {
             syn::Item::Mod(m) => m,
             _ => unreachable!(),
@@ -84,8 +82,7 @@ impl TypeDefinition {
             custom_stmts: RefCell::new(HashMap::new()),
         };
         if def.module.content.is_none() {
-            util::push_error_spanned(
-                errors,
+            errors.push_spanned(
                 &def.module,
                 "Module must have a body to use the class macro",
             );
@@ -114,11 +111,7 @@ impl TypeDefinition {
                 syn::Item::Impl(i) if i.trait_.is_none() => {
                     if find_attr(&mut i.attrs, "methods", impl_.is_some(), errors).is_some() {
                         if let Some((_, trait_, _)) = &i.trait_ {
-                            util::push_error_spanned(
-                                errors,
-                                &trait_,
-                                "Trait not allowed on #[methods] impl",
-                            );
+                            errors.push_spanned(&trait_, "Trait not allowed on #[methods] impl");
                         }
                         impl_ = Some(index);
                     } else if first_impl.is_none() {
@@ -746,13 +739,12 @@ fn find_attr(
     attrs: &mut Vec<syn::Attribute>,
     name: &str,
     exists: bool,
-    errors: &mut Vec<darling::Error>,
+    errors: &Errors,
 ) -> Option<syn::Attribute> {
     let attr_index = attrs.iter().position(|a| a.path.is_ident(name));
     if let Some(attr_index) = attr_index {
         if exists {
-            util::push_error_spanned(
-                errors,
+            errors.push_spanned(
                 &attrs[attr_index],
                 format!("Only one #[{}] item allowed in a class", name),
             );

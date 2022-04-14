@@ -1,6 +1,9 @@
 use std::collections::HashSet;
 
-use crate::{util, TypeBase};
+use crate::{
+    util::{self, Errors},
+    TypeBase,
+};
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::parse_quote;
@@ -18,7 +21,7 @@ impl VirtualMethod {
     pub(crate) fn many_from_items(
         items: &mut Vec<syn::ImplItem>,
         base: TypeBase,
-        errors: &mut Vec<darling::Error>,
+        errors: &Errors,
     ) -> Vec<Self> {
         let mut virtual_methods = Vec::new();
 
@@ -45,25 +48,23 @@ impl VirtualMethod {
         method: &mut syn::ImplItemMethod,
         attr: syn::Attribute,
         base: TypeBase,
-        errors: &mut Vec<darling::Error>,
+        errors: &Errors,
     ) -> Option<Self> {
         if !attr.tokens.is_empty() {
-            util::push_error_spanned(errors, &attr.tokens, "Unknown tokens on virtual method");
+            errors.push_spanned(&attr.tokens, "Unknown tokens on virtual method");
         }
         let syn::ImplItemMethod {
             attrs, vis, sig, ..
         } = method;
         if sig.inputs.is_empty() {
-            util::push_error_spanned(
-                errors,
+            errors.push_spanned(
                 &sig.inputs,
                 "First argument required on virtual method, must be `self`, `&self` or the wrapper type",
             );
         }
         if base == TypeBase::Interface {
             if let Some(recv) = sig.receiver() {
-                util::push_error_spanned(
-                    errors,
+                errors.push_spanned(
                     recv,
                     "First argument to interface virtual method must be the wrapper type",
                 );

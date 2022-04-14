@@ -1,4 +1,7 @@
-use crate::{util, TypeBase};
+use crate::{
+    util::{self, Errors},
+    TypeBase,
+};
 use darling::{util::Flag, FromMeta};
 use heck::{ToShoutySnakeCase, ToSnakeCase};
 use proc_macro2::TokenStream;
@@ -95,7 +98,7 @@ impl Signal {
     pub(crate) fn many_from_items(
         items: &mut [syn::ImplItem],
         base: TypeBase,
-        errors: &mut Vec<darling::Error>,
+        errors: &Errors,
     ) -> Vec<Self> {
         let mut signals = Vec::<Signal>::new();
 
@@ -135,35 +138,19 @@ impl Signal {
         for signal in &mut signals {
             if let Some(sig) = &signal.sig {
                 if signal.accumulator.is_some() && matches!(sig.output, syn::ReturnType::Default) {
-                    util::push_error_spanned(
-                        errors,
-                        sig,
-                        "Signal with accumulator must have return type",
-                    );
+                    errors.push_spanned(sig, "Signal with accumulator must have return type");
                 }
             } else {
                 let acc = signal.accumulator.as_ref().expect("no accumulator");
-                util::push_error_spanned(
-                    errors,
-                    acc,
-                    format!("No definition for signal `{}`", signal.name),
-                );
+                errors.push_spanned(acc, format!("No definition for signal `{}`", signal.name));
             }
             if let Some(acc) = &signal.accumulator {
                 if signal.override_ {
-                    util::push_error_spanned(
-                        errors,
-                        acc,
-                        "Accumulator not allowed on overriden signal",
-                    );
+                    errors.push_spanned(acc, "Accumulator not allowed on overriden signal");
                 }
             }
             if base == TypeBase::Interface && signal.override_ {
-                util::push_error_spanned(
-                    errors,
-                    &signal.ident,
-                    "`override` not allowed on interface signal",
-                );
+                errors.push_spanned(&signal.ident, "`override` not allowed on interface signal");
                 signal.override_ = false;
             }
         }
@@ -177,13 +164,12 @@ impl Signal {
         attr: syn::Attribute,
         base: TypeBase,
         signals: &mut Vec<Self>,
-        errors: &mut Vec<darling::Error>,
+        errors: &Errors,
     ) {
         let ident = &method.sig.ident;
         if base == TypeBase::Interface {
             if let Some(recv) = method.sig.receiver() {
-                util::push_error_spanned(
-                    errors,
+                errors.push_spanned(
                     recv,
                     "First argument to interface signal handler must be the wrapper type",
                 );
@@ -196,8 +182,7 @@ impl Signal {
             .map(|n| n.value())
             .unwrap_or_else(|| util::format_name(ident));
         if !util::is_valid_name(&name) {
-            util::push_error_spanned(
-                errors,
+            errors.push_spanned(
                 &name,
                 format!("Invalid signal name '{}'. Signal names must start with an ASCII letter and only contain ASCII letters, numbers, '-' or '_'", name)
             );
@@ -209,8 +194,7 @@ impl Signal {
             signals.last_mut().unwrap()
         };
         if signal.sig.is_some() {
-            util::push_error_spanned(
-                errors,
+            errors.push_spanned(
                 &ident,
                 format!("Duplicate definition for signal `{}`", name),
             );
@@ -227,24 +211,16 @@ impl Signal {
         method: syn::ImplItemMethod,
         attr: syn::Attribute,
         signals: &mut Vec<Self>,
-        errors: &mut Vec<darling::Error>,
+        errors: &Errors,
     ) {
         if !(2..=3).contains(&method.sig.inputs.len()) {
-            util::push_error_spanned(
-                errors,
-                &method.sig.output,
-                "Accumulator must have 2 or 3 arguments",
-            );
+            errors.push_spanned(&method.sig.output, "Accumulator must have 2 or 3 arguments");
         }
         if let Some(recv) = method.sig.receiver() {
-            util::push_error_spanned(errors, recv, "Receiver argument not allowed on accumulator");
+            errors.push_spanned(recv, "Receiver argument not allowed on accumulator");
         }
         if matches!(method.sig.output, syn::ReturnType::Default) {
-            util::push_error_spanned(
-                errors,
-                &method.sig.output,
-                "Accumulator must have return type",
-            );
+            errors.push_spanned(&method.sig.output, "Accumulator must have return type");
         }
         let ident = &method.sig.ident;
         let acc_attrs = util::parse_paren_list::<AccumulatorAttrs>(attr.tokens, errors);
@@ -260,8 +236,7 @@ impl Signal {
             signals.last_mut().unwrap()
         };
         if signal.accumulator.is_some() {
-            util::push_error_spanned(
-                errors,
+            errors.push_spanned(
                 &ident,
                 format!(
                     "Duplicate definition for accumulator on signal definition `{}`",

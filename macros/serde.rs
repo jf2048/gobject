@@ -25,7 +25,7 @@ pub(crate) fn extend_serde(
     parent_type: Option<&syn::Path>,
     ext_trait: Option<&syn::Ident>,
     ns: Option<&syn::Ident>,
-    errors: &mut Vec<darling::Error>,
+    errors: &gobject_core::util::Errors,
 ) {
     let attrs = def
         .properties_item_mut()
@@ -622,7 +622,7 @@ struct EnumAttrs {
 pub(crate) fn downcast_enum(
     args: TokenStream,
     go: &syn::Ident,
-    errors: &mut Vec<darling::Error>,
+    errors: &gobject_core::util::Errors,
 ) -> TokenStream {
     let attrs = gobject_core::util::parse_list::<EnumAttrs>(args, errors);
     let ty = match &attrs.parent {
