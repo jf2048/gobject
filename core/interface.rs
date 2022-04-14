@@ -207,15 +207,18 @@ impl InterfaceDefinition {
             }
         });
         Some(quote! {
-            #[#glib::object_interface]
-            unsafe #head {
-                const NAME: &'static ::std::primitive::str = #gtype_name;
-                type Prerequisites = super::#prerequisites;
-                #interface_init
-                #properties
-                #signals
-                #type_init
-            }
+            const _: () = {
+                use #glib;
+                #[#glib::object_interface]
+                unsafe #head {
+                    const NAME: &'static ::std::primitive::str = #gtype_name;
+                    type Prerequisites = super::#prerequisites;
+                    #interface_init
+                    #properties
+                    #signals
+                    #type_init
+                }
+            };
         })
     }
     #[inline]

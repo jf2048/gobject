@@ -308,20 +308,23 @@ impl ClassDefinition {
             }
         });
         Some(quote! {
-            #[#glib::object_subclass]
-            #head {
-                const NAME: &'static ::std::primitive::str = #gtype_name;
-                const ABSTRACT: bool = #abstract_;
-                type Type = super::#name;
-                type ParentType = super::#parent_type;
-                type Interfaces = super::#interfaces;
-                #class_struct_type
-                #class_init
-                #instance_init
-                #type_init
-                #new
-                #with_class
-            }
+            const _: () = {
+                use #glib;
+                #[#glib::object_subclass]
+                #head {
+                    const NAME: &'static ::std::primitive::str = #gtype_name;
+                    const ABSTRACT: bool = #abstract_;
+                    type Type = super::#name;
+                    type ParentType = super::#parent_type;
+                    type Interfaces = super::#interfaces;
+                    #class_struct_type
+                    #class_init
+                    #instance_init
+                    #type_init
+                    #new
+                    #with_class
+                }
+            };
         })
     }
     pub(crate) fn properties_base_index_definition(&self) -> Option<TokenStream> {

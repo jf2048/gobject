@@ -22,6 +22,7 @@ pub(crate) fn extend_gtk4(def: &mut ClassDefinition) {
             );
         }
     }
+    let mut added_callbacks = false;
     let has_callbacks = if let Some(impl_) = def.inner.methods_item_mut() {
         if impl_.items.iter().any(|a| match a {
             syn::ImplItem::Method(m) => {
@@ -35,6 +36,7 @@ pub(crate) fn extend_gtk4(def: &mut ClassDefinition) {
                     || s == "gtk::template_callbacks"
                     || s == "gtk4::template_callbacks"
             }) {
+                added_callbacks = true;
                 impl_
                     .attrs
                     .push(parse_quote! { #[#gtk4::template_callbacks] });
@@ -47,6 +49,16 @@ pub(crate) fn extend_gtk4(def: &mut ClassDefinition) {
         false
     };
     if has_callbacks {
+        if added_callbacks {
+            if let Some(impl_) = def.inner.methods_item_mut() {
+                *impl_ = parse_quote! {
+                    const _: () = {
+                        use #gtk4;
+                        #impl_
+                    };
+                };
+            }
+        }
         def.inner.add_custom_stmt("class_init", parse_quote_spanned! { Span::mixed_site() =>
             #gtk4::subclass::widget::CompositeTemplateCallbacksClass::bind_template_callbacks(____class);
         });
