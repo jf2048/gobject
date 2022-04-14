@@ -120,6 +120,8 @@ pub use serde;
 
 #[cfg(feature = "gtk4_macros")]
 pub use gobject_macros::gtk4_widget;
+#[cfg(feature = "serde_macros")]
+pub use gobject_macros::serde_cast;
 pub use gobject_macros::{class, clone_block, interface, Properties};
 
 mod buildable;

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-gtk4_macros = ["gtk4"]
+gtk4_macros = ["gtk4", "gobject-macros/gtk4"]
 gio_macros = ["gio"]
 serde_macros = ["serde", "gobject-macros/serde"]
 

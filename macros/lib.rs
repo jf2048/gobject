@@ -2,6 +2,8 @@ use gobject_core::util;
 use proc_macro::TokenStream;
 use quote::ToTokens;
 
+#[cfg(feature = "gtk4")]
+mod gtk4;
 #[cfg(feature = "serde")]
 mod serde;
 
@@ -106,6 +108,7 @@ pub fn serde_cast(input: TokenStream) -> TokenStream {
     tokens_or_error(output, errors)
 }
 
+#[cfg(feature = "gtk4")]
 #[proc_macro_attribute]
 pub fn gtk4_widget(attr: TokenStream, item: TokenStream) -> TokenStream {
     use gobject_core::{ClassDefinition, ClassOptions};
@@ -117,74 +120,11 @@ pub fn gtk4_widget(attr: TokenStream, item: TokenStream) -> TokenStream {
         .map(|module| {
             let go = crate_ident();
             let mut class_def = ClassDefinition::parse(module, opts, go, &mut errors);
-            extend_gtk4(&mut class_def);
+            gtk4::extend_gtk4(&mut class_def);
             class_def.to_token_stream()
         })
         .unwrap_or_default();
     tokens_or_error(tokens, errors)
-}
-
-fn extend_gtk4(def: &mut gobject_core::ClassDefinition) {
-    use proc_macro2::Span;
-    use syn::{parse_quote, parse_quote_spanned};
-
-    let go = &def.inner.crate_ident;
-    let gtk4 = quote::quote! { #go::gtk4 };
-    if let Some(struct_) = def.inner.properties_item() {
-        if struct_.attrs.iter().any(|a| a.path.is_ident("template")) {
-            def.inner.add_custom_stmt(
-                "class_init",
-                parse_quote_spanned! { Span::mixed_site() =>
-                    #gtk4::subclass::widget::CompositeTemplateClass::bind_template(____class);
-                },
-            );
-            def.inner.add_custom_stmt(
-                "instance_init",
-                parse_quote_spanned! { Span::mixed_site() =>
-                    #gtk4::prelude::InitializingWidgetExt::init_template(obj);
-                },
-            );
-        }
-    }
-    let has_callbacks = if let Some(impl_) = def.inner.methods_item_mut() {
-        if impl_.items.iter().any(|a| match a {
-            syn::ImplItem::Method(m) => {
-                m.attrs.iter().any(|a| a.path.is_ident("template_callback"))
-            }
-            _ => false,
-        }) {
-            if !impl_.attrs.iter().any(|a| {
-                let s = path_to_string(&a.path);
-                s == "template_callbacks"
-                    || s == "gtk::template_callbacks"
-                    || s == "gtk4::template_callbacks"
-            }) {
-                impl_
-                    .attrs
-                    .push(parse_quote! { #[#gtk4::template_callbacks] });
-            }
-            true
-        } else {
-            false
-        }
-    } else {
-        false
-    };
-    if has_callbacks {
-        def.inner.add_custom_stmt("class_init", parse_quote_spanned! { Span::mixed_site() =>
-            #gtk4::subclass::widget::CompositeTemplateCallbacksClass::bind_template_callbacks(____class);
-        });
-    }
-}
-
-#[allow(dead_code)]
-#[inline]
-fn path_to_string(path: &syn::Path) -> String {
-    path.to_token_stream()
-        .into_iter()
-        .map(|i| i.to_string())
-        .collect::<Vec<_>>()
-        .join("")
 }
 
 #[inline]
