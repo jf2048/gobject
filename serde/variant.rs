@@ -13,6 +13,8 @@ use serde::{
 use std::{fmt::Display, num::TryFromIntError};
 use std::{marker::PhantomData, mem::MaybeUninit, ptr::NonNull};
 
+declare_optional!(glib::Variant);
+
 #[derive(Debug)]
 enum Error {
     Bool(BoolError),

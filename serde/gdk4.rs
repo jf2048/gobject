@@ -12,6 +12,7 @@ pub mod rectangle {
         let Rectangle(x, y, w, h) = Rectangle::deserialize(d)?;
         Ok(gdk4::Rectangle::new(x, y, w, h))
     }
+    declare_optional!(gdk4::Rectangle);
 }
 
 pub mod rgba {
@@ -26,4 +27,5 @@ pub mod rgba {
         let RGBA(r, g, b, a) = RGBA::deserialize(d)?;
         Ok(gdk4::RGBA::new(r, g, b, a))
     }
+    declare_optional!(gdk4::RGBA);
 }

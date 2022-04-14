@@ -189,6 +189,7 @@ pub mod gstring {
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<glib::GString, D::Error> {
         Ok(String::deserialize(d)?.into())
     }
+    declare_optional!(glib::GString);
 }
 
 pub mod bytes {
@@ -218,6 +219,7 @@ pub mod bytes {
         }
         d.deserialize_bytes(BytesVisitor)
     }
+    declare_optional!(glib::Bytes);
 }
 
 pub mod date {
@@ -231,6 +233,7 @@ pub mod date {
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<glib::Date, D::Error> {
         glib::Date::from_julian(Date::deserialize(d)?.0).map_err(de::Error::custom)
     }
+    declare_optional!(glib::Date);
 }
 
 pub mod time_zone {
@@ -254,6 +257,7 @@ pub mod time_zone {
         glib::TimeZone::from_identifier(Some(s))
             .ok_or_else(|| de::Error::invalid_value(de::Unexpected::Str(s), &"valid timezone"))
     }
+    declare_optional!(glib::TimeZone);
 }
 
 pub mod date_time {
@@ -269,6 +273,7 @@ pub mod date_time {
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<glib::DateTime, D::Error> {
         glib::DateTime::from_iso8601(DateTime::deserialize(d)?.0, None).map_err(de::Error::custom)
     }
+    declare_optional!(glib::DateTime);
 }
 
 pub mod time_span {
@@ -282,6 +287,7 @@ pub mod time_span {
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<glib::TimeSpan, D::Error> {
         Ok(glib::TimeSpan(TimeSpan::deserialize(d)?.0))
     }
+    declare_optional!(glib::TimeSpan);
 }
 
 pub mod key_file {
@@ -299,6 +305,7 @@ pub mod key_file {
             .map_err(de::Error::custom)?;
         Ok(kf)
     }
+    declare_optional!(glib::KeyFile);
 }
 
 pub mod uri {
@@ -313,4 +320,5 @@ pub mod uri {
         let u = Uri::deserialize(d)?.0;
         glib::Uri::parse(u, glib::UriFlags::PARSE_RELAXED).map_err(de::Error::custom)
     }
+    declare_optional!(glib::Uri);
 }

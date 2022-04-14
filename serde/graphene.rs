@@ -16,6 +16,7 @@ pub mod box_ {
         let b = graphene::Point3D::new(bx, by, bz);
         Ok(graphene::Box::new(Some(&a), Some(&b)))
     }
+    declare_optional!(graphene::Box);
 }
 
 pub mod euler {
@@ -30,6 +31,7 @@ pub mod euler {
         let Euler(x, y, z) = Euler::deserialize(d)?;
         Ok(graphene::Euler::new(x, y, z))
     }
+    declare_optional!(graphene::Euler);
 }
 
 pub mod frustum {
@@ -68,6 +70,7 @@ pub mod frustum {
         let p5 = to_plane(p[5]);
         Ok(graphene::Frustum::new(&p0, &p1, &p2, &p3, &p4, &p5))
     }
+    declare_optional!(graphene::Frustum);
 }
 
 pub mod matrix {
@@ -83,6 +86,7 @@ pub mod matrix {
         let v = unsafe { std::mem::transmute(v) };
         Ok(graphene::Matrix::from_float(v))
     }
+    declare_optional!(graphene::Matrix);
 }
 
 pub mod plane {
@@ -99,6 +103,7 @@ pub mod plane {
         let n = graphene::Vec3::new(x, y, z);
         Ok(graphene::Plane::new(Some(&n), c))
     }
+    declare_optional!(graphene::Plane);
 }
 
 pub mod point {
@@ -113,6 +118,7 @@ pub mod point {
         let Point(x, y) = Point::deserialize(d)?;
         Ok(graphene::Point::new(x, y))
     }
+    declare_optional!(graphene::Point);
 }
 
 pub mod point3d {
@@ -127,6 +133,7 @@ pub mod point3d {
         let Point3D(x, y, z) = Point3D::deserialize(d)?;
         Ok(graphene::Point3D::new(x, y, z))
     }
+    declare_optional!(graphene::Point3D);
 }
 
 pub mod quad {
@@ -152,6 +159,7 @@ pub mod quad {
         let p4 = graphene::Point::new(x4, y4);
         Ok(graphene::Quad::new(&p1, &p2, &p3, &p4))
     }
+    declare_optional!(graphene::Quad);
 }
 
 pub mod quaternion {
@@ -166,6 +174,7 @@ pub mod quaternion {
         let Quaternion(x, y, z, w) = Quaternion::deserialize(d)?;
         Ok(graphene::Quaternion::new(x, y, z, w))
     }
+    declare_optional!(graphene::Quaternion);
 }
 
 pub mod ray {
@@ -184,6 +193,7 @@ pub mod ray {
         let d = graphene::Vec3::new(dx, dy, dz);
         Ok(graphene::Ray::new(Some(&o), Some(&d)))
     }
+    declare_optional!(graphene::Ray);
 }
 
 pub mod rect {
@@ -198,6 +208,7 @@ pub mod rect {
         let Rect(x, y, w, h) = Rect::deserialize(d)?;
         Ok(graphene::Rect::new(x, y, w, h))
     }
+    declare_optional!(graphene::Rect);
 }
 
 pub mod size {
@@ -212,6 +223,7 @@ pub mod size {
         let Size(w, h) = Size::deserialize(d)?;
         Ok(graphene::Size::new(w, h))
     }
+    declare_optional!(graphene::Size);
 }
 
 pub mod sphere {
@@ -228,6 +240,7 @@ pub mod sphere {
         let c = graphene::Point3D::new(x, y, z);
         Ok(graphene::Sphere::new(Some(&c), r))
     }
+    declare_optional!(graphene::Sphere);
 }
 
 pub mod triangle {
@@ -252,6 +265,7 @@ pub mod triangle {
             [cx, cy, cz],
         ))
     }
+    declare_optional!(graphene::Triangle);
 }
 
 pub mod vec2 {
@@ -266,6 +280,7 @@ pub mod vec2 {
         let Vec2(x, y) = Vec2::deserialize(d)?;
         Ok(graphene::Vec2::new(x, y))
     }
+    declare_optional!(graphene::Vec2);
 }
 
 pub mod vec3 {
@@ -280,6 +295,7 @@ pub mod vec3 {
         let Vec3(x, y, z) = Vec3::deserialize(d)?;
         Ok(graphene::Vec3::new(x, y, z))
     }
+    declare_optional!(graphene::Vec3);
 }
 
 pub mod vec4 {
@@ -294,4 +310,5 @@ pub mod vec4 {
         let Vec4(x, y, z, w) = Vec4::deserialize(d)?;
         Ok(graphene::Vec4::new(x, y, z, w))
     }
+    declare_optional!(graphene::Vec4);
 }

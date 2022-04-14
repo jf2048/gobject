@@ -22,6 +22,7 @@ pub mod adjustment {
         let Adjustment(v, l, u, si, pi, ps) = Adjustment::deserialize(d)?;
         Ok(gtk4::Adjustment::new(v, l, u, si, pi, ps))
     }
+    declare_optional!(gtk4::Adjustment);
 }
 
 pub mod border {
@@ -41,6 +42,7 @@ pub mod border {
             .bottom(b)
             .build())
     }
+    declare_optional!(gtk4::Border);
 }
 
 pub mod paper_size {
@@ -60,6 +62,7 @@ pub mod paper_size {
             .map_err(de::Error::custom)?;
         gtk4::PaperSize::from_key_file(&kf, Some("paper_size")).map_err(de::Error::custom)
     }
+    declare_optional!(gtk4::PaperSize);
 }
 
 pub mod string_object {
@@ -70,6 +73,7 @@ pub mod string_object {
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<gtk4::StringObject, D::Error> {
         Ok(gtk4::StringObject::new(Deserialize::deserialize(d)?))
     }
+    declare_optional!(gtk4::StringObject);
 }
 
 pub mod string_list {
@@ -109,4 +113,5 @@ pub mod string_list {
 
         d.deserialize_seq(Visitor)
     }
+    declare_optional!(gtk4::StringList);
 }

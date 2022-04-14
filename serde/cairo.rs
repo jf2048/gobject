@@ -14,6 +14,7 @@ pub mod rectangle {
         let Rectangle(x, y, w, h) = Rectangle::deserialize(d)?;
         Ok(cairo::Rectangle::new(x, y, w, h))
     }
+    declare_optional!(cairo::Rectangle);
 }
 
 pub mod rectangle_int {
@@ -28,6 +29,7 @@ pub mod rectangle_int {
         let RectangleInt(x, y, w, h) = RectangleInt::deserialize(d)?;
         Ok(cairo::RectangleInt::new(x, y, w, h))
     }
+    declare_optional!(cairo::RectangleInt);
 }
 
 pub mod matrix {
@@ -52,6 +54,7 @@ pub mod matrix {
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<cairo::Matrix, D::Error> {
         Ok(Matrix::deserialize(d)?.into())
     }
+    declare_optional!(cairo::Matrix);
 }
 
 pub mod region {
@@ -82,6 +85,7 @@ pub mod region {
             .collect::<Vec<_>>();
         Ok(cairo::Region::create_rectangles(&rects))
     }
+    declare_optional!(cairo::Region);
 }
 
 pub mod path {
@@ -127,6 +131,7 @@ pub mod path {
         }
         d.deserialize_newtype_struct("cairo::Path", Visitor)
     }
+    declare_optional!(cairo::Path);
 }
 
 pub mod path_segment {
@@ -165,6 +170,7 @@ pub mod path_segment {
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<cairo::PathSegment, D::Error> {
         Ok(PathSegment::deserialize(d)?.into())
     }
+    declare_optional!(cairo::PathSegment);
 }
 
 pub mod pattern {
@@ -215,6 +221,7 @@ pub mod pattern {
             _ => unreachable!(),
         })
     }
+    declare_optional!(cairo::Pattern);
 }
 
 pub mod solid_pattern {
@@ -228,6 +235,7 @@ pub mod solid_pattern {
             _ => Err(de::Error::custom("wrong pattern type")),
         }
     }
+    declare_optional!(cairo::SolidPattern);
 }
 
 pub mod gradient {
@@ -252,6 +260,7 @@ pub mod gradient {
             _ => unreachable!(),
         })
     }
+    declare_optional!(cairo::Gradient);
 }
 
 pub mod linear_gradient {
@@ -265,6 +274,7 @@ pub mod linear_gradient {
             _ => Err(de::Error::custom("wrong pattern type")),
         }
     }
+    declare_optional!(cairo::LinearGradient);
 }
 
 pub mod radial_gradient {
@@ -278,6 +288,7 @@ pub mod radial_gradient {
             _ => Err(de::Error::custom("wrong pattern type")),
         }
     }
+    declare_optional!(cairo::RadialGradient);
 }
 
 pub mod mesh {
@@ -291,6 +302,7 @@ pub mod mesh {
             _ => Err(de::Error::custom("wrong pattern type")),
         }
     }
+    declare_optional!(cairo::Mesh);
 }
 
 macro_rules! wrap_enum {
