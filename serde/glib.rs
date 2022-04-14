@@ -158,6 +158,59 @@ pub mod flags {
     }
 }
 
+pub mod flags_string {
+    use super::*;
+    use glib::FlagsClass;
+
+    pub fn serialize<F, S: Serializer>(f: &F, s: S) -> Result<S::Ok, S::Error>
+    where
+        F: glib::StaticType + IntoGlib<GlibType = u32> + Copy,
+    {
+        let t = F::static_type();
+        let class = FlagsClass::new(t)
+            .ok_or_else(|| ser::Error::custom(format!("GType `{}` is not a flags class", t.name())))?;
+        s.serialize_newtype_struct(t.name(), &class.to_nick_string(f.into_glib()))
+    }
+    pub fn deserialize<'de, F, D: Deserializer<'de>>(d: D) -> Result<F, D::Error>
+    where
+        F: glib::StaticType + FromGlib<u32>,
+    {
+        let t = F::static_type();
+        let class = FlagsClass::new(t)
+            .ok_or_else(|| de::Error::custom(format!("GType `{}` is not a flags class", t.name())))?;
+
+        struct Visitor<'f>(&'f FlagsClass);
+        impl<'de, 'f> de::Visitor<'de> for Visitor<'f> {
+            type Value = u32;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                self.0.type_().name().fmt(f)
+            }
+            fn visit_newtype_struct<D>(self, d: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let s = <&str as Deserialize>::deserialize(d)?;
+                self.0.from_nick_string(s).map_err(de::Error::custom)
+            }
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::SeqAccess<'de>,
+            {
+                let s = seq.next_element::<&str>()?.ok_or_else(|| {
+                    de::Error::invalid_length(
+                        0,
+                        &format!("tuple struct {} with length 1", self.0.type_().name()).as_str(),
+                    )
+                })?;
+                self.0.from_nick_string(s).map_err(de::Error::custom)
+            }
+        }
+
+        let v = d.deserialize_newtype_struct(t.name(), Visitor(&class))?;
+        Ok(unsafe { from_glib(v) })
+    }
+}
+
 pub mod gstr {
     use super::*;
     pub fn serialize<S: Serializer>(st: &glib::GStr, s: S) -> Result<S::Ok, S::Error> {
