@@ -7,7 +7,7 @@ use gobject_core::{
 };
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::parse_quote;
+use syn::{parse_quote, spanned::Spanned};
 
 #[derive(Debug, Default, FromMeta)]
 #[darling(default)]
@@ -34,10 +34,16 @@ pub(crate) fn extend_serde(
                 .iter()
                 .position(|a| a.path.is_ident("gobject_serde"))
                 .map(|index| {
-                    gobject_core::util::parse_paren_list::<Attrs>(
-                        item.attrs.remove(index).tokens,
+                    let attr = item.attrs.remove(index);
+                    let span = attr.span();
+                    let attrs = gobject_core::util::parse_paren_list::<Attrs>(
+                        attr.tokens,
                         errors,
-                    )
+                    );
+                    if attrs.serialize.is_none() && attrs.deserialize.is_none() {
+                        errors.push(span, "Must have at least one of these attributes: `serialize`, `deserialize`");
+                    }
+                    attrs
                 })
         })
         .unwrap_or_default();
@@ -624,12 +630,21 @@ pub(crate) fn downcast_enum(
     go: &syn::Ident,
     errors: &gobject_core::util::Errors,
 ) -> TokenStream {
+    let span = args.span();
     let attrs = gobject_core::util::parse_list::<EnumAttrs>(args, errors);
     let ty = match &attrs.parent {
         Some(ty) => ty,
         None => return Default::default(),
     };
-    // TODO - error if missing required attributes
+    if attrs.parent.is_none() {
+        errors.push(span, "Missing required attribute `parent`");
+    }
+    if attrs.serialize.is_none() && attrs.deserialize.is_none() {
+        errors.push(
+            span,
+            "Must have at least one of these attributes: `serialize`, `deserialize`",
+        );
+    }
     let ser = attrs.serialize.is_some().then(|| {
         let casts = serialize_child_types(&*attrs.child_types, ty, attrs.fallback.is_some(), go);
         quote! {
