@@ -74,7 +74,7 @@ impl<O: IsA<glib::Object> + Serialize> ListModelOptional<O> {
         M: IsA<gio::ListModel>,
         S: Serializer,
     {
-        struct Writer<'w, O, M>( &'w M, PhantomData<O>)
+        struct Writer<'w, O, M>(&'w M, PhantomData<O>)
         where
             O: IsA<glib::Object> + Serialize,
             M: IsA<gio::ListModel>;
@@ -88,7 +88,9 @@ impl<O: IsA<glib::Object> + Serialize> ListModelOptional<O> {
             }
         }
 
-        o.as_ref().map(|m| Writer::<O, M>(m, PhantomData)).serialize(s)
+        o.as_ref()
+            .map(|m| Writer::<O, M>(m, PhantomData))
+            .serialize(s)
     }
 }
 /*
@@ -159,7 +161,7 @@ impl<O: IsA<glib::Object>> ListStoreOptional<O> {
             O: IsA<glib::Object>;
         impl<'de, O> Deserialize<'de> for Reader<O>
         where
-            O: IsA<glib::Object> + serde::Deserialize<'de>
+            O: IsA<glib::Object> + serde::Deserialize<'de>,
         {
             fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
                 let ls = ListStore::<O>::deserialize(d)?;

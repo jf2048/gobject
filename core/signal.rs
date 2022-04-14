@@ -93,16 +93,15 @@ pub struct Signal {
 
 impl Signal {
     pub(crate) fn many_from_items(
-        items: &mut Vec<syn::ImplItem>,
+        items: &mut [syn::ImplItem],
         base: TypeBase,
         errors: &mut Vec<darling::Error>,
     ) -> Vec<Self> {
         let mut signals = Vec::<Signal>::new();
 
-        let mut index = 0;
-        while index < items.len() {
+        for item in items {
             let mut signal_attr = None;
-            if let syn::ImplItem::Method(method) = &mut items[index] {
+            if let syn::ImplItem::Method(method) = item {
                 let signal_index = method.attrs.iter().position(|attr| {
                     attr.path.is_ident("signal") || attr.path.is_ident("accumulator")
                 });
@@ -111,7 +110,7 @@ impl Signal {
                 }
             }
             if let Some(attr) = signal_attr {
-                let method = match &mut items[index] {
+                let method = match item {
                     syn::ImplItem::Method(method) => method,
                     _ => unreachable!(),
                 };
@@ -131,7 +130,6 @@ impl Signal {
                     unreachable!();
                 }
             }
-            index += 1;
         }
 
         for signal in &mut signals {
@@ -173,6 +171,7 @@ impl Signal {
         signals
     }
     #[inline]
+    #[allow(clippy::ptr_arg)]
     fn from_handler(
         method: syn::ImplItemMethod,
         attr: syn::Attribute,
@@ -223,6 +222,7 @@ impl Signal {
         signal.handler = !method.block.stmts.is_empty();
     }
     #[inline]
+    #[allow(clippy::ptr_arg)]
     fn from_accumulator(
         method: syn::ImplItemMethod,
         attr: syn::Attribute,

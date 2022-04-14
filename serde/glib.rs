@@ -16,12 +16,22 @@ pub mod enum_ {
         E: glib::StaticType + IntoGlib<GlibType = i32> + Copy,
     {
         static ENUM_CLASS: SyncOnceCell<Option<EnumClass>> = SyncOnceCell::new();
-        let class = ENUM_CLASS.get_or_init(|| EnumClass::new(E::static_type()))
+        let class = ENUM_CLASS
+            .get_or_init(|| EnumClass::new(E::static_type()))
             .as_ref()
-            .ok_or_else(|| ser::Error::custom(format!("GType `{}` is not an enum class", E::static_type().name())))?;
+            .ok_or_else(|| {
+                ser::Error::custom(format!(
+                    "GType `{}` is not an enum class",
+                    E::static_type().name()
+                ))
+            })?;
         let e = e.into_glib();
         let n = class.value(e).map(|e| e.nick()).ok_or_else(|| {
-            ser::Error::custom(format!("Invalid value `{}` for enum `{}`", e, E::static_type().name()))
+            ser::Error::custom(format!(
+                "Invalid value `{}` for enum `{}`",
+                e,
+                E::static_type().name()
+            ))
         })?;
         s.serialize_unit_variant(E::static_type().name(), e as u32, n)
     }
@@ -30,18 +40,18 @@ pub mod enum_ {
         E: glib::StaticType + FromGlib<i32>,
     {
         static ENUM_CLASS: SyncOnceCell<Option<EnumClass>> = SyncOnceCell::new();
-        let class = ENUM_CLASS.get_or_init(|| EnumClass::new(E::static_type()))
+        let class = ENUM_CLASS
+            .get_or_init(|| EnumClass::new(E::static_type()))
             .as_ref()
-            .ok_or_else(|| de::Error::custom(format!("GType `{}` is not an enum class", E::static_type().name())))?;
+            .ok_or_else(|| {
+                de::Error::custom(format!(
+                    "GType `{}` is not an enum class",
+                    E::static_type().name()
+                ))
+            })?;
 
         static VARIANTS: SyncOnceCell<Vec<&'static str>> = SyncOnceCell::new();
-        let variants = VARIANTS.get_or_init(|| {
-            class
-                .values()
-                .iter()
-                .map(|v| v.name())
-                .collect()
-        });
+        let variants = VARIANTS.get_or_init(|| class.values().iter().map(|v| v.name()).collect());
 
         struct FieldVisitor<'e>(&'e EnumClass);
         impl<'de, 'e> de::Visitor<'de> for FieldVisitor<'e> {
@@ -167,8 +177,9 @@ pub mod flags_string {
         F: glib::StaticType + IntoGlib<GlibType = u32> + Copy,
     {
         let t = F::static_type();
-        let class = FlagsClass::new(t)
-            .ok_or_else(|| ser::Error::custom(format!("GType `{}` is not a flags class", t.name())))?;
+        let class = FlagsClass::new(t).ok_or_else(|| {
+            ser::Error::custom(format!("GType `{}` is not a flags class", t.name()))
+        })?;
         s.serialize_newtype_struct(t.name(), &class.to_nick_string(f.into_glib()))
     }
     pub fn deserialize<'de, F, D: Deserializer<'de>>(d: D) -> Result<F, D::Error>
@@ -176,8 +187,9 @@ pub mod flags_string {
         F: glib::StaticType + FromGlib<u32>,
     {
         let t = F::static_type();
-        let class = FlagsClass::new(t)
-            .ok_or_else(|| de::Error::custom(format!("GType `{}` is not a flags class", t.name())))?;
+        let class = FlagsClass::new(t).ok_or_else(|| {
+            de::Error::custom(format!("GType `{}` is not a flags class", t.name()))
+        })?;
 
         struct Visitor<'f>(&'f FlagsClass);
         impl<'de, 'f> de::Visitor<'de> for Visitor<'f> {
