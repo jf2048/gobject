@@ -15,40 +15,31 @@ pub mod enum_ {
     where
         E: glib::StaticType + IntoGlib<GlibType = i32> + Copy,
     {
-        serialize_for_type(E::static_type(), e.into_glib(), s)
-    }
-    #[inline]
-    fn serialize_for_type<S: Serializer>(t: glib::Type, e: i32, s: S) -> Result<S::Ok, S::Error> {
-        let class = EnumClass::new(t)
-            .ok_or_else(|| ser::Error::custom(format!("GType `{}` is not an enum", t.name())))?;
+        static ENUM_CLASS: SyncOnceCell<Option<EnumClass>> = SyncOnceCell::new();
+        let class = ENUM_CLASS.get_or_init(|| EnumClass::new(E::static_type()))
+            .as_ref()
+            .ok_or_else(|| ser::Error::custom(format!("GType `{}` is not an enum class", E::static_type().name())))?;
+        let e = e.into_glib();
         let n = class.value(e).map(|e| e.nick()).ok_or_else(|| {
-            ser::Error::custom(format!("Invalid value `{}` for enum `{}`", e, t.name()))
+            ser::Error::custom(format!("Invalid value `{}` for enum `{}`", e, E::static_type().name()))
         })?;
-        let n = unsafe { std::mem::transmute(n) };
-        s.serialize_unit_variant(t.name(), e as u32, n)
+        s.serialize_unit_variant(E::static_type().name(), e as u32, n)
     }
     pub fn deserialize<'de, E, D: Deserializer<'de>>(d: D) -> Result<E, D::Error>
     where
         E: glib::StaticType + FromGlib<i32>,
     {
-        let e = deserialize_for_type(E::static_type(), d)?;
-        Ok(unsafe { from_glib(e) })
-    }
-    #[inline]
-    fn deserialize_for_type<'de, D: Deserializer<'de>>(
-        t: glib::Type,
-        d: D,
-    ) -> Result<i32, D::Error> {
-        let class = glib::EnumClass::new(t)
-            .ok_or_else(|| de::Error::custom(format!("GType `{}` is not an enum", t.name())))?;
+        static ENUM_CLASS: SyncOnceCell<Option<EnumClass>> = SyncOnceCell::new();
+        let class = ENUM_CLASS.get_or_init(|| EnumClass::new(E::static_type()))
+            .as_ref()
+            .ok_or_else(|| de::Error::custom(format!("GType `{}` is not an enum class", E::static_type().name())))?;
 
         static VARIANTS: SyncOnceCell<Vec<&'static str>> = SyncOnceCell::new();
-
         let variants = VARIANTS.get_or_init(|| {
             class
                 .values()
                 .iter()
-                .map(|v| unsafe { std::mem::transmute(v.name()) })
+                .map(|v| v.name())
                 .collect()
         });
 
@@ -101,8 +92,8 @@ pub mod enum_ {
             }
         }
 
-        struct Visitor(EnumClass);
-        impl<'de> de::Visitor<'de> for Visitor {
+        struct Visitor<'e>(&'e EnumClass);
+        impl<'de, 'e> de::Visitor<'de> for Visitor<'e> {
             type Value = i32;
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
                 self.0.type_().name().fmt(f)
@@ -111,14 +102,15 @@ pub mod enum_ {
             where
                 A: de::EnumAccess<'de>,
             {
-                let vis = FieldVisitor(&self.0);
+                let vis = FieldVisitor(self.0);
                 let (e, v) = data.variant_seed(vis)?;
                 v.unit_variant()?;
                 Ok(e.value())
             }
         }
 
-        d.deserialize_enum(t.name(), variants.as_slice(), Visitor(class))
+        let e = d.deserialize_enum(E::static_type().name(), variants.as_slice(), Visitor(class))?;
+        Ok(unsafe { from_glib(e) })
     }
 }
 
@@ -129,22 +121,12 @@ pub mod flags {
     where
         F: glib::StaticType + IntoGlib<GlibType = u32> + Copy,
     {
-        let t = F::static_type();
-        let f = f.into_glib();
-        s.serialize_newtype_struct(t.name(), &f)
+        s.serialize_newtype_struct(F::static_type().name(), &f.into_glib())
     }
     pub fn deserialize<'de, F, D: Deserializer<'de>>(d: D) -> Result<F, D::Error>
     where
         F: glib::StaticType + FromGlib<u32>,
     {
-        let v = deserialize_for_type(F::static_type(), d)?;
-        Ok(unsafe { from_glib(v) })
-    }
-    #[inline]
-    fn deserialize_for_type<'de, D: Deserializer<'de>>(
-        t: glib::Type,
-        d: D,
-    ) -> Result<u32, D::Error> {
         struct Visitor(glib::Type);
         impl<'de> de::Visitor<'de> for Visitor {
             type Value = u32;
@@ -170,7 +152,9 @@ pub mod flags {
             }
         }
 
-        d.deserialize_newtype_struct(t.name(), Visitor(t))
+        let t = F::static_type();
+        let v = d.deserialize_newtype_struct(t.name(), Visitor(t))?;
+        Ok(unsafe { from_glib(v) })
     }
 }
 
