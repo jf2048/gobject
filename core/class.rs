@@ -68,7 +68,7 @@ impl ClassDefinition {
         let attrs = opts.0;
         attrs.validate(errors);
 
-        let inner = TypeDefinition::parse(module, TypeBase::Class, crate_ident, errors);
+        let inner = TypeDefinition::parse(module, TypeBase::Class, attrs.name, crate_ident, errors);
 
         let mut class = Self {
             inner,
@@ -82,13 +82,10 @@ impl ClassDefinition {
             implements: (*attrs.implements).clone(),
         };
 
-        if let Some(name) = attrs.name {
-            class.inner.name = Some(name);
-        }
         if class.inner.name.is_none() {
             errors.push(
                 class.inner.span(),
-                "Class must have a `name = \"...\"` parameter or a #[properties] struct",
+                "Class must have a `name = \"...\"` parameter, a struct, or an impl",
             );
         }
 

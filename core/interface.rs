@@ -47,7 +47,8 @@ impl InterfaceDefinition {
     ) -> Self {
         let attrs = opts.0;
 
-        let inner = TypeDefinition::parse(module, TypeBase::Interface, crate_ident, errors);
+        let inner =
+            TypeDefinition::parse(module, TypeBase::Interface, attrs.name, crate_ident, errors);
 
         let mut iface = Self {
             inner,
@@ -58,13 +59,10 @@ impl InterfaceDefinition {
             requires: (*attrs.requires).clone(),
         };
 
-        if let Some(name) = attrs.name {
-            iface.inner.name = Some(name);
-        }
         if iface.inner.name.is_none() {
             errors.push(
                 iface.inner.span(),
-                "Interface must have a `name = \"...\"` parameter or a #[properties] struct",
+                "Interface must have a `name = \"...\"` parameter, a struct, or an impl",
             );
         }
 

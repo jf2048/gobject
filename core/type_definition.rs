@@ -55,10 +55,31 @@ macro_rules! unwrap_or_return {
     };
 }
 
+#[inline]
+fn type_ident(ty: &syn::Type) -> Option<&syn::Ident> {
+    if let syn::Type::Path(syn::TypePath { path, .. }) = ty {
+        if path.leading_colon.is_none() && path.segments.len() == 1 {
+            return Some(&path.segments[0].ident);
+        }
+    }
+    None
+}
+
+#[inline]
+fn extract_attr(attrs: &mut Vec<syn::Attribute>, name: &str) -> Option<syn::Attribute> {
+    let attr_index = attrs.iter().position(|a| a.path.is_ident(name));
+    if let Some(attr_index) = attr_index {
+        Some(attrs.remove(attr_index))
+    } else {
+        None
+    }
+}
+
 impl TypeDefinition {
     pub fn parse(
         module: syn::ItemMod,
         base: TypeBase,
+        name: Option<syn::Ident>,
         crate_ident: syn::Ident,
         errors: &Errors,
     ) -> Self {
@@ -72,7 +93,7 @@ impl TypeDefinition {
             module,
             base,
             vis: syn::Visibility::Inherited,
-            name: None,
+            name,
             crate_ident,
             generics: None,
             properties_item_index: None,
@@ -94,61 +115,90 @@ impl TypeDefinition {
         let (_, items) = def.module.content.as_mut().unwrap();
         let mut struct_ = None;
         let mut impl_ = None;
-        let mut first_struct = None;
-        let mut first_impl = None;
-        let mut struct_count = 0usize;
-        let mut impl_count = 0usize;
-        for (index, item) in items.iter_mut().enumerate() {
-            match item {
-                syn::Item::Struct(s) => {
-                    if let Some(a) =
-                        find_attr(&mut s.attrs, "properties", struct_.is_some(), errors)
+        if let Some(name) = &def.name {
+            for (index, item) in items.iter_mut().enumerate() {
+                match item {
+                    syn::Item::Struct(s) if struct_.is_none() && &s.ident == name => {
+                        let attr = extract_attr(&mut s.attrs, "properties")
+                            .unwrap_or_else(|| parse_quote! { #[properties] });
+                        struct_ = Some((index, attr));
+                    }
+                    syn::Item::Impl(i)
+                        if impl_.is_none()
+                            && i.trait_.is_none()
+                            && type_ident(&*i.self_ty) == Some(name) =>
                     {
-                        struct_ = Some((index, a));
-                    } else if first_struct.is_none() {
-                        first_struct = Some(index);
-                    }
-                    struct_count += 1;
-                }
-                syn::Item::Impl(i) if i.trait_.is_none() => {
-                    if find_attr(&mut i.attrs, "methods", impl_.is_some(), errors).is_some() {
-                        if let Some((_, trait_, _)) = &i.trait_ {
-                            errors.push_spanned(&trait_, "Trait not allowed on #[methods] impl");
-                        }
+                        extract_attr(&mut i.attrs, "methods");
                         impl_ = Some(index);
-                    } else if first_impl.is_none() {
-                        first_impl = Some(index);
                     }
-                    impl_count += 1;
+                    _ => {}
                 }
-                _ => {}
+                if struct_.is_some() && impl_.is_some() {
+                    break;
+                }
             }
-        }
-        if struct_count == 1 && struct_.is_none() {
-            if let Some(first_struct) = first_struct {
-                struct_ = Some((first_struct, parse_quote! { #[properties] }));
-            }
-        }
-        if impl_count == 1 && impl_.is_none() {
-            let names_match = struct_
-                .as_ref()
-                .map(|(index, _)| {
-                    let s = match &items[*index] {
-                        syn::Item::Struct(s) => s,
-                        _ => unreachable!(),
-                    };
-                    let impl_ = match &items[first_impl.unwrap()] {
-                        syn::Item::Impl(i) => i,
-                        _ => unreachable!(),
-                    };
-                    match impl_.self_ty.as_ref() {
-                        syn::Type::Path(p) => p.path.is_ident(&s.ident),
-                        _ => false,
+        } else {
+            {
+                let mut first_struct = None;
+                let mut struct_name = None;
+                for (index, item) in items.iter_mut().enumerate() {
+                    if let syn::Item::Struct(s) = item {
+                        if let Some(attr) = extract_attr(&mut s.attrs, "properties") {
+                            struct_ = Some((index, attr));
+                            struct_name = Some(s.ident.clone());
+                            break;
+                        } else if first_struct.is_none() {
+                            first_struct = Some(index);
+                            struct_name = Some(s.ident.clone());
+                        }
                     }
-                })
-                .unwrap_or(true);
-            if names_match {
-                impl_ = first_impl;
+                }
+                if struct_.is_none() {
+                    if let Some(index) = first_struct {
+                        struct_ = Some((index, parse_quote! { #[properties] }));
+                    }
+                }
+                if struct_.is_some() {
+                    def.name = struct_name;
+                }
+            }
+            if let Some(name) = &def.name {
+                for (index, item) in items.iter_mut().enumerate() {
+                    if let syn::Item::Impl(i) = item {
+                        if impl_.is_none()
+                            && i.trait_.is_none()
+                            && type_ident(&*i.self_ty) == Some(name)
+                        {
+                            extract_attr(&mut i.attrs, "methods");
+                            impl_ = Some(index);
+                        }
+                    }
+                }
+            } else {
+                let mut first_impl = None;
+                let mut impl_name = None;
+                for (index, item) in items.iter_mut().enumerate() {
+                    if let syn::Item::Impl(i) = item {
+                        if impl_.is_none() && i.trait_.is_none() {
+                            if extract_attr(&mut i.attrs, "methods").is_some() {
+                                impl_ = Some(index);
+                                impl_name = type_ident(&*i.self_ty).cloned();
+                                break;
+                            } else if first_impl.is_none() {
+                                first_impl = Some(index);
+                                impl_name = type_ident(&*i.self_ty).cloned();
+                            }
+                        }
+                    }
+                }
+                if impl_.is_none() {
+                    if let Some(index) = first_impl {
+                        impl_ = Some(index);
+                    }
+                }
+                if impl_.is_some() {
+                    def.name = impl_name;
+                }
             }
         }
         if let Some((index, attr)) = struct_ {
@@ -737,28 +787,5 @@ impl TypeDefinition {
 impl Spanned for TypeDefinition {
     fn span(&self) -> proc_macro2::Span {
         self.module.span()
-    }
-}
-
-#[inline]
-fn find_attr(
-    attrs: &mut Vec<syn::Attribute>,
-    name: &str,
-    exists: bool,
-    errors: &Errors,
-) -> Option<syn::Attribute> {
-    let attr_index = attrs.iter().position(|a| a.path.is_ident(name));
-    if let Some(attr_index) = attr_index {
-        if exists {
-            errors.push_spanned(
-                &attrs[attr_index],
-                format!("Only one #[{}] item allowed in a class", name),
-            );
-            None
-        } else {
-            Some(attrs.remove(attr_index))
-        }
-    } else {
-        None
     }
 }
