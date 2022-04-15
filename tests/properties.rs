@@ -167,6 +167,8 @@ mod complex {
         optional_time: RefCell<Option<glib::DateTime>>,
         #[property(get, set, object, construct_only)]
         dummy: OnceCell<super::BaseObject>,
+        #[property(get, set, object)]
+        weak_obj: glib::WeakRef<glib::Object>,
         #[property(get, set, enum)]
         animal: Cell<super::Animal>,
         #[property(get, set, flags)]
@@ -186,6 +188,7 @@ mod complex {
                 time: RefCell::new(glib::DateTime::from_utc(1970, 1, 1, 0, 0, 0.).unwrap()),
                 optional_time: Default::default(),
                 dummy: Default::default(),
+                weak_obj: Default::default(),
                 animal: Cell::new(super::Animal::Dog),
                 binding_flags: Cell::new(glib::BindingFlags::empty()),
                 pspec: RefCell::new(Self::properties()[4].clone()),
@@ -203,6 +206,13 @@ fn complex_properties() {
     let obj = glib::Object::new::<ComplexProps>(&[("dummy", &dummy)]).unwrap();
     obj.set_renamed_string("hello".into());
     assert_eq!(&*obj.dummy().renamed_string(), "foobar");
+    assert!(obj.weak_obj().is_none());
+    {
+        let weak = glib::Object::new::<SmallObject>(&[]).unwrap();
+        obj.set_weak_obj(Some(weak.clone().upcast()));
+        assert!(obj.weak_obj().is_some());
+    }
+    assert!(obj.weak_obj().is_none());
 }
 
 #[gobject::class(final)]

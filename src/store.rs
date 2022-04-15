@@ -1,5 +1,10 @@
 use crate::{ConstructCell, OnceBool, OnceBox, OnceCell, SyncOnceCell};
-use glib::{value::ValueType, ToValue, Value};
+use glib::{
+    value::{
+        FromValue, ValueType, ValueTypeChecker, ValueTypeMismatchOrNoneError, ValueTypeOptional,
+    },
+    ObjectType, ToValue, Value,
+};
 use std::{ops::DerefMut, sync::atomic::Ordering};
 
 pub trait ParamStore {
@@ -488,6 +493,79 @@ impl<'a, T> ParamStoreWriteChanged<'a> for std::sync::atomic::AtomicPtr<T> {
     fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool {
         let value = value as *mut T;
         let old = self.swap(value, Ordering::Release);
+        old != value
+    }
+}
+
+impl<T, C, E> ParamStore for glib::WeakRef<T>
+where
+    T: ObjectType
+        + for<'a> FromValue<'a, Checker = C>
+        + ValueTypeOptional
+        + glib::StaticType
+        + 'static,
+    C: ValueTypeChecker<Error = ValueTypeMismatchOrNoneError<E>>,
+    E: std::error::Error + Send + Sized + 'static,
+{
+    type Type = Option<T>;
+}
+impl<T, C, E> ParamStoreRead for glib::WeakRef<T>
+where
+    T: ObjectType
+        + for<'a> FromValue<'a, Checker = C>
+        + ValueTypeOptional
+        + glib::StaticType
+        + 'static,
+    C: ValueTypeChecker<Error = ValueTypeMismatchOrNoneError<E>>,
+    E: std::error::Error + Send + Sized + 'static,
+{
+    fn get_owned(&self) -> <Self as ParamStore>::Type {
+        self.upgrade()
+    }
+}
+impl<T, C, E> ParamStoreReadValue for glib::WeakRef<T>
+where
+    T: ObjectType
+        + for<'a> FromValue<'a, Checker = C>
+        + ValueTypeOptional
+        + glib::StaticType
+        + 'static,
+    C: ValueTypeChecker<Error = ValueTypeMismatchOrNoneError<E>>,
+    E: std::error::Error + Send + Sized + 'static,
+{
+    fn get_value(&self) -> glib::Value {
+        self.upgrade().to_value()
+    }
+}
+
+impl<'a, T, C, E> ParamStoreWrite<'a> for glib::WeakRef<T>
+where
+    T: ObjectType
+        + for<'b> FromValue<'b, Checker = C>
+        + ValueTypeOptional
+        + glib::StaticType
+        + 'static,
+    C: ValueTypeChecker<Error = ValueTypeMismatchOrNoneError<E>>,
+    E: std::error::Error + Send + Sized + 'static,
+{
+    fn set_owned(&'a self, value: <Self as ParamStore>::Type) {
+        self.set(value.as_ref());
+    }
+}
+impl<'a, T, C, E> ParamStoreWriteChanged<'a> for glib::WeakRef<T>
+where
+    T: ObjectType
+        + for<'b> FromValue<'b, Checker = C>
+        + ValueTypeOptional
+        + glib::StaticType
+        + PartialEq
+        + 'static,
+    C: ValueTypeChecker<Error = ValueTypeMismatchOrNoneError<E>>,
+    E: std::error::Error + Send + Sized + 'static,
+{
+    fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool {
+        let old = self.upgrade();
+        self.set(value.as_ref());
         old != value
     }
 }
