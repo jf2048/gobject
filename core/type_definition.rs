@@ -84,11 +84,7 @@ fn type_ident(ty: &syn::Type) -> Option<&syn::Ident> {
 #[inline]
 fn extract_attr(attrs: &mut Vec<syn::Attribute>, name: &str) -> Option<syn::Attribute> {
     let attr_index = attrs.iter().position(|a| a.path.is_ident(name));
-    if let Some(attr_index) = attr_index {
-        Some(attrs.remove(attr_index))
-    } else {
-        None
-    }
+    attr_index.map(|attr_index| attrs.remove(attr_index))
 }
 
 #[inline]

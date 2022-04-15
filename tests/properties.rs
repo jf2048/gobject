@@ -210,7 +210,7 @@ fn complex_properties() {
     {
         let weak = glib::Object::new::<SmallObject>(&[]).unwrap();
         obj.set_weak_obj(Some(weak.clone().upcast()));
-        assert!(obj.weak_obj().is_some());
+        assert_eq!(obj.weak_obj().as_ref(), Some(weak.upcast_ref()));
     }
     assert!(obj.weak_obj().is_none());
 }
