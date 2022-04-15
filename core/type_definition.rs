@@ -8,7 +8,7 @@ use crate::{
     virtual_method::VirtualMethod,
 };
 use proc_macro2::{Span, TokenStream};
-use quote::{format_ident, quote, quote_spanned};
+use quote::{format_ident, quote, quote_spanned, ToTokens};
 use syn::{parse_quote, spanned::Spanned};
 
 #[derive(Debug)]
@@ -16,6 +16,7 @@ pub struct TypeDefinition {
     pub module: syn::ItemMod,
     pub base: TypeBase,
     pub vis: syn::Visibility,
+    pub concurrency: Concurrency,
     pub name: Option<syn::Ident>,
     pub crate_ident: syn::Ident,
     pub generics: Option<syn::Generics>,
@@ -44,6 +45,21 @@ pub enum TypeContext {
 pub enum TypeBase {
     Class,
     Interface,
+}
+
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Copy, Clone)]
+pub enum Concurrency {
+    None,
+    SendSync,
+}
+
+impl ToTokens for Concurrency {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            Self::None => {}
+            Self::SendSync => (quote! { + Send + Sync }).to_tokens(tokens),
+        }
+    }
 }
 
 macro_rules! unwrap_or_return {
@@ -75,6 +91,23 @@ fn extract_attr(attrs: &mut Vec<syn::Attribute>, name: &str) -> Option<syn::Attr
     }
 }
 
+#[inline]
+fn is_marker(path: &syn::Path, marker: &str) -> bool {
+    if path.is_ident(marker) {
+        return true;
+    }
+    let path = path
+        .to_token_stream()
+        .into_iter()
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join("");
+    path == format!("std::marker::{}", marker)
+        || path == format!("::std::marker::{}", marker)
+        || path == format!("core::marker::{}", marker)
+        || path == format!("::core::marker::{}", marker)
+}
+
 impl TypeDefinition {
     pub fn parse(
         module: syn::ItemMod,
@@ -93,6 +126,7 @@ impl TypeDefinition {
             module,
             base,
             vis: syn::Visibility::Inherited,
+            concurrency: Concurrency::None,
             name,
             crate_ident,
             generics: None,
@@ -240,6 +274,27 @@ impl TypeDefinition {
             }
             struct_.fields = fields;
             def.properties.extend(properties);
+            if def.base == TypeBase::Class {
+                let struct_name = struct_.ident.clone();
+                let mut send = false;
+                let mut sync = false;
+                for item in items.iter() {
+                    if let syn::Item::Impl(i) = item {
+                        if type_ident(&*i.self_ty) == Some(&struct_name) {
+                            if let Some((_, path, _)) = &i.trait_ {
+                                if is_marker(path, "Send") {
+                                    send = true;
+                                } else if is_marker(path, "Sync") {
+                                    sync = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                if send && sync {
+                    def.concurrency = Concurrency::SendSync;
+                }
+            }
         }
         if let Some(index) = impl_ {
             def.methods_item_index = Some(index);
@@ -501,8 +556,12 @@ impl TypeDefinition {
         let glib = self.glib();
         self.properties
             .iter()
-            .flat_map(|p| p.method_prototypes(go))
-            .chain(self.signals.iter().flat_map(|s| s.method_prototypes(&glib)))
+            .flat_map(|p| p.method_prototypes(self.concurrency, go))
+            .chain(
+                self.signals
+                    .iter()
+                    .flat_map(|s| s.method_prototypes(self.concurrency, &glib)),
+            )
             .chain(self.public_methods.iter().map(|m| m.prototype()))
             .chain(self.virtual_methods.iter().map(|m| m.prototype(&glib)))
             .collect()
@@ -543,11 +602,11 @@ impl TypeDefinition {
         self.properties
             .iter()
             .enumerate()
-            .flat_map(|(i, p)| p.method_definitions(i, &ty, &properties_path, go))
+            .flat_map(|(i, p)| p.method_definitions(i, &ty, self.concurrency, &properties_path, go))
             .chain(
                 self.signals
                     .iter()
-                    .flat_map(|s| s.method_definitions(&glib)),
+                    .flat_map(|s| s.method_definitions(self.concurrency, &glib)),
             )
             .chain(
                 self.public_methods

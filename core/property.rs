@@ -1,6 +1,6 @@
 use crate::{
     util::{self, Errors},
-    TypeBase,
+    Concurrency, TypeBase,
 };
 use darling::{
     util::{Flag, SpannedValue},
@@ -1096,42 +1096,68 @@ impl Property {
             }
         })
     }
-    fn connect_prototype(&self, glib: &TokenStream) -> Option<TokenStream> {
+    fn connect_prototype(
+        &self,
+        concurrency: Concurrency,
+        local: bool,
+        glib: &TokenStream,
+    ) -> Option<TokenStream> {
         (!self.is_inherited()
             && self.get.is_allowed()
             && !self.flags.contains(PropertyFlags::CONSTRUCT_ONLY)
             && self.connect_notify)
             .then(|| {
-                let method_name =
-                    format_ident!("connect_{}_notify", self.name.field_name());
+                let method_name = if local {
+                    format_ident!("connect_{}_notify_local", self.name.field_name())
+                } else {
+                    format_ident!("connect_{}_notify", self.name.field_name())
+                };
                 quote_spanned! { self.span() =>
-                    fn #method_name<____Func: Fn(&Self) + 'static>(&self, f: ____Func) -> #glib::SignalHandlerId
+                    fn #method_name<____Func: Fn(&Self) #concurrency + 'static>(&self, f: ____Func) -> #glib::SignalHandlerId
                 }
             })
     }
-    fn connect_definition(&self, glib: &TokenStream) -> Option<TokenStream> {
-        self.connect_prototype(glib).map(|proto| {
-            let name = self.name.to_string();
-            quote_spanned! { self.span() =>
-                #proto {
-                    #![inline]
-                    <Self as #glib::object::ObjectExt>::connect_notify_local(
-                        self,
-                        Some(#name),
-                        move |recv, _| f(recv),
-                    )
+    fn connect_definition(
+        &self,
+        concurrency: Concurrency,
+        local: bool,
+        glib: &TokenStream,
+    ) -> Option<TokenStream> {
+        self.connect_prototype(concurrency, local, glib)
+            .map(|proto| {
+                let name = self.name.to_string();
+                let call = if concurrency == Concurrency::None {
+                    format_ident!("connect_notify_local")
+                } else {
+                    format_ident!("connect_notify")
+                };
+                quote_spanned! { self.span() =>
+                    #proto {
+                        #![inline]
+                        <Self as #glib::object::ObjectExt>::#call(
+                            self,
+                            Some(#name),
+                            move |recv, _| f(recv),
+                        )
+                    }
                 }
-            }
-        })
+            })
     }
-    pub(crate) fn method_prototypes(&self, go: &syn::Ident) -> Vec<TokenStream> {
+    pub(crate) fn method_prototypes(
+        &self,
+        concurrency: Concurrency,
+        go: &syn::Ident,
+    ) -> Vec<TokenStream> {
         let glib = quote! { #go::glib };
         [
             self.setter_prototype(go),
             self.getter_prototype(go),
             self.borrow_prototype(go),
             self.notify_prototype(),
-            self.connect_prototype(&glib),
+            self.connect_prototype(concurrency, false, &glib),
+            (concurrency != Concurrency::None)
+                .then(|| self.connect_prototype(Concurrency::None, true, &glib))
+                .flatten(),
         ]
         .into_iter()
         .flatten()
@@ -1141,6 +1167,7 @@ impl Property {
         &self,
         index: usize,
         ty: &TokenStream,
+        concurrency: Concurrency,
         properties_path: &TokenStream,
         go: &syn::Ident,
     ) -> Vec<TokenStream> {
@@ -1150,7 +1177,10 @@ impl Property {
             self.getter_definition(ty, go),
             self.borrow_definition(ty, go),
             self.notify_definition(index, properties_path, &glib),
-            self.connect_definition(&glib),
+            self.connect_definition(concurrency, false, &glib),
+            (concurrency != Concurrency::None)
+                .then(|| self.connect_definition(Concurrency::None, true, &glib))
+                .flatten(),
         ]
         .into_iter()
         .flatten()

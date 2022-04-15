@@ -106,3 +106,43 @@ fn object_inner_methods() {
     assert_eq!(obj.my_prop(), 22);
     assert_eq!(obj.property::<u32>("my-uint"), 500);
 }
+
+#[gobject::class(final)]
+mod obj_threadsafe {
+    #[derive(Default)]
+    struct ObjThreadSafe {
+        #[property(get, set)]
+        the_uint: std::sync::Mutex<u64>,
+        #[property(get, set)]
+        the_string: std::sync::RwLock<String>,
+    }
+    unsafe impl Send for ObjThreadSafe {}
+    unsafe impl Sync for ObjThreadSafe {}
+    impl ObjThreadSafe {
+        #[signal]
+        fn abc(&self) {}
+    }
+}
+
+#[test]
+fn concurrency() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let obj = glib::Object::new::<ObjThreadSafe>(&[]).unwrap();
+    let flag = std::sync::Arc::new(AtomicBool::new(false));
+    let f = flag.clone();
+    obj.connect_abc(move |_| {
+        f.store(true, Ordering::Release);
+    });
+    let o = obj.clone();
+    std::thread::spawn(move || {
+        o.set_the_uint(256);
+        o.set_the_string("Hello".into());
+        o.emit_abc();
+    })
+    .join()
+    .unwrap();
+    assert_eq!(obj.the_uint(), 256);
+    assert_eq!(obj.the_string(), "Hello");
+    assert!(flag.load(Ordering::Acquire));
+}

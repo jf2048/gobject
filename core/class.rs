@@ -1,6 +1,6 @@
 use crate::{
     util::{self, Errors},
-    Properties, TypeBase, TypeDefinition,
+    Concurrency, Properties, TypeBase, TypeDefinition,
 };
 use darling::{
     util::{Flag, PathList, SpannedValue},
@@ -160,10 +160,20 @@ impl ClassDefinition {
         let glib = self.inner.glib();
         let generics = self.inner.generics.as_ref();
         let vis = &self.inner.vis;
+        let concurrency = (self.inner.concurrency == Concurrency::SendSync).then(|| {
+            let name = parse_quote! { #name };
+            let send = self.inner.trait_head(&name, quote! { ::std::marker::Send });
+            let sync = self.inner.trait_head(&name, quote! { ::std::marker::Sync });
+            quote! {
+                unsafe #send {}
+                unsafe #sync {}
+            }
+        });
         Some(quote! {
             #glib::wrapper! {
                 #vis struct #name #generics(ObjectSubclass<self::#mod_name::#name #generics>) #(#inherits),*;
             }
+            #concurrency
         })
     }
     #[inline]
@@ -581,7 +591,9 @@ pub fn derived_class_properties(
 
     let mut items = Vec::new();
     for (index, prop) in properties.iter().enumerate() {
-        for item in prop.method_definitions(index, &wrapper_ty, &properties_path, go) {
+        for item in
+            prop.method_definitions(index, &wrapper_ty, Concurrency::None, &properties_path, go)
+        {
             items.push(item);
         }
     }
@@ -595,7 +607,7 @@ pub fn derived_class_properties(
 
         let protos = properties
             .iter()
-            .flat_map(|p| p.method_prototypes(go))
+            .flat_map(|p| p.method_prototypes(Concurrency::None, go))
             .collect::<Vec<_>>();
 
         quote! {

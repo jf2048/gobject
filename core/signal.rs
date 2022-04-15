@@ -1,6 +1,6 @@
 use crate::{
     util::{self, Errors},
-    TypeBase,
+    Concurrency, TypeBase,
 };
 use darling::{util::Flag, FromMeta};
 use heck::{ToShoutySnakeCase, ToSnakeCase};
@@ -562,7 +562,7 @@ impl Signal {
             }
         })
     }
-    pub(crate) fn emit_prototype(&self, glib: &TokenStream) -> Option<TokenStream> {
+    fn emit_prototype(&self, glib: &TokenStream) -> Option<TokenStream> {
         if self.override_ {
             return None;
         }
@@ -578,7 +578,7 @@ impl Signal {
             fn #method_name(&self, #details_arg #(#arg_types),*) #output
         })
     }
-    pub(crate) fn emit_definition(&self, glib: &TokenStream) -> Option<TokenStream> {
+    fn emit_definition(&self, glib: &TokenStream) -> Option<TokenStream> {
         let proto = self.emit_prototype(glib)?;
         let sig = self.sig.as_ref()?;
         let arg_types = self.arg_types();
@@ -620,11 +620,20 @@ impl Signal {
             }
         })
     }
-    pub(crate) fn connect_prototype(&self, glib: &TokenStream) -> Option<TokenStream> {
+    fn connect_prototype(
+        &self,
+        concurrency: Concurrency,
+        local: bool,
+        glib: &TokenStream,
+    ) -> Option<TokenStream> {
         if !self.connect || self.override_ {
             return None;
         }
-        let method_name = format_ident!("connect_{}", self.name.to_snake_case());
+        let method_name = if local {
+            format_ident!("connect_{}_local", self.name.to_snake_case())
+        } else {
+            format_ident!("connect_{}", self.name.to_snake_case())
+        };
         let sig = self.sig.as_ref()?;
         let output = &sig.output;
         let input_types = self.inputs().skip(1).map(|arg| match arg {
@@ -636,15 +645,20 @@ impl Signal {
             .contains(SignalFlags::DETAILED)
             .then(|| quote! { details: ::std::option::Option<#glib::Quark>, });
         Some(quote_spanned! { sig.span() =>
-            fn #method_name<____Func: Fn(&Self, #(#input_types),*) #output + 'static>(
+            fn #method_name<____Func: Fn(&Self, #(#input_types),*) #output #concurrency + 'static>(
                 &self,
                 #details_arg
                 f: ____Func,
             ) -> #glib::SignalHandlerId
         })
     }
-    pub(crate) fn connect_definition(&self, glib: &TokenStream) -> Option<TokenStream> {
-        let proto = self.connect_prototype(glib)?;
+    fn connect_definition(
+        &self,
+        concurrency: Concurrency,
+        local: bool,
+        glib: &TokenStream,
+    ) -> Option<TokenStream> {
+        let proto = self.connect_prototype(concurrency, local, glib)?;
         let sig = self.sig.as_ref()?;
         let arg_names = self.arg_names().skip(1);
         let self_ty = quote! { Self };
@@ -656,6 +670,11 @@ impl Signal {
         } else {
             quote! { ::std::option::Option::None }
         };
+        let call = if concurrency == Concurrency::None {
+            format_ident!("connect_local_id")
+        } else {
+            format_ident!("connect_id")
+        };
 
         let unwrap = match &sig.output {
             syn::ReturnType::Type(_, _) => quote! {
@@ -666,7 +685,7 @@ impl Signal {
         Some(quote_spanned! { sig.span() =>
             #proto {
                 #![inline]
-                <Self as #glib::object::ObjectExt>::connect_local_id(
+                <Self as #glib::object::ObjectExt>::#call(
                     self,
                     *#signal_id_cell,
                     #details,
@@ -681,16 +700,36 @@ impl Signal {
             }
         })
     }
-    pub(crate) fn method_prototypes(&self, glib: &TokenStream) -> Vec<TokenStream> {
-        [self.emit_prototype(glib), self.connect_prototype(glib)]
-            .into_iter()
-            .flatten()
-            .collect()
+    pub(crate) fn method_prototypes(
+        &self,
+        concurrency: Concurrency,
+        glib: &TokenStream,
+    ) -> Vec<TokenStream> {
+        [
+            self.emit_prototype(glib),
+            self.connect_prototype(concurrency, false, glib),
+            (concurrency != Concurrency::None)
+                .then(|| self.connect_prototype(Concurrency::None, true, glib))
+                .flatten(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     }
-    pub(crate) fn method_definitions(&self, glib: &TokenStream) -> Vec<TokenStream> {
-        [self.emit_definition(glib), self.connect_definition(glib)]
-            .into_iter()
-            .flatten()
-            .collect()
+    pub(crate) fn method_definitions(
+        &self,
+        concurrency: Concurrency,
+        glib: &TokenStream,
+    ) -> Vec<TokenStream> {
+        [
+            self.emit_definition(glib),
+            self.connect_definition(concurrency, false, glib),
+            (concurrency != Concurrency::None)
+                .then(|| self.connect_definition(Concurrency::None, true, glib))
+                .flatten(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     }
 }
