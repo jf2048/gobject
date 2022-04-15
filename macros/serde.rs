@@ -117,7 +117,15 @@ pub(crate) fn extend_serde(
         .collect::<Vec<_>>();
 
     let mut parent_name = String::from("parent");
-    while props.iter().any(|p| p.name.field_name() == parent_name) {
+    while props.iter().any(|p| {
+        let mut is_named = false;
+        let name_taken = p
+            .field
+            .attrs
+            .iter()
+            .any(|a| has_name(a, &parent_name, &mut is_named));
+        name_taken || (!is_named && p.name.field_name() == parent_name)
+    }) {
         parent_name.insert(0, '_');
     }
     let parent_name = format_ident!("{}", parent_name);
@@ -455,6 +463,34 @@ fn has_meta(attr: &syn::Attribute, meta: &str) -> bool {
         .map(|m| match m {
             syn::Meta::List(l) => l.nested.iter().any(|m| match m {
                 syn::NestedMeta::Meta(m) => m.path().is_ident(meta),
+                _ => false,
+            }),
+            _ => false,
+        })
+        .unwrap_or(false)
+}
+
+#[inline]
+fn has_name(attr: &syn::Attribute, name: &str, is_named: &mut bool) -> bool {
+    if !attr.path.is_ident("serde") {
+        return false;
+    }
+    attr.parse_meta()
+        .map(|m| match m {
+            syn::Meta::List(l) => l.nested.iter().any(|m| match m {
+                syn::NestedMeta::Meta(syn::Meta::NameValue(m)) => {
+                    if m.path.is_ident("rename") || m.path.is_ident("alias") {
+                        if m.path.is_ident("rename") {
+                            *is_named = true;
+                        }
+                        if let syn::Lit::Str(s) = &m.lit {
+                            if s.value() == name {
+                                return true;
+                            }
+                        }
+                    }
+                    false
+                }
                 _ => false,
             }),
             _ => false,
