@@ -133,9 +133,10 @@ impl InterfaceDefinition {
         let name = self.inner.name.as_ref()?;
         let glib = self.inner.glib();
         let generics = self.inner.generics.as_ref();
+        let vis = &self.inner.vis;
         Some(quote! {
             #glib::wrapper! {
-                pub struct #name #generics(ObjectInterface<self::#mod_name::#name #generics>) #requires;
+                #vis struct #name #generics(ObjectInterface<self::#mod_name::#name #generics>) #requires;
             }
         })
     }

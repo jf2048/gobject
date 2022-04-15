@@ -1,7 +1,7 @@
 #[gobject::class(final)]
 mod obj_final {
     #[derive(Default)]
-    pub struct ObjFinal {
+    struct ObjFinal {
         #[property(get, set)]
         my_prop: std::cell::Cell<u64>,
     }

@@ -15,6 +15,7 @@ use syn::{parse_quote, spanned::Spanned};
 pub struct TypeDefinition {
     pub module: syn::ItemMod,
     pub base: TypeBase,
+    pub vis: syn::Visibility,
     pub name: Option<syn::Ident>,
     pub crate_ident: syn::Ident,
     pub generics: Option<syn::Generics>,
@@ -70,6 +71,7 @@ impl TypeDefinition {
         let mut def = Self {
             module,
             base,
+            vis: syn::Visibility::Inherited,
             name: None,
             crate_ident,
             generics: None,
@@ -155,6 +157,10 @@ impl TypeDefinition {
                 syn::Item::Struct(s) => s,
                 _ => unreachable!(),
             };
+            def.vis = struct_.vis.clone();
+            if matches!(&struct_.vis, syn::Visibility::Inherited) {
+                struct_.vis = parse_quote! { pub(super) };
+            }
             def.generics = Some(struct_.generics.clone());
             def.name = Some(struct_.ident.clone());
             let mut input: syn::DeriveInput = struct_.clone().into();
