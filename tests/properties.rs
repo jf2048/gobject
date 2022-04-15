@@ -221,23 +221,35 @@ mod my_obj {
     use std::cell::Cell;
 
     pub struct MyObj {
-        #[property(get, set, builder(is_a_type("glib::Object::static_type()")))]
-        object_type: Cell<glib::Type>,
+        #[property(
+            get,
+            set,
+            name = "type",
+            builder(is_a_type("glib::Object::static_type()"))
+        )]
+        type_: Cell<glib::Type>,
     }
     impl Default for MyObj {
         fn default() -> Self {
             Self {
-                object_type: Cell::new(glib::Object::static_type()),
+                type_: Cell::new(glib::Object::static_type()),
             }
         }
     }
 }
 
 #[test]
-#[should_panic(expected = "property 'object-type' of type 'MyObj' can't be set from given value")]
 fn validation() {
     let obj = glib::Object::new::<MyObj>(&[]).unwrap();
-    obj.set_object_type(glib::Type::U8);
+    obj.set_type(SmallObject::static_type());
+    assert_eq!(obj.type_(), SmallObject::static_type());
+}
+
+#[test]
+#[should_panic(expected = "property 'type' of type 'MyObj' can't be set from given value")]
+fn validation_fail() {
+    let obj = glib::Object::new::<MyObj>(&[]).unwrap();
+    obj.set_type(glib::Type::U8);
 }
 
 #[gobject::class(final)]

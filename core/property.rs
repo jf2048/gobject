@@ -4,7 +4,7 @@ use crate::{
 };
 use darling::{
     util::{Flag, SpannedValue},
-    FromDeriveInput, FromField, FromMeta,
+    FromDeriveInput, FromField, FromMeta, ToTokens,
 };
 use heck::ToSnakeCase;
 use proc_macro2::{Span, TokenStream};
@@ -860,8 +860,14 @@ impl Property {
         }
     }
     #[inline]
-    fn getter_name(&self) -> syn::Ident {
-        format_ident!("{}", self.name.field_name())
+    pub fn getter_name(&self) -> syn::Ident {
+        let mut name = self.name.field_name().to_string();
+        while syn::parse2::<syn::Ident>(syn::Ident::new(&name, Span::call_site()).to_token_stream())
+            .is_err()
+        {
+            name.push('_');
+        }
+        format_ident!("{}", name)
     }
     pub(crate) fn get_impl(
         &self,

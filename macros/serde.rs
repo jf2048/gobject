@@ -124,7 +124,7 @@ pub(crate) fn extend_serde(
             .attrs
             .iter()
             .any(|a| has_name(a, &parent_name, &mut is_named));
-        name_taken || (!is_named && p.name.field_name() == parent_name)
+        name_taken || (!is_named && p.getter_name() == parent_name)
     }) {
         parent_name.insert(0, '_');
     }
@@ -146,7 +146,7 @@ pub(crate) fn extend_serde(
                 .filter(|a| a.path.is_ident("serde"))
                 .cloned()
                 .collect::<Vec<_>>();
-            let name = prop.name.field_name();
+            let name = prop.getter_name();
             let inner_ty = prop.inner_type(&def.crate_ident);
             if !attrs.iter().any(|a| has_meta(a, "getter")) {
                 let getter = match &prop.get {
@@ -296,7 +296,7 @@ pub(crate) fn extend_serde(
                 .attrs
                 .iter()
                 .filter(|a| a.path.is_ident("serde"));
-            let name = prop.name.field_name();
+            let name = prop.getter_name();
             let ty = prop.inner_type(&def.crate_ident);
             Some(quote! { #(#attrs)* #name: #ty })
         });
@@ -322,7 +322,7 @@ pub(crate) fn extend_serde(
                 return None;
             }
             let name = prop.name.to_string();
-            let field = prop.name.field_name();
+            let field = prop.getter_name();
             Some(quote! { (#name, #go::glib::ToValue::to_value(&r.#field)) })
         }).collect::<Vec<_>>();
         let push_current = final_.then(|| {
