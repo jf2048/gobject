@@ -320,22 +320,22 @@ impl ClassDefinition {
             quote! { type Class = #class_name; }
         });
         let class_init = self.class_init_method();
-        let instance_init = self.inner.method_wrapper("instance_init", || {
+        let instance_init = self.inner.method_wrapper("instance_init", |ident| {
             parse_quote! {
-                fn instance_init(obj: &#glib::subclass::types::InitializingObject<Self>)
+                fn #ident(obj: &#glib::subclass::types::InitializingObject<Self>)
             }
         });
-        let type_init = self.inner.method_wrapper("type_init", || {
+        let type_init = self.inner.method_wrapper("type_init", |ident| {
             parse_quote! {
-                fn type_init(type_: &mut #glib::subclass::types::InitializingType<Self>)
+                fn #ident(type_: &mut #glib::subclass::types::InitializingType<Self>)
             }
         });
         let new = self
             .inner
-            .method_wrapper("new_private", || parse_quote! { fn new() -> Self });
-        let with_class = self.inner.method_wrapper("with_class", || {
+            .method_wrapper("new", |ident| parse_quote! { fn #ident() -> Self });
+        let with_class = self.inner.method_wrapper("with_class", |ident| {
             parse_quote! {
-                fn with_class(klass: &<Self as #glib::subclass::types::ObjectSubclass>::Class) -> Self
+                fn #ident(klass: &<Self as #glib::subclass::types::ObjectSubclass>::Class) -> Self
             }
         });
         Some(quote! {
@@ -484,14 +484,14 @@ impl ClassDefinition {
         let signals = self.inner.signals_method();
         let set_property = self.set_property_method();
         let property = self.property_method();
-        let constructed = self.inner.method_wrapper("constructed", || {
+        let constructed = self.inner.method_wrapper("constructed", |ident| {
             parse_quote! {
-                fn constructed(&self, obj: &<Self as #glib::subclass::types::ObjectSubclass>::Type)
+                fn #ident(&self, obj: &<Self as #glib::subclass::types::ObjectSubclass>::Type)
             }
         });
-        let dispose = self.inner.method_wrapper("dispose", || {
+        let dispose = self.inner.method_wrapper("dispose", |ident| {
             parse_quote! {
-                fn dispose(&self, obj: &<Self as #glib::subclass::types::ObjectSubclass>::Type)
+                fn #ident(&self, obj: &<Self as #glib::subclass::types::ObjectSubclass>::Type)
             }
         });
         Some(quote! {

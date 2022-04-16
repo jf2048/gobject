@@ -204,9 +204,9 @@ impl InterfaceDefinition {
         let interface_init = self.interface_init_method();
         let properties = self.inner.properties_method();
         let signals = self.inner.signals_method();
-        let type_init = self.inner.method_wrapper("type_init", || {
+        let type_init = self.inner.method_wrapper("type_init", |ident| {
             parse_quote! {
-                fn type_init(type_: &mut #glib::subclass::types::InitializingType<Self>)
+                fn #ident(type_: &mut #glib::subclass::types::InitializingType<Self>)
             }
         });
         Some(quote! {
