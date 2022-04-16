@@ -1,14 +1,14 @@
-use std::{cell::RefCell, collections::HashMap};
-
 use crate::{
     property::{Properties, Property},
     public_method::PublicMethod,
     signal::Signal,
-    util::Errors,
+    util::{self, Errors},
     virtual_method::VirtualMethod,
 };
+use heck::ToKebabCase;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned, ToTokens};
+use std::{cell::RefCell, collections::HashMap};
 use syn::{parse_quote, spanned::Spanned};
 
 #[derive(Debug)]
@@ -27,6 +27,7 @@ pub struct TypeDefinition {
     pub signals: Vec<Signal>,
     pub public_methods: Vec<PublicMethod>,
     pub virtual_methods: Vec<VirtualMethod>,
+    pub wrapper_methods: Vec<syn::Signature>,
     custom_stmts: RefCell<HashMap<String, Vec<syn::Stmt>>>,
 }
 
@@ -134,6 +135,7 @@ impl TypeDefinition {
             signals: Vec::new(),
             public_methods: Vec::new(),
             virtual_methods: Vec::new(),
+            wrapper_methods: Vec::new(),
             custom_stmts: RefCell::new(HashMap::new()),
         };
         if def.module.content.is_none() {
@@ -349,6 +351,19 @@ impl TypeDefinition {
                 errors,
             ));
         }
+        for item in items.iter_mut() {
+            if let syn::Item::Impl(i) = item {
+                if i.trait_.is_none() && extract_attr(&mut i.attrs, "wrapper_methods").is_some() {
+                    Self::extract_wrapper_methods(
+                        i,
+                        &mut def.wrapper_methods,
+                        def.base,
+                        &glib,
+                        errors,
+                    );
+                }
+            }
+        }
         def
     }
     pub fn glib(&self) -> TokenStream {
@@ -445,6 +460,64 @@ impl TypeDefinition {
             .borrow()
             .get(name)
             .map(|stmts| quote! {{ #(#stmts)* };})
+    }
+    fn extract_wrapper_methods(
+        item: &mut syn::ItemImpl,
+        methods: &mut Vec<syn::Signature>,
+        base: TypeBase,
+        glib: &TokenStream,
+        errors: &Errors,
+    ) {
+        for item in &mut item.items {
+            if let syn::ImplItem::Method(method) = item {
+                methods.push(method.sig.clone());
+                if base == TypeBase::Class {
+                    let index = method
+                        .attrs
+                        .iter()
+                        .position(|attr| attr.path.is_ident("constructor"));
+                    if let Some(index) = index {
+                        let attr = method.attrs.remove(index);
+                        Self::check_constructor(method, attr, errors);
+                        Self::fill_in_constructor(method, glib);
+                    }
+                }
+            }
+        }
+    }
+    fn check_constructor(method: &syn::ImplItemMethod, attr: syn::Attribute, errors: &Errors) {
+        if !attr.tokens.is_empty() {
+            errors.push_spanned(&attr.tokens, "Unknown tokens on constructor");
+        }
+        if let Some(recv) = method.sig.receiver() {
+            errors.push_spanned(recv, "`self` not allowed on constructor");
+        }
+        if matches!(&method.sig.output, syn::ReturnType::Default) {
+            errors.push_spanned(&method.sig, "Constructor must have a return type");
+        }
+        for arg in &method.sig.inputs {
+            if let syn::FnArg::Typed(syn::PatType { pat, .. }) = arg {
+                match pat.as_ref() {
+                    syn::Pat::Ident(_) => {}
+                    p => errors.push_spanned(p, "Constructor argument must be an ident"),
+                }
+            }
+        }
+    }
+    fn fill_in_constructor(method: &mut syn::ImplItemMethod, glib: &TokenStream) {
+        if method.block.stmts.is_empty() {
+            let args = util::signature_args(&method.sig).map(|ident| {
+                let name = ident.to_string().to_kebab_case();
+                quote! { (#name, &#ident) }
+            });
+            method.attrs.push(parse_quote! { #[inline] });
+            method.block = parse_quote! {
+                {
+                    #glib::Object::new::<Self>(&[#(#args),*])
+                        .expect("Failed to construct object")
+                }
+            };
+        }
     }
     pub fn method_wrapper<F>(&self, name: &str, sig_func: F) -> Option<TokenStream>
     where

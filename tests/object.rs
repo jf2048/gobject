@@ -29,14 +29,29 @@ mod obj_derivable {
         #[signal]
         fn abc(&self) {}
     }
+    #[wrapper_methods]
+    impl super::ObjDerivable {
+        #[constructor]
+        pub fn new(my_prop: u64) -> Self {}
+        #[constructor]
+        pub fn with_prop_plus_one(my_prop: u64) -> Self {
+            Self::new(my_prop + 1)
+        }
+    }
 }
 
 #[test]
 fn object_derivable() {
-    let obj = glib::Object::new::<ObjDerivable>(&[]).unwrap();
+    let obj = ObjDerivable::new(22);
+    assert_eq!(obj.my_prop(), 22);
     obj.set_my_prop(52);
+    assert_eq!(obj.my_prop(), 52);
     ObjDerivableExt::set_my_prop(&obj, 53);
+    assert_eq!(obj.my_prop(), 53);
     obj.emit_abc();
+
+    let obj = ObjDerivable::with_prop_plus_one(99);
+    assert_eq!(obj.my_prop(), 100);
 }
 
 #[gobject::class]

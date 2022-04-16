@@ -137,7 +137,7 @@ impl VirtualMethod {
     pub(crate) fn definition(&self, wrapper_ty: &TokenStream, glib: &TokenStream) -> TokenStream {
         let ident = &self.sig.ident;
         let sig = self.public_sig(glib);
-        let args = signature_args(&sig);
+        let args = util::signature_args(&sig);
         let obj_ident = syn::Ident::new("____obj", Span::mixed_site());
         let vtable_ident = syn::Ident::new("____vtable", Span::mixed_site());
         let get_vtable = match self.base {
@@ -168,7 +168,7 @@ impl VirtualMethod {
                 };
                 self.generic_args
                     .contains(&i)
-                    .then(|| arg_name(arg))
+                    .then(|| util::arg_name(arg))
                     .flatten()
                     .map(|name| {
                         let (cast, ty) = match &*orig.ty {
@@ -213,7 +213,7 @@ impl VirtualMethod {
         let mut sig = self.parent_sig(&this_ident, glib);
         let parent_ident = std::mem::replace(&mut sig.ident, self.sig.ident.clone());
         let external_sig = self.external_sig();
-        let args = signature_args(&external_sig);
+        let args = util::signature_args(&external_sig);
         quote! {
             #sig {
                 #![inline]
@@ -223,7 +223,7 @@ impl VirtualMethod {
     }
     pub(crate) fn parent_prototype(&self, glib: &TokenStream) -> TokenStream {
         let mut name = String::from("obj");
-        while signature_args(&self.sig).any(|i| *i == name) {
+        while util::signature_args(&self.sig).any(|i| *i == name) {
             name.insert(0, '_');
         }
         let this_ident = syn::Ident::new(&name, Span::mixed_site());
@@ -234,7 +234,7 @@ impl VirtualMethod {
         let this_ident = syn::Ident::new("____this", Span::mixed_site());
         let sig = self.parent_sig(&this_ident, glib);
         let ident = &self.sig.ident;
-        let args = signature_args(&sig);
+        let args = util::signature_args(&sig);
         let vtable_ident = syn::Ident::new("____vtable", Span::mixed_site());
         let parent_vtable_method = match self.base {
             TypeBase::Class => quote! { parent_class },
@@ -309,7 +309,7 @@ impl VirtualMethod {
                 let #this_ident = #glib::subclass::prelude::ObjectSubclassIsExt::imp(#this_ident);
             }
         });
-        let args = signature_args(&sig);
+        let args = util::signature_args(&sig);
         quote! {
             #sig {
                 #unwrap_recv
@@ -336,7 +336,7 @@ impl VirtualMethod {
             #type_ident: #glib::subclass::types::ObjectSubclass + #trait_name
         };
         sig.generics.params.push(param);
-        let args = signature_args(&sig);
+        let args = util::signature_args(&sig);
         quote! {
             #sig {
                 let #this_ident = #glib::Cast::dynamic_cast_ref::<<#type_ident as #glib::subclass::types::ObjectSubclass>::Type>(
@@ -348,19 +348,4 @@ impl VirtualMethod {
             #class_ident.#ident = #trampoline_ident::<#type_ident>;
         }
     }
-}
-
-#[inline]
-fn signature_args(sig: &syn::Signature) -> impl Iterator<Item = &syn::Ident> + Clone {
-    sig.inputs.iter().filter_map(arg_name)
-}
-
-#[inline]
-fn arg_name(arg: &syn::FnArg) -> Option<&syn::Ident> {
-    if let syn::FnArg::Typed(syn::PatType { pat, .. }) = arg {
-        if let syn::Pat::Ident(syn::PatIdent { ident, .. }) = pat.as_ref() {
-            return Some(ident);
-        }
-    }
-    None
 }

@@ -78,7 +78,7 @@ impl PublicMethod {
         let proto = self.prototype();
         let ident = &self.sig.ident;
         let sig = self.external_sig();
-        let args = signature_args(&sig);
+        let args = util::signature_args(&sig);
         let this_ident = syn::Ident::new("____this", Span::mixed_site());
         if let Some(recv) = self.sig.receiver() {
             let has_ref = util::arg_reference(recv).is_some();
@@ -116,16 +116,4 @@ impl PublicMethod {
             }
         }
     }
-}
-
-#[inline]
-fn signature_args(sig: &syn::Signature) -> impl Iterator<Item = &syn::Ident> {
-    sig.inputs.iter().filter_map(|arg| {
-        if let syn::FnArg::Typed(syn::PatType { pat, .. }) = arg {
-            if let syn::Pat::Ident(syn::PatIdent { ident, .. }) = pat.as_ref() {
-                return Some(ident);
-            }
-        }
-        None
-    })
 }

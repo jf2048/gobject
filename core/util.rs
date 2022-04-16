@@ -167,3 +167,18 @@ pub(crate) fn arg_reference(arg: &syn::FnArg) -> Option<TokenStream> {
         },
     }
 }
+
+#[inline]
+pub(crate) fn signature_args(sig: &syn::Signature) -> impl Iterator<Item = &syn::Ident> + Clone {
+    sig.inputs.iter().filter_map(arg_name)
+}
+
+#[inline]
+pub(crate) fn arg_name(arg: &syn::FnArg) -> Option<&syn::Ident> {
+    if let syn::FnArg::Typed(syn::PatType { pat, .. }) = arg {
+        if let syn::Pat::Ident(syn::PatIdent { ident, .. }) = pat.as_ref() {
+            return Some(ident);
+        }
+    }
+    None
+}
