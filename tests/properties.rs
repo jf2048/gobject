@@ -179,6 +179,10 @@ mod complex {
         variant: RefCell<glib::Variant>,
         #[property(get, set, override_class = "super::BaseObject")]
         renamed_string: RefCell<String>,
+        #[property(get, set, object, construct)]
+        construct_obj: gobject::ConstructCell<super::BaseObject>,
+        #[property(get, set, object)]
+        construct_weak: gobject::WeakCell<super::BaseObject>,
     }
 
     impl Default for ComplexProps {
@@ -194,6 +198,8 @@ mod complex {
                 pspec: RefCell::new(Self::properties()[4].clone()),
                 variant: RefCell::new(1i32.to_variant()),
                 renamed_string: Default::default(),
+                construct_obj: Default::default(),
+                construct_weak: Default::default(),
             }
         }
     }
@@ -202,10 +208,21 @@ mod complex {
 
 #[test]
 fn complex_properties() {
-    let dummy = glib::Object::new::<SmallObject>(&[]).unwrap();
-    let obj = glib::Object::new::<ComplexProps>(&[("dummy", &dummy)]).unwrap();
+    let obj = {
+        let dummy = glib::Object::new::<SmallObject>(&[]).unwrap();
+        glib::Object::new::<ComplexProps>(&[
+            ("dummy", &dummy),
+            ("construct-obj", &dummy),
+            ("construct-weak", &dummy),
+        ])
+        .unwrap()
+    };
     obj.set_renamed_string("hello".into());
-    assert_eq!(&*obj.dummy().renamed_string(), "foobar");
+    assert_eq!(obj.renamed_string(), "hello");
+    assert_eq!(obj.dummy().ref_count(), 3);
+    assert_eq!(obj.dummy().renamed_string(), "foobar");
+    assert_eq!(obj.construct_obj().renamed_string(), "foobar");
+    assert_eq!(obj.construct_weak().renamed_string(), "foobar");
     assert!(obj.weak_obj().is_none());
     {
         let weak = glib::Object::new::<SmallObject>(&[]).unwrap();

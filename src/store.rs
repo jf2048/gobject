@@ -1,4 +1,4 @@
-use crate::{ConstructCell, OnceBool, OnceBox, OnceCell, SyncOnceCell};
+use crate::{ConstructCell, OnceBool, OnceBox, OnceCell, SyncOnceCell, WeakCell};
 use glib::{
     value::{
         FromValue, ValueType, ValueTypeChecker, ValueTypeMismatchOrNoneError, ValueTypeOptional,
@@ -433,6 +433,44 @@ where
         let mut storage = self.borrow_mut();
         let old = std::mem::replace(storage.deref_mut(), Some(value));
         old != *storage
+    }
+}
+
+impl<T: ObjectType> ParamStore for WeakCell<T> {
+    type Type = T;
+}
+impl<T> ParamStoreRead for WeakCell<T>
+where
+    T: ObjectType,
+{
+    fn get_owned(&self) -> <Self as ParamStore>::Type {
+        self.upgrade().expect("Failed to upgrade WeakRef")
+    }
+}
+impl<T> ParamStoreReadValue for WeakCell<T>
+where
+    T: ObjectType,
+{
+    fn get_value(&self) -> glib::Value {
+        self.get_owned().to_value()
+    }
+}
+impl<'a, T> ParamStoreWrite<'a> for WeakCell<T>
+where
+    T: ObjectType,
+{
+    fn set_owned(&'a self, value: <Self as ParamStore>::Type) {
+        self.set(Some(&value));
+    }
+}
+impl<'a, T> ParamStoreWriteChanged<'a> for WeakCell<T>
+where
+    T: ObjectType + PartialEq,
+{
+    fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool {
+        let old = self.get_owned();
+        self.set(Some(&value));
+        old != value
     }
 }
 

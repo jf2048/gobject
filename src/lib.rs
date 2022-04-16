@@ -130,6 +130,8 @@ mod construct_cell;
 pub use construct_cell::*;
 mod store;
 pub use store::*;
+mod weak_cell;
+pub use weak_cell::*;
 #[cfg(feature = "serde_macros")]
 mod serde_traits;
 #[cfg(feature = "serde_macros")]
