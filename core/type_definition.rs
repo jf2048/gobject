@@ -16,6 +16,7 @@ pub struct TypeDefinition {
     pub module: syn::ItemMod,
     pub base: TypeBase,
     pub vis: syn::Visibility,
+    pub inner_vis: syn::Visibility,
     pub concurrency: Concurrency,
     pub name: Option<syn::Ident>,
     pub crate_ident: syn::Ident,
@@ -122,6 +123,7 @@ impl TypeDefinition {
             module,
             base,
             vis: syn::Visibility::Inherited,
+            inner_vis: parse_quote! { pub(super) },
             concurrency: Concurrency::None,
             name,
             crate_ident,
@@ -237,10 +239,30 @@ impl TypeDefinition {
                 syn::Item::Struct(s) => s,
                 _ => unreachable!(),
             };
-            def.vis = struct_.vis.clone();
-            if matches!(&struct_.vis, syn::Visibility::Inherited) {
-                struct_.vis = parse_quote! { pub(super) };
-            }
+            match &struct_.vis {
+                syn::Visibility::Inherited => {
+                    struct_.vis = def.inner_vis.clone();
+                }
+                syn::Visibility::Restricted(syn::VisRestricted { path, .. })
+                    if path.segments.len() == 1 && path.segments[0].ident == "self" =>
+                {
+                    struct_.vis = def.inner_vis.clone();
+                }
+                syn::Visibility::Restricted(syn::VisRestricted { path, .. })
+                    if path.segments.len() > 1 && path.segments[0].ident == "super" =>
+                {
+                    let path = syn::Path {
+                        leading_colon: None,
+                        segments: FromIterator::from_iter(path.segments.iter().skip(1).cloned()),
+                    };
+                    def.vis = parse_quote! { pub(in #path) };
+                    def.inner_vis = struct_.vis.clone();
+                }
+                _ => {
+                    def.vis = struct_.vis.clone();
+                    def.inner_vis = struct_.vis.clone();
+                }
+            };
             def.generics = Some(struct_.generics.clone());
             def.name = Some(struct_.ident.clone());
             let mut input: syn::DeriveInput = struct_.clone().into();
@@ -290,6 +312,19 @@ impl TypeDefinition {
                 if send && sync {
                     def.concurrency = Concurrency::SendSync;
                 }
+            }
+        } else {
+            def.vis = def.module.vis.clone();
+            match &def.vis {
+                syn::Visibility::Inherited => {}
+                syn::Visibility::Restricted(syn::VisRestricted { path, .. })
+                    if path.segments.len() == 1 && path.segments[0].ident == "self" => {}
+                syn::Visibility::Restricted(syn::VisRestricted { path, .. })
+                    if !path.segments.is_empty() && path.segments[0].ident == "super" =>
+                {
+                    def.inner_vis = parse_quote! { pub(in super::#path) }
+                }
+                _ => def.inner_vis = def.vis.clone(),
             }
         }
         if let Some(index) = impl_ {
@@ -575,55 +610,57 @@ impl TypeDefinition {
             },
         })
     }
-    fn public_method_definitions(&self) -> Vec<TokenStream> {
-        let go = &self.crate_ident;
-        let glib = self.glib();
-        let ty = unwrap_or_return!(
-            self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External),
-            Vec::new()
-        );
-        let sub_ty = unwrap_or_return!(
-            self.type_(
-                TypeMode::Subclass,
-                TypeMode::Subclass,
-                TypeContext::External
-            ),
-            Vec::new()
-        );
-        let properties_path = unwrap_or_return!(
-            self.method_path("properties", TypeMode::Subclass),
-            Vec::new()
-        );
+    pub(crate) fn public_method_definitions(
+        &self,
+    ) -> Option<impl Iterator<Item = TokenStream> + '_> {
+        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
 
-        self.properties
-            .iter()
-            .enumerate()
-            .flat_map(|(i, p)| p.method_definitions(i, &ty, self.concurrency, &properties_path, go))
-            .chain(
-                self.signals
-                    .iter()
-                    .flat_map(|s| s.method_definitions(self.concurrency, &glib)),
-            )
-            .chain(
-                self.public_methods
-                    .iter()
-                    .map(|m| m.definition(&ty, &sub_ty, &glib)),
-            )
-            .chain(
-                self.virtual_methods
-                    .iter()
-                    .map(|m| m.definition(&ty, &glib)),
-            )
-            .collect()
+        let properties = {
+            let go = self.crate_ident.clone();
+            let ty = ty.clone();
+            let properties_path = self.method_path("properties", TypeMode::Subclass)?;
+            self.properties.iter().enumerate().flat_map(move |(i, p)| {
+                p.method_definitions(i, &ty, self.concurrency, &properties_path, &go)
+            })
+        };
+        let signals = {
+            let glib = self.glib();
+            self.signals
+                .iter()
+                .flat_map(move |s| s.method_definitions(self.concurrency, &glib))
+        };
+        let public_methods = {
+            let glib = self.glib();
+            let ty = ty.clone();
+            let sub_ty = self.type_(
+                TypeMode::Subclass,
+                TypeMode::Subclass,
+                TypeContext::External,
+            )?;
+            self.public_methods
+                .iter()
+                .map(move |m| m.definition(&ty, &sub_ty, &glib))
+        };
+        let virtual_methods = {
+            let glib = self.glib();
+            self.virtual_methods
+                .iter()
+                .map(move |m| m.definition(&ty, &glib))
+        };
+        Some(
+            properties
+                .chain(signals)
+                .chain(public_methods)
+                .chain(virtual_methods),
+        )
     }
     pub(crate) fn public_methods(&self, trait_name: Option<&syn::Ident>) -> Option<TokenStream> {
         let glib = self.glib();
-        let items = self.public_method_definitions();
-        if items.is_empty() {
-            return None;
-        }
+        let mut items = self.public_method_definitions()?.peekable();
+        items.peek()?;
         let name = self.name.as_ref()?;
         let type_ident = format_ident!("____Object");
+        let vis = &self.inner_vis;
         if let Some(generics) = self.generics.as_ref() {
             let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
             if let Some(trait_name) = trait_name {
@@ -633,7 +670,7 @@ impl TypeDefinition {
                 let (impl_generics, _, _) = generics.split_for_impl();
                 let protos = self.public_method_prototypes();
                 Some(quote! {
-                    pub trait #trait_name: 'static {
+                    #vis trait #trait_name: 'static {
                         #(#protos;)*
                     }
                     impl #impl_generics #trait_name for #type_ident #where_clause {
@@ -650,7 +687,7 @@ impl TypeDefinition {
         } else if let Some(trait_name) = trait_name {
             let protos = self.public_method_prototypes();
             Some(quote! {
-                pub trait #trait_name: 'static {
+                #vis trait #trait_name: 'static {
                     #(#protos;)*
                 }
                 impl<#type_ident: #glib::IsA<super::#name>> #trait_name for #type_ident {
@@ -762,6 +799,7 @@ impl TypeDefinition {
             }
         });
         let type_ident = syn::Ident::new("____Object", Span::mixed_site());
+        let vis = &self.inner_vis;
 
         let virtual_methods_default = self
             .virtual_methods
@@ -777,7 +815,7 @@ impl TypeDefinition {
                 .iter()
                 .map(|m| m.parent_definition(name, &ty, &glib));
             quote! {
-                pub trait #ext_trait_name: #glib::subclass::types::ObjectSubclass {
+                #vis trait #ext_trait_name: #glib::subclass::types::ObjectSubclass {
                     #(#parent_method_protos;)*
                 }
                 impl<#type_ident: #trait_name> #ext_trait_name for #type_ident {
@@ -787,7 +825,7 @@ impl TypeDefinition {
         });
 
         Some(quote! {
-            pub trait #trait_name: #parent_trait + 'static {
+            #vis trait #trait_name: #parent_trait + 'static {
                 #(#virtual_methods_default)*
             }
             #ext_trait

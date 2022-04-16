@@ -172,9 +172,11 @@ impl InterfaceDefinition {
         let name = self.inner.name.as_ref()?;
         let generics = self.inner.generics.as_ref()?;
         let glib = self.inner.glib();
+        let vis = &self.inner.inner_vis;
         Some(quote! {
             #[repr(C)]
-            pub struct #name #generics {
+            #[::std::prelude::v1::derive(Copy, Clone)]
+            #vis struct #name #generics {
                 pub ____parent_iface: #glib::gobject_ffi::GTypeInterface,
                 #(pub #fields),*
             }
@@ -282,13 +284,21 @@ impl ToTokens for InterfaceDefinition {
         let use_traits = self.ext_trait().map(|ext| {
             let mod_name = &module.ident;
             let impl_ = format_ident!("{}Impl", name);
+            let vis = &self.inner.vis;
             let mut use_traits = quote! {
-                pub use #mod_name::#ext;
-                pub use #mod_name::#impl_;
+                #vis use #mod_name::#impl_;
             };
+            if self
+                .inner
+                .public_method_definitions()
+                .map(|mut i| i.next().is_some())
+                .unwrap_or(false)
+            {
+                use_traits.extend(quote! { #vis use #mod_name::#ext; });
+            }
             if !self.inner.virtual_methods.is_empty() {
                 let impl_ext = format_ident!("{}ImplExt", name);
-                use_traits.extend(quote! { pub use #mod_name::#impl_ext; });
+                use_traits.extend(quote! { #vis use #mod_name::#impl_ext; });
             }
             use_traits
         });

@@ -244,10 +244,11 @@ impl ClassDefinition {
                 ::std::ops::DerefMut
             },
         );
+        let vis = &self.inner.inner_vis;
 
         Some(quote! {
             #[repr(C)]
-            pub struct #class_name #generics {
+            #vis struct #class_name #generics {
                 pub ____parent_class: #parent_class,
                 #(pub #fields),*
             }
@@ -531,13 +532,21 @@ impl ToTokens for ClassDefinition {
         let use_traits = self.ext_trait().map(|ext| {
             let mod_name = &module.ident;
             let impl_ = format_ident!("{}Impl", name);
+            let vis = &self.inner.vis;
             let mut use_traits = quote! {
-                pub use #mod_name::#ext;
-                pub use #mod_name::#impl_;
+                #vis use #mod_name::#impl_;
             };
+            if self
+                .inner
+                .public_method_definitions()
+                .map(|mut i| i.next().is_some())
+                .unwrap_or(false)
+            {
+                use_traits.extend(quote! { #vis use #mod_name::#ext; });
+            }
             if !self.inner.virtual_methods.is_empty() {
                 let impl_ext = format_ident!("{}ImplExt", name);
-                use_traits.extend(quote! { pub use #mod_name::#impl_ext; });
+                use_traits.extend(quote! { #vis use #mod_name::#impl_ext; });
             }
             use_traits
         });
@@ -609,9 +618,10 @@ pub fn derived_class_properties(
             .iter()
             .flat_map(|p| p.method_prototypes(Concurrency::None, go))
             .collect::<Vec<_>>();
+        let vis = &input.vis;
 
         quote! {
-            pub trait #trait_name: 'static {
+            #vis trait #trait_name: 'static {
                 #(#protos;)*
             }
             impl #impl_generics #trait_name for #type_ident #where_clause {

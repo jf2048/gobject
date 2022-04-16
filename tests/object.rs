@@ -146,3 +146,40 @@ fn concurrency() {
     assert_eq!(obj.the_string(), "Hello");
     assert!(flag.load(Ordering::Acquire));
 }
+
+#[allow(unused_imports)]
+mod objects {
+    #[gobject::class(final)]
+    mod obj_vis1 {
+        #[derive(Default)]
+        pub struct ObjVis1 {}
+    }
+    #[gobject::class(final)]
+    mod obj_vis2 {
+        #[derive(Default)]
+        pub(crate) struct ObjVis2 {}
+    }
+    #[gobject::class]
+    mod obj_vis3 {
+        #[derive(Default)]
+        struct ObjVis3 {}
+    }
+    #[gobject::interface]
+    pub(super) mod iface_vis {
+        impl IfaceVis {}
+    }
+    #[gobject::class(implements(IfaceVis))]
+    mod obj_vis4 {
+        #[derive(Default)]
+        pub(in super::super) struct ObjVis4 {}
+        impl super::IfaceVisImpl for ObjVis4 {}
+    }
+}
+
+#[test]
+fn visibility() {
+    glib::Object::new::<objects::ObjVis1>(&[]).unwrap();
+    glib::Object::new::<objects::ObjVis2>(&[]).unwrap();
+    let obj = glib::Object::new::<objects::ObjVis4>(&[]).unwrap();
+    glib::Cast::upcast::<objects::IfaceVis>(obj);
+}
