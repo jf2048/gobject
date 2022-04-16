@@ -412,7 +412,9 @@ where
     type BorrowType = std::cell::Ref<'a, T>;
 
     fn borrow(&'a self) -> Self::BorrowType {
-        ConstructCell::borrow(self)
+        std::cell::Ref::map((**self).borrow(), |r| {
+            r.as_ref().expect("ConstructCell borrowed before write")
+        })
     }
 }
 impl<'a, T> ParamStoreWrite<'a> for ConstructCell<T>
@@ -420,7 +422,7 @@ where
     T: ValueType,
 {
     fn set_owned(&'a self, value: <Self as ParamStore>::Type) {
-        self.replace(value);
+        self.replace(Some(value));
     }
 }
 impl<'a, T> ParamStoreWriteChanged<'a> for ConstructCell<T>
@@ -429,7 +431,7 @@ where
 {
     fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool {
         let mut storage = self.borrow_mut();
-        let old = std::mem::replace(storage.deref_mut(), value);
+        let old = std::mem::replace(storage.deref_mut(), Some(value));
         old != *storage
     }
 }
