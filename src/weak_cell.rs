@@ -1,6 +1,6 @@
 /// A cell holding a `WeakRef`. The [`crate::ParamStoreRead`] implementation will panic if
-/// upgrading the weak ref fails. Only use this if it is guaranteed that something else stored in
-/// the object is holding a strong reference to `T.
+/// upgrading the weak ref fails. Only use this if the property is read-only, and if it is
+/// guaranteed that something else stored in the object is holding a strong reference to `T`.
 #[derive(Debug)]
 #[repr(transparent)]
 pub struct WeakCell<T: glib::ObjectType>(glib::WeakRef<T>);
