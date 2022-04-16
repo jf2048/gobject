@@ -44,18 +44,16 @@ pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
             {
                 let parent_type = (!_class_def.extends.is_empty())
                     .then(|| {
-                        let name = _class_def.inner.name.as_ref()?;
-                        let ident = quote::format_ident!("{}ParentType", name);
+                        let ident = _class_def.parent_type_alias()?;
                         Some(syn::parse_quote! { super::#ident })
                     })
                     .flatten();
-                let ext_trait = _class_def.ext_trait();
                 serde::extend_serde(
                     &mut _class_def.inner,
                     _class_def.final_,
                     _class_def.abstract_,
                     parent_type.as_ref(),
-                    ext_trait.as_ref(),
+                    _class_def.ext_trait.as_ref(),
                     _class_def.ns.as_ref(),
                     &errors,
                 );
@@ -79,13 +77,12 @@ pub fn interface(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut _iface_def = InterfaceDefinition::parse(module, opts, go, &errors);
             #[cfg(feature = "serde")]
             {
-                let ext_trait = _iface_def.ext_trait();
                 serde::extend_serde(
                     &mut _iface_def.inner,
                     false,
                     true,
                     None,
-                    ext_trait.as_ref(),
+                    _iface_def.ext_trait.as_ref(),
                     _iface_def.ns.as_ref(),
                     &errors,
                 );

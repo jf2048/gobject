@@ -230,20 +230,11 @@ impl VirtualMethod {
         let sig = self.parent_sig(&this_ident, glib);
         quote! { #sig }
     }
-    pub(crate) fn parent_definition(
-        &self,
-        type_name: &syn::Ident,
-        ty: &syn::Type,
-        glib: &TokenStream,
-    ) -> TokenStream {
+    pub(crate) fn parent_definition(&self, ty: &syn::Type, glib: &TokenStream) -> TokenStream {
         let this_ident = syn::Ident::new("____this", Span::mixed_site());
         let sig = self.parent_sig(&this_ident, glib);
         let ident = &self.sig.ident;
         let args = signature_args(&sig);
-        let struct_type = match self.base {
-            TypeBase::Class => format_ident!("{}Class", type_name),
-            TypeBase::Interface => type_name.clone(),
-        };
         let vtable_ident = syn::Ident::new("____vtable", Span::mixed_site());
         let parent_vtable_method = match self.base {
             TypeBase::Class => quote! { parent_class },
@@ -259,7 +250,7 @@ impl VirtualMethod {
                 let #vtable_ident = unsafe {
                     &*(
                         #vtable_ident.as_ref().#parent_vtable_method()
-                        as *mut self::#struct_type
+                        as *mut <#ty as #glib::object::ObjectType>::GlibClassType
                     )
                 };
                 (#vtable_ident.#ident)(#(#args),*)

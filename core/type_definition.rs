@@ -755,25 +755,25 @@ impl TypeDefinition {
         &self,
         type_ident: &syn::Ident,
         class_ident: &syn::Ident,
+        trait_name: &syn::Ident,
     ) -> Option<TokenStream> {
         if self.virtual_methods.is_empty() {
             return None;
         }
         let glib = self.glib();
-        let name = self.name.as_ref()?;
-        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
+        let ty = self.type_(TypeMode::Wrapper, TypeMode::Wrapper, TypeContext::External)?;
         let ty = parse_quote! { #ty };
-        let trait_name = format_ident!("{}Impl", name);
         Some(FromIterator::from_iter(self.virtual_methods.iter().map(
-            |m| m.set_subclassed_trampoline(&ty, &trait_name, type_ident, class_ident, &glib),
+            |m| m.set_subclassed_trampoline(&ty, trait_name, type_ident, class_ident, &glib),
         )))
     }
     pub(crate) fn child_type_init_body(
         &self,
         type_ident: &syn::Ident,
         class_ident: &syn::Ident,
+        trait_name: &syn::Ident,
     ) -> Option<TokenStream> {
-        self.subclassed_vtable_assignments(type_ident, class_ident)
+        self.subclassed_vtable_assignments(type_ident, class_ident, trait_name)
     }
     pub(crate) fn type_struct_fields(&self) -> Vec<TokenStream> {
         let ty = unwrap_or_return!(
@@ -786,49 +786,74 @@ impl TypeDefinition {
             .map(|method| method.vtable_field(&ty))
             .collect()
     }
-    pub(crate) fn virtual_traits(&self, parent_trait: Option<TokenStream>) -> Option<TokenStream> {
+    #[inline]
+    fn impl_trait(
+        &self,
+        trait_name: &syn::Ident,
+        ext_trait_name: &syn::Ident,
+        parent_trait: Option<TokenStream>,
+    ) -> Option<TokenStream> {
         let glib = self.glib();
-        let name = self.name.as_ref()?;
-        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
-        let ty = parse_quote! { #ty };
-        let trait_name = format_ident!("{}Impl", name);
-        let ext_trait_name = format_ident!("{}ImplExt", name);
+        let vis = &self.vis;
         let parent_trait = parent_trait.unwrap_or_else(|| {
             quote! {
                 #glib::subclass::object::ObjectImpl
             }
         });
-        let type_ident = syn::Ident::new("____Object", Span::mixed_site());
-        let vis = &self.inner_vis;
-
         let virtual_methods_default = self
             .virtual_methods
             .iter()
-            .map(|m| m.default_definition(&ext_trait_name, &glib));
-        let ext_trait = (!self.virtual_methods.is_empty()).then(|| {
-            let parent_method_protos = self
-                .virtual_methods
-                .iter()
-                .map(|m| m.parent_prototype(&glib));
-            let parent_method_definitions = self
-                .virtual_methods
-                .iter()
-                .map(|m| m.parent_definition(name, &ty, &glib));
-            quote! {
-                #vis trait #ext_trait_name: #glib::subclass::types::ObjectSubclass {
-                    #(#parent_method_protos;)*
-                }
-                impl<#type_ident: #trait_name> #ext_trait_name for #type_ident {
-                    #(#parent_method_definitions)*
-                }
-            }
-        });
-
+            .map(|m| m.default_definition(ext_trait_name, &glib));
         Some(quote! {
             #vis trait #trait_name: #parent_trait + 'static {
                 #(#virtual_methods_default)*
             }
-            #ext_trait
+        })
+    }
+    #[inline]
+    fn impl_ext_trait(
+        &self,
+        trait_name: &syn::Ident,
+        ext_trait_name: &syn::Ident,
+    ) -> Option<TokenStream> {
+        if self.virtual_methods.is_empty() {
+            return None;
+        }
+        let glib = self.glib();
+        let ty = self.type_(TypeMode::Wrapper, TypeMode::Wrapper, TypeContext::External)?;
+        let ty = parse_quote! { #ty };
+        let type_ident = syn::Ident::new("____Object", Span::mixed_site());
+        let vis = &self.vis;
+        let parent_method_protos = self
+            .virtual_methods
+            .iter()
+            .map(|m| m.parent_prototype(&glib));
+        let parent_method_definitions = self
+            .virtual_methods
+            .iter()
+            .map(|m| m.parent_definition(&ty, &glib));
+        Some(quote! {
+            #vis trait #ext_trait_name: #glib::subclass::types::ObjectSubclass {
+                #(#parent_method_protos;)*
+            }
+            impl<#type_ident: #trait_name> #ext_trait_name for #type_ident {
+                #(#parent_method_definitions)*
+            }
+        })
+    }
+    pub(crate) fn virtual_traits(
+        &self,
+        trait_name: Option<&syn::Ident>,
+        ext_trait_name: Option<&syn::Ident>,
+        parent_trait: Option<TokenStream>,
+    ) -> Option<TokenStream> {
+        let trait_name = trait_name?;
+        let ext_trait_name = ext_trait_name?;
+        let impl_trait = self.impl_trait(trait_name, ext_trait_name, parent_trait);
+        let impl_ext_trait = self.impl_ext_trait(trait_name, ext_trait_name);
+        Some(quote! {
+            #impl_trait
+            #impl_ext_trait
         })
     }
     fn private_methods(&self) -> Vec<TokenStream> {

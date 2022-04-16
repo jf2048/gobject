@@ -16,7 +16,10 @@ use syn::{parse_quote, spanned::Spanned};
 struct Attrs {
     pub name: Option<syn::Ident>,
     pub ns: Option<syn::Ident>,
+    pub class: Option<syn::Ident>,
     pub ext_trait: Option<syn::Ident>,
+    pub impl_trait: Option<syn::Ident>,
+    pub impl_ext_trait: Option<syn::Ident>,
     pub parent_trait: Option<syn::Path>,
     pub wrapper: Option<bool>,
     #[darling(rename = "abstract")]
@@ -49,7 +52,10 @@ impl ClassOptions {
 pub struct ClassDefinition {
     pub inner: TypeDefinition,
     pub ns: Option<syn::Ident>,
+    pub class: Option<syn::Ident>,
     pub ext_trait: Option<syn::Ident>,
+    pub impl_trait: Option<syn::Ident>,
+    pub impl_ext_trait: Option<syn::Ident>,
     pub parent_trait: Option<syn::Path>,
     pub wrapper: bool,
     pub abstract_: bool,
@@ -70,10 +76,37 @@ impl ClassDefinition {
 
         let inner = TypeDefinition::parse(module, TypeBase::Class, attrs.name, crate_ident, errors);
 
+        let name = inner.name.clone();
         let mut class = Self {
             inner,
             ns: attrs.ns,
-            ext_trait: attrs.ext_trait,
+            class: attrs
+                .class
+                .or_else(|| name.as_ref().map(|n| format_ident!("{}Class", n))),
+            ext_trait: attrs.final_.map_or_else(
+                || {
+                    attrs
+                        .ext_trait
+                        .or_else(|| name.as_ref().map(|n| format_ident!("{}Ext", n)))
+                },
+                |_| None,
+            ),
+            impl_trait: attrs.final_.map_or_else(
+                || {
+                    attrs
+                        .impl_trait
+                        .or_else(|| name.as_ref().map(|n| format_ident!("{}Impl", n)))
+                },
+                |_| None,
+            ),
+            impl_ext_trait: attrs.final_.map_or_else(
+                || {
+                    attrs
+                        .impl_ext_trait
+                        .or_else(|| name.as_ref().map(|n| format_ident!("{}ImplExt", n)))
+                },
+                |_| None,
+            ),
             parent_trait: attrs.parent_trait,
             wrapper: attrs.wrapper.unwrap_or(true),
             abstract_: attrs.abstract_.is_some(),
@@ -110,9 +143,6 @@ impl ClassDefinition {
         class
     }
     fn extra_private_items(&self) -> Vec<syn::Item> {
-        let trait_name = self.ext_trait();
-        let parent_trait = self.parent_trait.as_ref().map(|p| quote! { #p });
-
         self.inner
             .extra_private_items()
             .into_iter()
@@ -122,9 +152,7 @@ impl ClassDefinition {
                     self.object_subclass_impl(),
                     self.object_impl_impl(),
                     self.class_struct_definition(),
-                    self.inner.public_methods(trait_name.as_ref()),
-                    self.is_subclassable_impl(),
-                    self.inner.virtual_traits(parent_trait),
+                    self.inner.public_methods(self.ext_trait.as_ref()),
                 ]
                 .into_iter()
                 .flatten(),
@@ -132,14 +160,14 @@ impl ClassDefinition {
             .map(syn::Item::Verbatim)
             .collect()
     }
-    fn parent_type(&self) -> Option<TokenStream> {
-        let glib = self.inner.glib();
-        Some(
-            self.extends
-                .first()
-                .map(|p| p.to_token_stream())
-                .unwrap_or_else(|| quote! { #glib::Object }),
-        )
+    fn parent_type(&self) -> TokenStream {
+        self.extends
+            .first()
+            .map(|p| p.to_token_stream())
+            .unwrap_or_else(|| {
+                let glib = self.inner.glib();
+                quote! { #glib::Object }
+            })
     }
     #[inline]
     fn wrapper(&self) -> Option<TokenStream> {
@@ -176,18 +204,6 @@ impl ClassDefinition {
             #concurrency
         })
     }
-    #[inline]
-    pub fn ext_trait(&self) -> Option<syn::Ident> {
-        if self.final_ {
-            return None;
-        }
-        let name = self.inner.name.as_ref()?;
-        Some(
-            self.ext_trait
-                .clone()
-                .unwrap_or_else(|| format_ident!("{}Ext", name)),
-        )
-    }
     fn class_init_method(&self) -> Option<TokenStream> {
         let glib = self.inner.glib();
         let class_ident = syn::Ident::new("____class", Span::mixed_site());
@@ -215,14 +231,14 @@ impl ClassDefinition {
         }
         let name = self.inner.name.as_ref()?;
         let generics = self.inner.generics.as_ref()?;
-        let class_name = format_ident!("{}Class", name);
+        let class_name = self.class.as_ref()?;
         let glib = self.inner.glib();
         let parent_class = if self.extends.is_empty() {
             quote! { #glib::gobject_ffi::GObjectClass }
         } else {
-            let parent_type = self.parent_type()?;
+            let parent_type = self.parent_type_alias()?;
             quote! {
-                <<#parent_type as #glib::Object::ObjectSubclassIs>::Subclass as #glib::subclass::types::ObjectSubclass>::Class
+                <<super::#parent_type as #glib::object::ObjectSubclassIs>::Subclass as #glib::subclass::types::ObjectSubclass>::Class
             }
         };
         let class_name = parse_quote! { #class_name };
@@ -274,6 +290,12 @@ impl ClassDefinition {
             }
         })
     }
+    pub fn parent_type_alias(&self) -> Option<syn::Ident> {
+        Some(format_ident!("_{}ParentType", self.inner.name.as_ref()?))
+    }
+    pub fn interfaces_alias(&self) -> Option<syn::Ident> {
+        Some(format_ident!("_{}Interfaces", self.inner.name.as_ref()?))
+    }
     #[inline]
     fn object_subclass_impl(&self) -> Option<TokenStream> {
         let glib = self.inner.glib();
@@ -291,10 +313,10 @@ impl ClassDefinition {
         }
         .to_upper_camel_case();
         let abstract_ = self.abstract_;
-        let parent_type = format_ident!("{}ParentType", name);
-        let interfaces = format_ident!("{}Interfaces", name);
+        let parent_type = self.parent_type_alias();
+        let interfaces = self.interfaces_alias();
+        let class_name = self.class.as_ref()?;
         let class_struct_type = (!self.inner.virtual_methods.is_empty()).then(|| {
-            let class_name = format_ident!("{}Class", name);
             quote! { type Class = #class_name; }
         });
         let class_init = self.class_init_method();
@@ -490,17 +512,17 @@ impl ClassDefinition {
         }
         let glib = self.inner.glib();
         let name = self.inner.name.as_ref()?;
+        let trait_name = self.impl_trait.as_ref()?;
         let type_ident = syn::Ident::new("____Object", Span::mixed_site());
-        let trait_name = format_ident!("{}Impl", name);
         let head = self.inner.trait_head_with_params(
-            &parse_quote! { super::#name },
+            &parse_quote! { #name },
             quote! { #glib::subclass::types::IsSubclassable<#type_ident> },
             Some([parse_quote! { #type_ident: #trait_name }]),
         );
         let class_ident = syn::Ident::new("____class", Span::mixed_site());
         let class_init = self
             .inner
-            .child_type_init_body(&type_ident, &class_ident)
+            .child_type_init_body(&type_ident, &class_ident, trait_name)
             .map(|body| {
                 quote! {
                     fn class_init(#class_ident: &mut #glib::Class<Self>) {
@@ -522,52 +544,48 @@ impl ClassDefinition {
 
 impl ToTokens for ClassDefinition {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let name = match self.inner.name.as_ref() {
-            Some(n) => n,
-            _ => return,
-        };
         let module = &self.inner.module;
 
         let wrapper = self.wrapper();
-        let use_traits = self.ext_trait().map(|ext| {
-            let mod_name = &module.ident;
-            let impl_ = format_ident!("{}Impl", name);
-            let vis = &self.inner.vis;
-            let mut use_traits = quote! {
-                #vis use #mod_name::#impl_;
-            };
-            if self
-                .inner
+        let is_subclassable = self.is_subclassable_impl();
+        let use_trait = self.ext_trait.as_ref().and_then(|ext| {
+            self.inner
                 .public_method_definitions()
-                .map(|mut i| i.next().is_some())
-                .unwrap_or(false)
-            {
-                use_traits.extend(quote! { #vis use #mod_name::#ext; });
-            }
-            if !self.inner.virtual_methods.is_empty() {
-                let impl_ext = format_ident!("{}ImplExt", name);
-                use_traits.extend(quote! { #vis use #mod_name::#impl_ext; });
-            }
-            use_traits
+                .and_then(|mut i| i.next())
+                .is_some()
+                .then(|| {
+                    let mod_name = &module.ident;
+                    let vis = &self.inner.vis;
+                    quote! { #vis use #mod_name::#ext; }
+                })
         });
-        let parent_type = self.parent_type().map(|p| {
-            let ident = format_ident!("{}ParentType", name);
+        let parent_trait = self.parent_trait.as_ref().map(|p| quote! { #p });
+        let virtual_traits = self.inner.virtual_traits(
+            self.impl_trait.as_ref(),
+            self.impl_ext_trait.as_ref(),
+            parent_trait,
+        );
+        let parent_type = self.parent_type_alias().map(|ident| {
+            let parent_type = self.parent_type();
+            Some(quote! {
+                #[doc(hidden)]
+                type #ident = #parent_type;
+            })
+        });
+        let interfaces = self.interfaces_alias().map(|ident| {
+            let interfaces = &self.implements;
             quote! {
                 #[doc(hidden)]
-                type #ident = #p;
+                type #ident = (#(#interfaces,)*);
             }
         });
-        let interfaces_ident = format_ident!("{}Interfaces", name);
-        let interfaces = &self.implements;
-        let interfaces = quote! {
-            #[doc(hidden)]
-            type #interfaces_ident = (#(#interfaces,)*);
-        };
 
         let class = quote_spanned! { module.span() =>
             #module
             #wrapper
-            #use_traits
+            #is_subclassable
+            #use_trait
+            #virtual_traits
             #parent_type
             #interfaces
         };
