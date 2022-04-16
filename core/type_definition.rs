@@ -448,7 +448,7 @@ impl TypeDefinition {
     }
     pub fn method_wrapper<F>(&self, name: &str, sig_func: F) -> Option<TokenStream>
     where
-        F: FnOnce(&syn::Ident) -> syn::Signature,
+        F: FnOnce() -> syn::Signature,
     {
         let has_method = self.has_method(name);
         let custom = self.custom_stmts_for(name);
@@ -456,7 +456,7 @@ impl TypeDefinition {
             return None;
         }
         let ident = format_ident!("{}", name);
-        let sig = sig_func(&ident);
+        let sig = sig_func();
         let call_user_method = has_method.then(|| {
             let input_names = sig.inputs.iter().map(|arg| match arg {
                 syn::FnArg::Receiver(_) => quote! { self },
