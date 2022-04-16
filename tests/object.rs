@@ -18,6 +18,7 @@ fn object_final() {
     obj.emit_abc();
 }
 
+#[allow(clippy::new_ret_no_self)]
 #[gobject::class]
 mod obj_derivable {
     #[derive(Default)]
@@ -26,16 +27,27 @@ mod obj_derivable {
         my_prop: std::cell::Cell<u64>,
     }
     impl ObjDerivable {
+        #[public(static)]
+        fn new(my_prop: u64) -> super::ObjDerivable {
+            glib::Object::new(&[("my-prop", &my_prop)]).unwrap()
+        }
         #[signal]
         fn abc(&self) {}
+        #[public]
+        fn my_prop_plus_one(obj: &super::ObjDerivable) -> u64 {
+            obj.my_prop() + 1
+        }
     }
 }
 
 #[test]
 fn object_derivable() {
-    let obj = glib::Object::new::<ObjDerivable>(&[]).unwrap();
+    let obj = ObjDerivable::new(22);
+    assert_eq!(obj.my_prop(), 22);
     obj.set_my_prop(52);
+    assert_eq!(obj.my_prop(), 52);
     ObjDerivableExt::set_my_prop(&obj, 53);
+    assert_eq!(obj.my_prop(), 53);
     obj.emit_abc();
 }
 

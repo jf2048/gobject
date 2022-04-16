@@ -582,20 +582,25 @@ impl TypeDefinition {
             }
         })
     }
-    fn public_method_prototypes(&self) -> Vec<TokenStream> {
-        let go = &self.crate_ident;
-        let glib = self.glib();
+    fn public_method_prototypes(&self) -> impl Iterator<Item = TokenStream> + '_ {
         self.properties
             .iter()
-            .flat_map(|p| p.method_prototypes(self.concurrency, go))
+            .flat_map(|p| p.method_prototypes(self.concurrency, &self.crate_ident))
             .chain(
                 self.signals
                     .iter()
-                    .flat_map(|s| s.method_prototypes(self.concurrency, &glib)),
+                    .flat_map(|s| s.method_prototypes(self.concurrency, &self.glib())),
             )
-            .chain(self.public_methods.iter().map(|m| m.prototype()))
-            .chain(self.virtual_methods.iter().map(|m| m.prototype(&glib)))
-            .collect()
+            .chain(
+                self.public_methods
+                    .iter()
+                    .filter_map(|m| (!m.static_).then(|| m.prototype())),
+            )
+            .chain(
+                self.virtual_methods
+                    .iter()
+                    .map(|m| m.prototype(&self.glib())),
+            )
     }
     pub(crate) fn method_path(&self, method: &str, from: TypeMode) -> Option<TokenStream> {
         let glib = self.glib();
@@ -639,7 +644,7 @@ impl TypeDefinition {
             )?;
             self.public_methods
                 .iter()
-                .map(move |m| m.definition(&ty, &sub_ty, &glib))
+                .filter_map(move |m| (!m.static_).then(|| m.definition(&ty, &sub_ty, &glib)))
         };
         let virtual_methods = {
             let glib = self.glib();
@@ -698,6 +703,36 @@ impl TypeDefinition {
             Some(quote! {
                 impl super::#name {
                     #(pub #items)*
+                }
+            })
+        }
+    }
+    pub(crate) fn public_static_methods(&self) -> Option<TokenStream> {
+        let name = self.name.as_ref()?;
+        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
+        let sub_ty = self.type_(
+            TypeMode::Subclass,
+            TypeMode::Subclass,
+            TypeContext::External,
+        )?;
+        let glib = self.glib();
+        let mut methods = self
+            .public_methods
+            .iter()
+            .filter_map(move |m| m.static_.then(|| m.definition(&ty, &sub_ty, &glib)))
+            .peekable();
+        methods.peek()?;
+        if let Some(generics) = self.generics.as_ref() {
+            let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
+            Some(quote! {
+                impl #impl_generics super::#name #type_generics #where_clause {
+                    #(pub #methods)*
+                }
+            })
+        } else {
+            Some(quote! {
+                impl super::#name {
+                    #(pub #methods)*
                 }
             })
         }
