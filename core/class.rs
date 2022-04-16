@@ -153,7 +153,6 @@ impl ClassDefinition {
                     self.object_impl_impl(),
                     self.class_struct_definition(),
                     self.inner.public_methods(self.ext_trait.as_ref()),
-                    self.inner.public_static_methods(),
                 ]
                 .into_iter()
                 .flatten(),
