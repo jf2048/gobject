@@ -114,7 +114,7 @@ pub fn gtk4_widget(attr: TokenStream, item: TokenStream) -> TokenStream {
         .map(|module| {
             let go = crate_ident();
             let mut class_def = ClassDefinition::parse(module, opts, go, &errors);
-            gtk4::extend_gtk4(&mut class_def);
+            gtk4::extend_gtk4(&mut class_def, &errors);
             class_def.to_token_stream()
         })
         .unwrap_or_default();

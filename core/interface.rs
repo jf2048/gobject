@@ -1,6 +1,6 @@
 use crate::{
     util::{self, Errors},
-    TypeBase, TypeDefinition,
+    TypeBase, TypeDefinition, TypeMode,
 };
 use darling::{util::PathList, FromMeta};
 use heck::ToUpperCamelCase;
@@ -148,9 +148,12 @@ impl InterfaceDefinition {
     }
     fn interface_init_method(&self) -> Option<TokenStream> {
         let body = self.inner.type_init_body(&quote! { self });
-        let custom = self.inner.has_method("interface_init").then(|| {
-            quote! { Self::interface_init(self); }
-        });
+        let custom = self
+            .inner
+            .has_method(TypeMode::Subclass, "interface_init")
+            .then(|| {
+                quote! { Self::interface_init(self); }
+            });
         let extra = self.inner.custom_stmts_for("interface_init");
         if body.is_none() && custom.is_none() && extra.is_none() {
             return None;
@@ -282,7 +285,7 @@ impl ToTokens for InterfaceDefinition {
         let is_implementable = self.is_implementable_impl();
         let use_trait = self.ext_trait.as_ref().and_then(|ext| {
             self.inner
-                .public_method_definitions()
+                .public_method_definitions(false)
                 .and_then(|mut i| i.next())
                 .is_some()
                 .then(|| {

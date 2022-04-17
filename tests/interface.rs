@@ -15,9 +15,11 @@ mod iface {
         fn my_virt(iface: &super::Dummy, #[is_a] _ignore: &glib::Object) -> u64 {
             iface.my_prop() + 100
         }
+    }
+    impl super::Dummy {
         #[public]
-        fn dosomething(iface: &super::Dummy) -> String {
-            format!("{}", iface.my_prop())
+        pub fn dosomething(&self) -> String {
+            format!("{}", self.my_prop())
         }
     }
 }

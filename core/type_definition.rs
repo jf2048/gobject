@@ -5,10 +5,12 @@ use crate::{
     util::{self, Errors},
     virtual_method::VirtualMethod,
 };
-use heck::ToKebabCase;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned, ToTokens};
-use std::{cell::RefCell, collections::HashMap};
+use std::{
+    cell::RefCell,
+    collections::{BTreeSet, HashMap},
+};
 use syn::{parse_quote, spanned::Spanned};
 
 #[derive(Debug)]
@@ -22,12 +24,11 @@ pub struct TypeDefinition {
     pub crate_ident: syn::Ident,
     pub generics: Option<syn::Generics>,
     pub properties_item_index: Option<usize>,
-    pub methods_item_index: Option<usize>,
+    pub methods_item_indices: BTreeSet<usize>,
     pub properties: Vec<Property>,
     pub signals: Vec<Signal>,
     pub public_methods: Vec<PublicMethod>,
     pub virtual_methods: Vec<VirtualMethod>,
-    pub wrapper_methods: Vec<syn::Signature>,
     custom_stmts: RefCell<HashMap<String, Vec<syn::Stmt>>>,
 }
 
@@ -35,6 +36,20 @@ pub struct TypeDefinition {
 pub enum TypeMode {
     Subclass,
     Wrapper,
+}
+
+impl TypeMode {
+    pub fn for_item_type(ty: &syn::Type) -> Option<Self> {
+        match ty {
+            syn::Type::Path(syn::TypePath { path, .. }) if path.segments.len() == 2 => {
+                Some(Self::Wrapper)
+            }
+            syn::Type::Path(syn::TypePath { path, .. }) if path.segments.len() == 1 => {
+                Some(Self::Subclass)
+            }
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Copy, Clone)]
@@ -76,17 +91,16 @@ macro_rules! unwrap_or_return {
 #[inline]
 fn type_ident(ty: &syn::Type) -> Option<&syn::Ident> {
     if let syn::Type::Path(syn::TypePath { path, .. }) = ty {
-        if path.leading_colon.is_none() && path.segments.len() == 1 {
-            return Some(&path.segments[0].ident);
+        if path.leading_colon.is_none() {
+            if path.segments.len() == 1 {
+                return Some(&path.segments[0].ident);
+            }
+            if path.segments.len() == 2 && path.segments[0].ident == "super" {
+                return Some(&path.segments[1].ident);
+            }
         }
     }
     None
-}
-
-#[inline]
-fn extract_attr(attrs: &mut Vec<syn::Attribute>, name: &str) -> Option<syn::Attribute> {
-    let attr_index = attrs.iter().position(|a| a.path.is_ident(name));
-    attr_index.map(|attr_index| attrs.remove(attr_index))
 }
 
 #[inline]
@@ -130,12 +144,11 @@ impl TypeDefinition {
             crate_ident,
             generics: None,
             properties_item_index: None,
-            methods_item_index: None,
+            methods_item_indices: BTreeSet::new(),
             properties: Vec::new(),
             signals: Vec::new(),
             public_methods: Vec::new(),
             virtual_methods: Vec::new(),
-            wrapper_methods: Vec::new(),
             custom_stmts: RefCell::new(HashMap::new()),
         };
         if def.module.content.is_none() {
@@ -148,36 +161,34 @@ impl TypeDefinition {
         let glib = def.glib();
         let (_, items) = def.module.content.as_mut().unwrap();
         let mut struct_ = None;
-        let mut impl_ = None;
+        let mut impls = Vec::new();
         if let Some(name) = &def.name {
+            // if a name was provided, only use structs/impls matching the name
             for (index, item) in items.iter_mut().enumerate() {
                 match item {
                     syn::Item::Struct(s) if struct_.is_none() && &s.ident == name => {
-                        let attr = extract_attr(&mut s.attrs, "properties")
+                        let attr = util::extract_attr(&mut s.attrs, "properties")
                             .unwrap_or_else(|| parse_quote! { #[properties] });
                         struct_ = Some((index, attr));
                     }
                     syn::Item::Impl(i)
-                        if impl_.is_none()
-                            && i.trait_.is_none()
-                            && type_ident(&*i.self_ty) == Some(name) =>
+                        if i.trait_.is_none() && type_ident(&*i.self_ty) == Some(name) =>
                     {
-                        extract_attr(&mut i.attrs, "methods");
-                        impl_ = Some(index);
+                        util::extract_attr(&mut i.attrs, "methods");
+                        impls.push(index);
                     }
                     _ => {}
-                }
-                if struct_.is_some() && impl_.is_some() {
-                    break;
                 }
             }
         } else {
             {
+                // search for a struct with a properties attribute
+                // if not found then use the name from the first struct
                 let mut first_struct = None;
                 let mut struct_name = None;
                 for (index, item) in items.iter_mut().enumerate() {
                     if let syn::Item::Struct(s) = item {
-                        if let Some(attr) = extract_attr(&mut s.attrs, "properties") {
+                        if let Some(attr) = util::extract_attr(&mut s.attrs, "properties") {
                             struct_ = Some((index, attr));
                             struct_name = Some(s.ident.clone());
                             break;
@@ -196,42 +207,50 @@ impl TypeDefinition {
                     def.name = struct_name;
                 }
             }
-            if let Some(name) = &def.name {
-                for (index, item) in items.iter_mut().enumerate() {
-                    if let syn::Item::Impl(i) = item {
-                        if impl_.is_none()
-                            && i.trait_.is_none()
-                            && type_ident(&*i.self_ty) == Some(name)
-                        {
-                            extract_attr(&mut i.attrs, "methods");
-                            impl_ = Some(index);
-                        }
-                    }
-                }
-            } else {
+            if def.name.is_none() {
+                // if no structs found, search for an impl with a methods attribute
+                // if not found then use the name from the first impl with a suitable type
                 let mut first_impl = None;
                 let mut impl_name = None;
                 for (index, item) in items.iter_mut().enumerate() {
                     if let syn::Item::Impl(i) = item {
-                        if impl_.is_none() && i.trait_.is_none() {
-                            if extract_attr(&mut i.attrs, "methods").is_some() {
-                                impl_ = Some(index);
-                                impl_name = type_ident(&*i.self_ty).cloned();
-                                break;
-                            } else if first_impl.is_none() {
-                                first_impl = Some(index);
-                                impl_name = type_ident(&*i.self_ty).cloned();
+                        if i.trait_.is_none() {
+                            if let Some(ident) = type_ident(&*i.self_ty) {
+                                if util::extract_attr(&mut i.attrs, "methods").is_some() {
+                                    impls.push(index);
+                                    impl_name = Some(ident.clone());
+                                    break;
+                                } else if first_impl.is_none() {
+                                    first_impl = Some(index);
+                                    impl_name = Some(ident.clone());
+                                }
                             }
                         }
                     }
                 }
-                if impl_.is_none() {
+                if impls.is_empty() {
                     if let Some(index) = first_impl {
-                        impl_ = Some(index);
+                        impls.push(index);
                     }
                 }
-                if impl_.is_some() {
+                if !impls.is_empty() {
                     def.name = impl_name;
+                }
+            }
+            if let Some(name) = def.name.as_ref() {
+                // if we got a name, then search for the rest of the impls matching that name
+                // skip the first index that we might have found before
+                let first = impls.first().cloned();
+                for (index, item) in items.iter_mut().enumerate() {
+                    if Some(index) == first {
+                        continue;
+                    }
+                    if let syn::Item::Impl(i) = item {
+                        if i.trait_.is_none() && type_ident(&*i.self_ty) == Some(name) {
+                            util::extract_attr(&mut i.attrs, "methods");
+                            impls.push(index);
+                        }
+                    }
                 }
             }
         }
@@ -329,41 +348,37 @@ impl TypeDefinition {
                 _ => def.inner_vis = def.vis.clone(),
             }
         }
-        if let Some(index) = impl_ {
-            def.methods_item_index = Some(index);
-            let impl_ = match &mut items[index] {
+        for index in &impls {
+            let impl_ = match &mut items[*index] {
                 syn::Item::Impl(i) => i,
                 _ => unreachable!(),
             };
+            let mode = TypeMode::for_item_type(&*impl_.self_ty).unwrap_or_else(|| {
+                unreachable!("Invalid type in mode: {}", impl_.self_ty.to_token_stream())
+            });
             if def.generics.is_none() {
                 def.generics = Some(impl_.generics.clone());
             }
-            def.signals
-                .extend(Signal::many_from_items(&mut impl_.items, base, errors));
+            def.signals.extend(Signal::many_from_items(
+                &mut impl_.items,
+                base,
+                mode,
+                errors,
+            ));
             def.public_methods.extend(PublicMethod::many_from_items(
                 &mut impl_.items,
                 base,
+                mode,
                 errors,
             ));
             def.virtual_methods.extend(VirtualMethod::many_from_items(
                 &mut impl_.items,
                 base,
+                mode,
                 errors,
             ));
         }
-        for item in items.iter_mut() {
-            if let syn::Item::Impl(i) = item {
-                if i.trait_.is_none() && extract_attr(&mut i.attrs, "wrapper_methods").is_some() {
-                    Self::extract_wrapper_methods(
-                        i,
-                        &mut def.wrapper_methods,
-                        def.base,
-                        &glib,
-                        errors,
-                    );
-                }
-            }
-        }
+        def.methods_item_indices = impls.into_iter().collect();
         def
     }
     pub fn glib(&self) -> TokenStream {
@@ -414,34 +429,43 @@ impl TypeDefinition {
             _ => None,
         }
     }
-    pub fn methods_item(&self) -> Option<&syn::ItemImpl> {
-        let index = self.methods_item_index?;
-        match self.module.content.as_ref()?.1.get(index)? {
-            syn::Item::Impl(i) => Some(i),
-            _ => None,
-        }
+    pub fn methods_items(&self) -> impl Iterator<Item = &syn::ItemImpl> + '_ {
+        self.methods_item_indices.iter().filter_map(|index| {
+            let item = self.module.content.as_ref()?.1.get(*index)?;
+            match item {
+                syn::Item::Impl(i) => Some(i),
+                _ => None,
+            }
+        })
     }
-    pub fn methods_item_mut(&mut self) -> Option<&mut syn::ItemImpl> {
-        let index = self.methods_item_index?;
-        match self.module.content.as_mut()?.1.get_mut(index)? {
-            syn::Item::Impl(i) => Some(i),
-            _ => None,
-        }
+    pub fn methods_items_mut(&mut self) -> impl Iterator<Item = &mut syn::ItemImpl> + '_ {
+        let indices = self.methods_item_indices.clone();
+        self.ensure_items()
+            .iter_mut()
+            .enumerate()
+            .filter_map(move |(index, item)| match item {
+                syn::Item::Impl(i) if indices.contains(&index) => Some(i),
+                _ => None,
+            })
     }
     pub fn ensure_items(&mut self) -> &mut Vec<syn::Item> {
         &mut self.module.content.get_or_insert_with(Default::default).1
     }
-    pub fn has_method(&self, method: &str) -> bool {
-        self.find_method(&format_ident!("{}", method)).is_some()
+    pub fn has_method(&self, mode: TypeMode, method: &str) -> bool {
+        self.find_method(mode, &format_ident!("{}", method))
+            .is_some()
     }
-    pub fn find_method(&self, ident: &syn::Ident) -> Option<&syn::ImplItemMethod> {
-        self.methods_item()?
-            .items
-            .iter()
-            .find_map(|item| match item {
+    pub fn find_method(&self, mode: TypeMode, ident: &syn::Ident) -> Option<&syn::ImplItemMethod> {
+        self.methods_items().find_map(|item| {
+            let item_mode = TypeMode::for_item_type(&*item.self_ty)?;
+            if item_mode != mode {
+                return None;
+            }
+            item.items.iter().find_map(|item| match item {
                 syn::ImplItem::Method(m) if m.sig.ident == *ident => Some(m),
                 _ => None,
             })
+        })
     }
     pub fn add_custom_stmt(&self, name: &str, stmt: syn::Stmt) {
         let mut stmts = self.custom_stmts.borrow_mut();
@@ -461,69 +485,11 @@ impl TypeDefinition {
             .get(name)
             .map(|stmts| quote! {{ #(#stmts)* };})
     }
-    fn extract_wrapper_methods(
-        item: &mut syn::ItemImpl,
-        methods: &mut Vec<syn::Signature>,
-        base: TypeBase,
-        glib: &TokenStream,
-        errors: &Errors,
-    ) {
-        for item in &mut item.items {
-            if let syn::ImplItem::Method(method) = item {
-                methods.push(method.sig.clone());
-                if base == TypeBase::Class {
-                    let index = method
-                        .attrs
-                        .iter()
-                        .position(|attr| attr.path.is_ident("constructor"));
-                    if let Some(index) = index {
-                        let attr = method.attrs.remove(index);
-                        Self::check_constructor(method, attr, errors);
-                        Self::fill_in_constructor(method, glib);
-                    }
-                }
-            }
-        }
-    }
-    fn check_constructor(method: &syn::ImplItemMethod, attr: syn::Attribute, errors: &Errors) {
-        if !attr.tokens.is_empty() {
-            errors.push_spanned(&attr.tokens, "Unknown tokens on constructor");
-        }
-        if let Some(recv) = method.sig.receiver() {
-            errors.push_spanned(recv, "`self` not allowed on constructor");
-        }
-        if matches!(&method.sig.output, syn::ReturnType::Default) {
-            errors.push_spanned(&method.sig, "Constructor must have a return type");
-        }
-        for arg in &method.sig.inputs {
-            if let syn::FnArg::Typed(syn::PatType { pat, .. }) = arg {
-                match pat.as_ref() {
-                    syn::Pat::Ident(_) => {}
-                    p => errors.push_spanned(p, "Constructor argument must be an ident"),
-                }
-            }
-        }
-    }
-    fn fill_in_constructor(method: &mut syn::ImplItemMethod, glib: &TokenStream) {
-        if method.block.stmts.is_empty() {
-            let args = util::signature_args(&method.sig).map(|ident| {
-                let name = ident.to_string().to_kebab_case();
-                quote! { (#name, &#ident) }
-            });
-            method.attrs.push(parse_quote! { #[inline] });
-            method.block = parse_quote! {
-                {
-                    #glib::Object::new::<Self>(&[#(#args),*])
-                        .expect("Failed to construct object")
-                }
-            };
-        }
-    }
     pub fn method_wrapper<F>(&self, name: &str, sig_func: F) -> Option<TokenStream>
     where
         F: FnOnce(&syn::Ident) -> syn::Signature,
     {
-        let has_method = self.has_method(name);
+        let has_method = self.has_method(TypeMode::Subclass, name);
         let custom = self.custom_stmts_for(name);
         if !has_method && custom.is_none() {
             return None;
@@ -578,7 +544,7 @@ impl TypeDefinition {
         self.trait_head_with_params(ty, trait_, None::<[syn::GenericParam; 0]>)
     }
     pub(crate) fn properties_method(&self) -> Option<TokenStream> {
-        let has_method = self.has_method("properties");
+        let has_method = self.has_method(TypeMode::Subclass, "properties");
         let custom = self.custom_stmts_for("properties");
         if self.properties.is_empty() && !has_method && custom.is_none() {
             return None;
@@ -620,7 +586,7 @@ impl TypeDefinition {
         })
     }
     pub(crate) fn signals_method(&self) -> Option<TokenStream> {
-        let has_method = self.has_method("signals");
+        let has_method = self.has_method(TypeMode::Subclass, "signals");
         let custom = self.custom_stmts_for("signals");
         if self.signals.is_empty() && !has_method && custom.is_none() {
             return None;
@@ -666,7 +632,7 @@ impl TypeDefinition {
                     .iter()
                     .flat_map(|s| s.method_prototypes(self.concurrency, &glib)),
             )
-            .chain(self.public_methods.iter().map(|m| m.prototype()))
+            .chain(self.public_methods.iter().filter_map(|m| m.prototype()))
             .chain(self.virtual_methods.iter().map(|m| m.prototype(&glib)))
             .collect()
     }
@@ -685,6 +651,7 @@ impl TypeDefinition {
     }
     pub(crate) fn public_method_definitions(
         &self,
+        final_: bool,
     ) -> Option<impl Iterator<Item = TokenStream> + '_> {
         let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
 
@@ -712,7 +679,7 @@ impl TypeDefinition {
             )?;
             self.public_methods
                 .iter()
-                .map(move |m| m.definition(&ty, &sub_ty, &glib))
+                .filter_map(move |m| m.definition(&ty, &sub_ty, false, final_, &glib))
         };
         let virtual_methods = {
             let glib = self.glib();
@@ -729,14 +696,33 @@ impl TypeDefinition {
     }
     pub(crate) fn public_methods(&self, trait_name: Option<&syn::Ident>) -> Option<TokenStream> {
         let glib = self.glib();
-        let mut items = self.public_method_definitions()?.peekable();
+        let final_ = trait_name.is_none();
+        let mut items = self.public_method_definitions(final_)?.peekable();
         items.peek()?;
         let name = self.name.as_ref()?;
         let type_ident = format_ident!("____Object");
         let vis = &self.inner_vis;
+        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
+        let sub_ty = self.type_(
+            TypeMode::Subclass,
+            TypeMode::Subclass,
+            TypeContext::External,
+        )?;
+        let mut constructors = self
+            .public_methods
+            .iter()
+            .filter_map(|m| m.definition(&ty, &sub_ty, true, final_, &glib))
+            .peekable();
         if let Some(generics) = self.generics.as_ref() {
             let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
             if let Some(trait_name) = trait_name {
+                let constructors = constructors.peek().is_some().then(|| {
+                    quote! {
+                        impl #impl_generics super::#name #type_generics #where_clause {
+                            #(pub #constructors)*
+                        }
+                    }
+                });
                 let mut generics = generics.clone();
                 let param = parse_quote! { #type_ident: #glib::IsA<super::#name #type_generics> };
                 generics.params.push(param);
@@ -749,16 +735,25 @@ impl TypeDefinition {
                     impl #impl_generics #trait_name for #type_ident #where_clause {
                         #(#items)*
                     }
+                    #constructors
                 })
             } else {
                 Some(quote! {
                     impl #impl_generics super::#name #type_generics #where_clause {
                         #(pub #items)*
+                        #(pub #constructors)*
                     }
                 })
             }
         } else if let Some(trait_name) = trait_name {
             let protos = self.public_method_prototypes();
+            let constructors = constructors.peek().is_some().then(|| {
+                quote! {
+                    impl super::#name {
+                        #(pub #constructors)*
+                    }
+                }
+            });
             Some(quote! {
                 #vis trait #trait_name: 'static {
                     #(#protos;)*
@@ -766,11 +761,13 @@ impl TypeDefinition {
                 impl<#type_ident: #glib::IsA<super::#name>> #trait_name for #type_ident {
                     #(#items)*
                 }
+                #constructors
             })
         } else {
             Some(quote! {
                 impl super::#name {
                     #(pub #items)*
+                    #(pub #constructors)*
                 }
             })
         }
@@ -929,12 +926,12 @@ impl TypeDefinition {
             #impl_ext_trait
         })
     }
-    fn private_methods(&self) -> Vec<TokenStream> {
+    fn private_methods(&self, mode: TypeMode) -> Vec<TokenStream> {
         let mut methods = Vec::new();
         let glib = self.glib();
 
         for signal in &self.signals {
-            if let Some(chain) = signal.chain_definition(&glib) {
+            if let Some(chain) = signal.chain_definition(mode, &glib) {
                 methods.push(chain);
             }
         }
@@ -955,7 +952,7 @@ impl TypeDefinition {
             items.push(signal.signal_id_cell_definition(&wrapper_ty, &glib));
         }
 
-        let private_methods = self.private_methods();
+        let private_methods = self.private_methods(TypeMode::Subclass);
 
         if !private_methods.is_empty() {
             let head = if let Some(generics) = self.generics.as_ref() {
@@ -963,6 +960,22 @@ impl TypeDefinition {
                 quote! { impl #impl_generics #name #type_generics #where_clause }
             } else {
                 quote! { impl #name }
+            };
+            items.push(quote! {
+                #head {
+                    #(#private_methods)*
+                }
+            });
+        }
+
+        let private_methods = self.private_methods(TypeMode::Wrapper);
+
+        if !private_methods.is_empty() {
+            let head = if let Some(generics) = self.generics.as_ref() {
+                let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
+                quote! { impl #impl_generics super::#name #type_generics #where_clause }
+            } else {
+                quote! { impl super::#name }
             };
             items.push(quote! {
                 #head {

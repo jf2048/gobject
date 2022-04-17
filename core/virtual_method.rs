@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::{
     util::{self, Errors},
-    TypeBase,
+    TypeBase, TypeMode,
 };
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
@@ -15,28 +15,22 @@ pub struct VirtualMethod {
     pub sig: syn::Signature,
     pub generic_args: HashSet<usize>,
     pub base: TypeBase,
+    pub mode: TypeMode,
 }
 
 impl VirtualMethod {
     pub(crate) fn many_from_items(
         items: &mut Vec<syn::ImplItem>,
         base: TypeBase,
+        mode: TypeMode,
         errors: &Errors,
     ) -> Vec<Self> {
         let mut virtual_methods = Vec::new();
 
         for item in items {
             if let syn::ImplItem::Method(method) = item {
-                let method_index = method
-                    .attrs
-                    .iter()
-                    .position(|attr| attr.path.is_ident("virt"));
-                if let Some(method_index) = method_index {
-                    let attr = method.attrs.remove(method_index);
-                    let virtual_method = Self::from_method(method, attr, base, errors);
-                    if let Some(virtual_method) = virtual_method {
-                        virtual_methods.push(virtual_method);
-                    }
+                if let Some(attr) = util::extract_attr(&mut method.attrs, "virt") {
+                    virtual_methods.extend(Self::from_method(method, attr, base, mode, errors));
                 }
             }
         }
@@ -48,6 +42,7 @@ impl VirtualMethod {
         method: &mut syn::ImplItemMethod,
         attr: syn::Attribute,
         base: TypeBase,
+        mode: TypeMode,
         errors: &Errors,
     ) -> Option<Self> {
         if !attr.tokens.is_empty() {
@@ -62,7 +57,7 @@ impl VirtualMethod {
                 "First argument required on virtual method, must be `self`, `&self` or the wrapper type",
             );
         }
-        if base == TypeBase::Interface {
+        if mode == TypeMode::Subclass && base == TypeBase::Interface {
             if let Some(recv) = sig.receiver() {
                 errors.push_spanned(
                     recv,
@@ -91,6 +86,7 @@ impl VirtualMethod {
             sig: sig.clone(),
             generic_args,
             base,
+            mode,
         })
     }
     fn external_sig(&self) -> syn::Signature {
@@ -304,11 +300,19 @@ impl VirtualMethod {
         let trampoline_ident = format_ident!("{}_default_trampoline", ident);
         let mut sig = self.trampoline_sig(this_ident.clone(), ty.clone());
         sig.ident = trampoline_ident.clone();
-        let unwrap_recv = self.sig.receiver().map(|_| {
+        let unwrap_recv = (self.mode == TypeMode::Subclass)
+            .then(|| {
+                self.sig.receiver().map(|_| {
             quote! {
                 let #this_ident = #glib::subclass::prelude::ObjectSubclassIsExt::imp(#this_ident);
             }
-        });
+        })
+            })
+            .flatten();
+        let type_name = match self.mode {
+            TypeMode::Subclass => quote! { #type_name },
+            TypeMode::Wrapper => quote! { super::#type_name },
+        };
         let args = util::signature_args(&sig);
         quote! {
             #sig {

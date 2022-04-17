@@ -176,9 +176,17 @@ pub(crate) fn signature_args(sig: &syn::Signature) -> impl Iterator<Item = &syn:
 #[inline]
 pub(crate) fn arg_name(arg: &syn::FnArg) -> Option<&syn::Ident> {
     if let syn::FnArg::Typed(syn::PatType { pat, .. }) = arg {
-        if let syn::Pat::Ident(syn::PatIdent { ident, .. }) = pat.as_ref() {
-            return Some(ident);
+        if let syn::Pat::Ident(p) = pat.as_ref() {
+            if p.ident != "self" {
+                return Some(&p.ident);
+            }
         }
     }
     None
+}
+
+#[inline]
+pub fn extract_attr(attrs: &mut Vec<syn::Attribute>, name: &str) -> Option<syn::Attribute> {
+    let attr_index = attrs.iter().position(|a| a.path.is_ident(name));
+    attr_index.map(|attr_index| attrs.remove(attr_index))
 }

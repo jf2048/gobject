@@ -71,19 +71,21 @@ mod basic {
             self.my_custom_accessors.borrow().clone()
         }
         #[public]
-        fn set_my_custom_accessors(obj: &super::BasicProps, value: String) {
-            let imp = obj.imp();
-            let old = imp.my_custom_accessors.replace(value);
-            if old != *imp.my_custom_accessors.borrow() {
-                obj.notify_my_custom_accessors();
-            }
-        }
-        #[public]
         fn my_computed_prop(&self) -> i32 {
             self.my_i32.get() + 7
         }
         fn set_my_computed_prop(obj: &super::BasicProps, value: i32) {
             obj.set_my_i32(value - 7);
+        }
+    }
+    impl super::BasicProps {
+        #[public]
+        pub fn set_my_custom_accessors(&self, value: String) {
+            let imp = self.imp();
+            let old = imp.my_custom_accessors.replace(value);
+            if old != *imp.my_custom_accessors.borrow() {
+                self.notify_my_custom_accessors();
+            }
         }
     }
 }

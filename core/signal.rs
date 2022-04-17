@@ -1,6 +1,6 @@
 use crate::{
     util::{self, Errors},
-    Concurrency, TypeBase,
+    Concurrency, TypeBase, TypeMode,
 };
 use darling::{util::Flag, FromMeta};
 use heck::{ToShoutySnakeCase, ToSnakeCase};
@@ -92,12 +92,14 @@ pub struct Signal {
     pub sig: Option<syn::Signature>,
     pub handler: bool,
     pub accumulator: Option<syn::Signature>,
+    pub mode: TypeMode,
 }
 
 impl Signal {
     pub(crate) fn many_from_items(
         items: &mut [syn::ImplItem],
         base: TypeBase,
+        mode: TypeMode,
         errors: &Errors,
     ) -> Vec<Self> {
         let mut signals = Vec::<Signal>::new();
@@ -125,10 +127,10 @@ impl Signal {
                 }
                 let method = method.clone();
                 if attr.path.is_ident("signal") {
-                    Self::from_handler(method, attr, base, &mut signals, errors);
+                    Self::from_handler(method, attr, base, mode, &mut signals, errors);
                 } else if attr.path.is_ident("accumulator") {
                     let method = method.clone();
-                    Self::from_accumulator(method, attr, &mut signals, errors);
+                    Self::from_accumulator(method, attr, mode, &mut signals, errors);
                 } else {
                     unreachable!();
                 }
@@ -163,11 +165,12 @@ impl Signal {
         method: syn::ImplItemMethod,
         attr: syn::Attribute,
         base: TypeBase,
+        mode: TypeMode,
         signals: &mut Vec<Self>,
         errors: &Errors,
     ) {
         let ident = &method.sig.ident;
-        if base == TypeBase::Interface {
+        if mode == TypeMode::Subclass && base == TypeBase::Interface {
             if let Some(recv) = method.sig.receiver() {
                 errors.push_spanned(
                     recv,
@@ -190,7 +193,7 @@ impl Signal {
         let signal = if let Some(i) = signals.iter().position(|s| s.name == name) {
             &mut signals[i]
         } else {
-            signals.push(Signal::new(ident.clone(), name.clone()));
+            signals.push(Signal::new(ident.clone(), name.clone(), mode));
             signals.last_mut().unwrap()
         };
         if signal.sig.is_some() {
@@ -210,6 +213,7 @@ impl Signal {
     fn from_accumulator(
         method: syn::ImplItemMethod,
         attr: syn::Attribute,
+        mode: TypeMode,
         signals: &mut Vec<Self>,
         errors: &Errors,
     ) {
@@ -232,7 +236,7 @@ impl Signal {
         let signal = if let Some(i) = signals.iter().position(|s| s.name == name) {
             &mut signals[i]
         } else {
-            signals.push(Signal::new(ident.clone(), name.clone()));
+            signals.push(Signal::new(ident.clone(), name.clone(), mode));
             signals.last_mut().unwrap()
         };
         if signal.accumulator.is_some() {
@@ -246,7 +250,7 @@ impl Signal {
         }
         signal.accumulator = Some(method.sig);
     }
-    fn new(ident: syn::Ident, name: String) -> Self {
+    fn new(ident: syn::Ident, name: String, mode: TypeMode) -> Self {
         Self {
             ident,
             name,
@@ -256,6 +260,7 @@ impl Signal {
             sig: None,
             handler: false,
             accumulator: None,
+            mode,
         }
     }
     fn inputs(&self) -> impl Iterator<Item = &syn::FnArg> + Clone {
@@ -279,7 +284,12 @@ impl Signal {
                 syn::FnArg::Receiver(_) => parse_quote! { #self_ty },
                 syn::FnArg::Typed(t) => t.ty.as_ref().clone(),
             };
-            let ref_ = (!matches!(ty, syn::Type::Reference(_))).then(|| quote! { & });
+            let unwrap_recv = (self.mode == TypeMode::Subclass).then(|| {
+                let ref_ = (!matches!(ty, syn::Type::Reference(_))).then(|| quote! { & });
+                quote! {
+                    let arg0 = #glib::subclass::prelude::ObjectSubclassIsExt::imp(#ref_ arg0);
+                }
+            });
             quote! {
                 let arg0 = args[0usize].get::<#ty>().unwrap_or_else(|e| {
                     ::std::panic!(
@@ -288,7 +298,7 @@ impl Signal {
                         e
                     )
                 });
-                let arg0 = #glib::subclass::prelude::ObjectSubclassIsExt::imp(#ref_ arg0);
+                #unwrap_recv
             }
         });
         let offset = recv.as_ref().map(|_| 1).unwrap_or(0);
@@ -393,6 +403,10 @@ impl Signal {
                 )
             }
         });
+        let dest = match self.mode {
+            TypeMode::Subclass => sub_ty,
+            TypeMode::Wrapper => wrapper_ty,
+        };
         let class_handler = self.handler.then(|| {
             let arg_names = self.arg_names();
             let args_unwrap = self.args_unwrap(wrapper_ty, glib);
@@ -405,7 +419,7 @@ impl Signal {
                     args: &[#glib::Value]
                 ) -> ::std::option::Option<#glib::Value> {
                     #(#args_unwrap)*
-                    let ret = #sub_ty::#method_name(#(#arg_names),*);
+                    let ret = #dest::#method_name(#(#arg_names),*);
                     #glib::closure::ToClosureReturnValue::to_closure_return_value(&ret)
                 }
                 let builder = builder.class_handler(#handler_name);
@@ -432,7 +446,7 @@ impl Signal {
                 ) -> ::std::primitive::bool {
                     let curr_accu = accu.get().unwrap();
                     let value = value.get().unwrap();
-                    let (next, ret) = match #sub_ty::#method_name(#call_args) {
+                    let (next, ret) = match #dest::#method_name(#call_args) {
                         ::std::ops::ControlFlow::Continue(next) => (next, true),
                         ::std::ops::ControlFlow::Break(next) => (next, false),
                     };
@@ -477,6 +491,10 @@ impl Signal {
         }
         let arg_names = self.arg_names();
         let args_unwrap = self.args_unwrap(wrapper_ty, glib);
+        let dest = match self.mode {
+            TypeMode::Subclass => sub_ty,
+            TypeMode::Wrapper => wrapper_ty,
+        };
         let name = &self.name;
         let method_name = &self.sig.as_ref()?.ident;
         let override_ident = format_ident!("{}_override_handler", method_name);
@@ -487,7 +505,7 @@ impl Signal {
                 args: &[#glib::Value]
             ) -> ::std::option::Option<#glib::Value> {
                 #(#args_unwrap)*
-                let ret = #sub_ty::#method_name(#(#arg_names),*);
+                let ret = #dest::#method_name(#(#arg_names),*);
                 #glib::closure::ToClosureReturnValue::to_closure_return_value(&ret)
             }
             #glib::subclass::object::ObjectClassSubclassExt::override_signal_class_handler(
@@ -497,8 +515,15 @@ impl Signal {
             );
         }})
     }
-    pub(crate) fn chain_definition(&self, glib: &TokenStream) -> Option<TokenStream> {
+    pub(crate) fn chain_definition(
+        &self,
+        mode: TypeMode,
+        glib: &TokenStream,
+    ) -> Option<TokenStream> {
         if !self.override_ {
+            return None;
+        }
+        if mode != self.mode {
             return None;
         }
         let sig = self.sig.as_ref()?;
@@ -510,6 +535,12 @@ impl Signal {
             syn::Pat::Ident(syn::PatIdent { ident, .. }) => ident.clone(),
             _ => unimplemented!(),
         });
+        let unwrap_recv = match self.mode {
+            TypeMode::Subclass => {
+                quote! { #glib::subclass::types::ObjectSubclassExt::instance(self) }
+            }
+            TypeMode::Wrapper => quote! { self },
+        };
         let arg_values = arg_names.map(|arg| {
             quote! {
                 #glib::ToValue::to_value(&#arg)
@@ -547,9 +578,7 @@ impl Signal {
             fn #method_name(&self, #(#arg_types),*) #output {
                 #declare_result
                 let values = [
-                    #glib::ToValue::to_value(
-                        &#glib::subclass::types::ObjectSubclassExt::instance(self)
-                    ),
+                    #glib::ToValue::to_value(&#unwrap_recv),
                     #(#arg_values),*
                 ];
                 unsafe {

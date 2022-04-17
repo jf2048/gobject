@@ -29,7 +29,6 @@ mod obj_derivable {
         #[signal]
         fn abc(&self) {}
     }
-    #[wrapper_methods]
     impl super::ObjDerivable {
         #[constructor]
         pub fn new(my_prop: u64) -> Self {}

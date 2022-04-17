@@ -1,6 +1,6 @@
 use crate::{
     util::{self, Errors},
-    Concurrency, TypeBase,
+    Concurrency, TypeBase, TypeMode,
 };
 use darling::{
     util::{Flag, SpannedValue},
@@ -825,39 +825,54 @@ impl Property {
     fn custom_call(
         &self,
         set_ty: Option<&TokenStream>,
-        method: Option<&syn::ImplItemMethod>,
+        method: Option<(TypeMode, TypeMode)>,
+        glib: &TokenStream,
     ) -> Option<TokenStream> {
         let perm = match set_ty.is_some() {
             true => &self.set,
             false => &self.get,
         };
-        let set_ty = set_ty.map(|s| quote! { value.get::<#s>().unwrap() });
-        let method_args = method.map(|m| m.sig.inputs.len());
-        let args = if set_ty.is_none() && method_args == Some(0) {
-            quote! {}
-        } else if set_ty.is_some() && method_args == Some(1) {
-            quote! { #set_ty }
-        } else if matches!(self.storage, PropertyStorage::InterfaceAbstract)
-            || method.map(|m| m.sig.receiver().is_none()).unwrap_or(false)
-        {
-            quote! { obj, #set_ty }
-        } else {
-            quote! { self, #set_ty }
-        };
-        match perm {
+        let dest = std::iter::once_with(|| match method.as_ref().map(|(dest, _)| dest) {
+            Some(TypeMode::Wrapper) => quote! {
+                <Self as #glib::subclass::types::ObjectSubclass>::Type
+            },
+            _ => quote! { Self },
+        });
+        let path = match perm {
             PropertyPermission::AllowCustomDefault => {
                 let name = self.name.field_name();
                 let method = match set_ty.is_some() {
                     true => format_ident!("set_{}", name),
                     false => format_ident!("{}", name),
                 };
-                Some(quote! { Self::#method(#args) })
+                quote! { #(#dest)*::#method }
             }
-            PropertyPermission::AllowCustom(path) => Some(quote! {
-                #path(#args)
-            }),
-            _ => None,
-        }
+            PropertyPermission::AllowCustom(path) => {
+                if path.segments.len() == 1 {
+                    quote! { #(#dest)*::#path }
+                } else {
+                    quote! { #path }
+                }
+            }
+            _ => return None,
+        };
+        let recv = match method.as_ref().map(|(_, recv)| recv) {
+            Some(TypeMode::Wrapper) => quote! { obj },
+            _ => quote! { self },
+        };
+        Some(
+            set_ty
+                .map(|s| {
+                    quote! {
+                        #path(#recv, value.get::<#s>().unwrap())
+                    }
+                })
+                .unwrap_or_else(|| {
+                    quote! {
+                        #path(#recv)
+                    }
+                }),
+        )
     }
     #[inline]
     pub fn getter_name(&self) -> syn::Ident {
@@ -872,13 +887,13 @@ impl Property {
     pub(crate) fn get_impl(
         &self,
         index: usize,
-        method: Option<&syn::ImplItemMethod>,
+        method: Option<(TypeMode, TypeMode)>,
         go: &syn::Ident,
     ) -> Option<TokenStream> {
         (self.get.is_allowed() && !self.is_abstract()).then(|| {
             let glib = quote! { #go::glib };
             let cmp = self.pspec_cmp(index);
-            let body = if let Some(call) = self.custom_call(None, method) {
+            let body = if let Some(call) = self.custom_call(None, method, &glib) {
                 quote! { #glib::ToValue::to_value(&#call) }
             } else {
                 let field = self.field_storage(None, go);
@@ -978,14 +993,14 @@ impl Property {
     pub(crate) fn set_impl(
         &self,
         index: usize,
-        method: Option<&syn::ImplItemMethod>,
+        method: Option<(TypeMode, TypeMode)>,
         go: &syn::Ident,
     ) -> Option<TokenStream> {
         (self.set.is_allowed() && !self.is_abstract()).then(|| {
             let glib = quote! { #go::glib };
             let cmp = self.pspec_cmp(index);
             let ty = self.inner_type(go);
-            let body = if let Some(call) = self.custom_call(Some(&ty), method) {
+            let body = if let Some(call) = self.custom_call(Some(&ty), method, &glib) {
                 quote! { #call; }
             } else if self.is_set_inline() {
                 let body = self.inline_set_impl(

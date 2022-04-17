@@ -1,6 +1,6 @@
 use crate::{
     util::{self, Errors},
-    Concurrency, Properties, TypeBase, TypeDefinition,
+    Concurrency, Properties, TypeBase, TypeDefinition, TypeMode,
 };
 use darling::{
     util::{Flag, PathList, SpannedValue},
@@ -210,7 +210,7 @@ impl ClassDefinition {
         let body = self.inner.type_init_body(&quote! { #class_ident });
         let custom = self
             .inner
-            .has_method("class_init")
+            .has_method(TypeMode::Subclass, "class_init")
             .then(|| quote! { Self::class_init(#class_ident); });
         let extra = self.inner.custom_stmts_for("class_init");
         if body.is_none() && custom.is_none() && extra.is_none() {
@@ -360,7 +360,8 @@ impl ClassDefinition {
     }
     pub(crate) fn properties_base_index_definition(&self) -> Option<TokenStream> {
         if self.inner.properties.is_empty()
-            || (!self.inner.has_method("properties") && !self.inner.has_custom_stmts("properties"))
+            || (!self.inner.has_method(TypeMode::Subclass, "properties")
+                && !self.inner.has_custom_stmts("properties"))
         {
             return None;
         }
@@ -372,12 +373,15 @@ impl ClassDefinition {
         })
     }
     fn adjust_property_index(&self) -> Option<TokenStream> {
-        self.inner.has_method("properties").then(|| {
-            quote! {
-                let id = id - _GENERATED_PROPERTIES_BASE_INDEX.get().unwrap();
-            }
-        })
+        self.inner
+            .has_method(TypeMode::Subclass, "properties")
+            .then(|| {
+                quote! {
+                    let id = id - _GENERATED_PROPERTIES_BASE_INDEX.get().unwrap();
+                }
+            })
     }
+    #[inline]
     fn unimplemented_property(glib: &TokenStream) -> TokenStream {
         quote! {
             ::std::unimplemented!(
@@ -390,6 +394,30 @@ impl ClassDefinition {
                 ).name()
             )
         }
+    }
+    #[inline]
+    fn find_property_method(&self, ident: &syn::Ident) -> Option<(TypeMode, TypeMode)> {
+        if let Some(method) = self.inner.find_method(TypeMode::Wrapper, ident) {
+            return Some((
+                TypeMode::Wrapper,
+                method
+                    .sig
+                    .receiver()
+                    .map(|_| TypeMode::Wrapper)
+                    .unwrap_or(TypeMode::Subclass),
+            ));
+        }
+        if let Some(method) = self.inner.find_method(TypeMode::Subclass, ident) {
+            return Some((
+                TypeMode::Subclass,
+                method
+                    .sig
+                    .receiver()
+                    .map(|_| TypeMode::Subclass)
+                    .unwrap_or(TypeMode::Wrapper),
+            ));
+        }
+        None
     }
     fn set_property_method(&self) -> Option<TokenStream> {
         if self.inner.properties.is_empty() {
@@ -407,12 +435,12 @@ impl ClassDefinition {
             .filter_map(|(index, prop)| {
                 let method = prop
                     .custom_method_path(true)
-                    .and_then(|ident| self.inner.find_method(&*ident));
+                    .and_then(|ident| self.find_property_method(&*ident));
                 prop.set_impl(index, method, go)
             });
         let rest = self
             .inner
-            .has_method("set_property")
+            .has_method(TypeMode::Subclass, "set_property")
             .then(|| {
                 quote! {
                     Self::set_property(self, obj, id, value, pspec)
@@ -450,12 +478,12 @@ impl ClassDefinition {
             .filter_map(|(index, prop)| {
                 let method = prop
                     .custom_method_path(false)
-                    .and_then(|ident| self.inner.find_method(&*ident));
+                    .and_then(|ident| self.find_property_method(&*ident));
                 prop.get_impl(index, method, go)
             });
         let rest = self
             .inner
-            .has_method("property")
+            .has_method(TypeMode::Subclass, "property")
             .then(|| {
                 quote! {
                     Self::property(self, obj, id, pspec)
@@ -550,7 +578,7 @@ impl ToTokens for ClassDefinition {
         let is_subclassable = self.is_subclassable_impl();
         let use_trait = self.ext_trait.as_ref().and_then(|ext| {
             self.inner
-                .public_method_definitions()
+                .public_method_definitions(self.final_)
                 .and_then(|mut i| i.next())
                 .is_some()
                 .then(|| {
