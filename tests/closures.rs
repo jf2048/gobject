@@ -19,6 +19,10 @@ fn closure() {
     |s: &str| s.to_owned() + " World";
     assert_eq!(concat_str.invoke::<String>(&[&"Hello"]), "Hello World");
 
+    let ignored_arg = #[closure]
+    |x: i32, _, z: i32| x + z;
+    assert_eq!(ignored_arg.invoke::<i32>(&[&1i32, &2i32, &3i32]), 4);
+
     let weak_test = {
         let obj = glib::Object::new::<glib::Object>(&[]).unwrap();
 

@@ -397,18 +397,22 @@ impl<'v> Visitor<'v> {
             }
         });
         let args_len = body.inputs.len();
-        let arg_names = body
-            .inputs
-            .iter()
-            .enumerate()
-            .map(|(i, _)| format_ident!("arg{}", i));
-        let arg_values = arg_names.clone().enumerate().map(|(index, arg)| {
-            quote! {
+        let arg_names = body.inputs.iter().enumerate().map(|(i, p)| match p {
+            syn::Pat::Wild(_) => None,
+            _ => Some(format_ident!("arg{}", i)),
+        });
+        let arg_values = arg_names.clone().enumerate().filter_map(|(index, arg)| {
+            let arg = arg?;
+            Some(quote! {
                 let #arg = #go::glib::Value::get(&#values_ident[#index])
                     .unwrap_or_else(|e| {
                         ::std::panic!("Wrong type for closure argument {}: {:?}", #index, e)
                     });
-            }
+            })
+        });
+        let args = arg_names.map(|n| {
+            n.map(|n| n.to_token_stream())
+                .unwrap_or_else(|| quote! { () })
         });
         Some(parse_quote_spanned! { Span::mixed_site() =>
             {
