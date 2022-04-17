@@ -160,3 +160,44 @@ fn closure() {
         cast_test.invoke::<()>(&[]);
     }
 }
+
+#[gobject::class(final)]
+mod send {
+    #[derive(Default)]
+    struct SendObject {
+        #[property(get, set)]
+        value: std::sync::atomic::AtomicU64,
+    }
+    impl super::SendObject {
+        #[constructor]
+        pub fn new() -> Self {}
+    }
+}
+
+#[test]
+#[gobject::clone_block]
+fn async_closure() {
+    use futures_util::StreamExt;
+
+    let ctx = glib::MainContext::default();
+    let (tx, mut rx) = futures_channel::mpsc::unbounded::<u64>();
+    let obj = SendObject::new();
+    let obj2 = &obj;
+    let closure = #[closure]
+    move |s: String, #[strong] tx, #[weak(obj)] _obj, #[watch] obj2| async move {
+        glib::timeout_future_seconds(0).await;
+        let v = s.parse().unwrap();
+        tx.unbounded_send(v).unwrap();
+        obj2.set_value(v);
+    };
+
+    tx.unbounded_send(60).unwrap();
+    assert_eq!(obj.value(), 0);
+    closure.invoke::<()>(&[&"70"]);
+    assert_eq!(obj.value(), 0);
+    assert_eq!(ctx.block_on(rx.next()), Some(60));
+    assert_eq!(obj.value(), 0);
+    assert_eq!(ctx.block_on(rx.next()), Some(70));
+    assert_eq!(obj.value(), 70);
+    assert!(rx.try_next().is_err());
+}

@@ -379,12 +379,16 @@ impl<'v> Visitor<'v> {
                 .map(|f| f.to_token_stream())
                 .unwrap_or_else(|| target.clone());
             quote! {
-                let #target = #go::glib::object::Watchable::watched_object(&#from);
+                let #target = #go::Watchable::watched_object(&#from);
                 let #watch_ident = unsafe { #target.borrow() };
                 let #watch_ident = ::std::convert::AsRef::as_ref(&#watch_ident);
             }
         });
+        let is_async = matches!(body.body.as_ref(), syn::Expr::Async(_));
         let watch_inner = watch.as_ref().and_then(|WatchCapture { ident, .. }| {
+            if is_async {
+                return None;
+            }
             let target = ident.as_ref()?;
             Some(quote! {
                 let #target = unsafe { #target.borrow() };
@@ -399,7 +403,7 @@ impl<'v> Visitor<'v> {
         let args_len = body.inputs.len();
         let arg_names = body.inputs.iter().enumerate().map(|(i, p)| match p {
             syn::Pat::Wild(_) => None,
-            _ => Some(format_ident!("arg{}", i)),
+            _ => Some(format_ident!("____arg{}", i)),
         });
         let arg_values = arg_names.clone().enumerate().filter_map(|(index, arg)| {
             let arg = arg?;
@@ -414,24 +418,60 @@ impl<'v> Visitor<'v> {
             n.map(|n| n.to_token_stream())
                 .unwrap_or_else(|| quote! { () })
         });
+        let closure_body = quote! { {
+            if #values_ident.len() != #args_len {
+                ::std::panic!(
+                    "Closure called with wrong number of arguments: Expected {}, got {}",
+                    #args_len,
+                    #values_ident.len(),
+                );
+            }
+            #(#inner)*
+            #watch_inner
+            #(#arg_values)*
+            (#body)(#(#args),*)
+        } };
+        let body = if is_async {
+            let async_clones = captures
+                .strong
+                .iter()
+                .map(|s| {
+                    let ident = &s.ident;
+                    quote! { let #ident = ::std::clone::Clone::clone(&#ident); }
+                })
+                .chain(captures.weak.iter().map(|w| {
+                    let ident = &w.ident;
+                    quote! { let #ident = ::std::clone::Clone::clone(&#ident); }
+                }))
+                .chain(watch.iter().filter_map(|w| {
+                    let ident = w.ident.as_ref()?;
+                    Some(quote! {
+                        let #ident = ::std::clone::Clone::clone(
+                            unsafe { &*#ident.borrow() }
+                        );
+                    })
+                }));
+            quote! {
+                let #values_ident = #values_ident.to_vec();
+                #(#async_clones)*
+                #go::glib::MainContext::default().spawn_local(
+                    async move { let _: () = #closure_body.await; }
+                );
+                ::std::option::Option::None
+            }
+        } else {
+            quote! {
+                #go::glib::closure::ToClosureReturnValue::to_closure_return_value(
+                    &#closure_body
+                )
+            }
+        };
         Some(parse_quote_spanned! { Span::mixed_site() =>
             {
                 #(#outer)*
                 #watch_outer
                 let #closure_ident = #go::glib::closure::RustClosure::#constructor(move |#values_ident| {
-                    if #values_ident.len() != #args_len {
-                        ::std::panic!(
-                            "Closure called with wrong number of arguments: Expected {}, got {}",
-                            #args_len,
-                            #values_ident.len(),
-                        );
-                    }
-                    #(#inner)*
-                    #watch_inner
-                    #(#arg_values)*
-                    #go::glib::closure::ToClosureReturnValue::to_closure_return_value(
-                        &(#body)(#(#arg_names),*)
-                    )
+                    #body
                 });
                 #watch_after
                 #closure_ident
