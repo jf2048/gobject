@@ -359,12 +359,7 @@ impl TypeDefinition {
             if def.generics.is_none() {
                 def.generics = Some(impl_.generics.clone());
             }
-            def.signals.extend(Signal::many_from_items(
-                &mut impl_.items,
-                base,
-                mode,
-                errors,
-            ));
+            Signal::many_from_items(&mut impl_.items, base, mode, &mut def.signals, errors);
             def.public_methods.extend(PublicMethod::many_from_items(
                 &mut impl_.items,
                 base,
@@ -378,6 +373,7 @@ impl TypeDefinition {
                 errors,
             ));
         }
+        Signal::validate_many(&def.signals, errors);
         def.methods_item_indices = impls.into_iter().collect();
         def
     }

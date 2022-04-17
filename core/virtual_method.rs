@@ -18,7 +18,7 @@ pub struct VirtualMethod {
 
 impl VirtualMethod {
     pub(crate) fn many_from_items(
-        items: &mut Vec<syn::ImplItem>,
+        items: &mut [syn::ImplItem],
         base: TypeBase,
         mode: TypeMode,
         errors: &Errors,

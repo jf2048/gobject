@@ -100,10 +100,9 @@ impl Signal {
         items: &mut [syn::ImplItem],
         base: TypeBase,
         mode: TypeMode,
+        signals: &mut Vec<Self>,
         errors: &Errors,
-    ) -> Vec<Self> {
-        let mut signals = Vec::<Signal>::new();
-
+    ) {
         for item in items {
             let mut signal_attr = None;
             if let syn::ImplItem::Method(method) = item {
@@ -127,17 +126,18 @@ impl Signal {
                 }
                 let method = method.clone();
                 if attr.path.is_ident("signal") {
-                    Self::from_handler(method, attr, base, mode, &mut signals, errors);
+                    Self::from_handler(method, attr, base, mode, signals, errors);
                 } else if attr.path.is_ident("accumulator") {
                     let method = method.clone();
-                    Self::from_accumulator(method, attr, mode, &mut signals, errors);
+                    Self::from_accumulator(method, attr, mode, signals, errors);
                 } else {
                     unreachable!();
                 }
             }
         }
-
-        for signal in &mut signals {
+    }
+    pub(crate) fn validate_many(signals: &[Self], errors: &Errors) {
+        for signal in signals {
             if let Some(sig) = &signal.sig {
                 if signal.accumulator.is_some() && matches!(sig.output, syn::ReturnType::Default) {
                     errors.push_spanned(sig, "Signal with accumulator must have return type");
@@ -151,13 +151,7 @@ impl Signal {
                     errors.push_spanned(acc, "Accumulator not allowed on overriden signal");
                 }
             }
-            if base == TypeBase::Interface && signal.override_ {
-                errors.push_spanned(&signal.ident, "`override` not allowed on interface signal");
-                signal.override_ = false;
-            }
         }
-
-        signals
     }
     #[inline]
     #[allow(clippy::ptr_arg)]
@@ -207,6 +201,10 @@ impl Signal {
         signal.override_ = signal_attrs.override_.is_some();
         signal.sig = Some(method.sig);
         signal.handler = !method.block.stmts.is_empty();
+        if base == TypeBase::Interface && signal.override_ {
+            errors.push_spanned(&signal.ident, "`override` not allowed on interface signal");
+            signal.override_ = false;
+        }
     }
     #[inline]
     #[allow(clippy::ptr_arg)]
