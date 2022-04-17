@@ -255,7 +255,7 @@ fn has_captures<'p>(mut inputs: impl Iterator<Item = &'p syn::Pat>) -> bool {
 }
 
 struct Visitor<'v> {
-    crate_ident: syn::Ident,
+    crate_ident: &'v syn::Ident,
     errors: &'v Errors,
 }
 
@@ -358,7 +358,7 @@ impl<'v> Visitor<'v> {
             }
         }
 
-        let go = &self.crate_ident;
+        let go = self.crate_ident;
         let watch_ident = syn::Ident::new("____watch", Span::mixed_site());
         let closure_ident = syn::Ident::new("____closure", Span::mixed_site());
         let values_ident = syn::Ident::new("____values", Span::mixed_site());
@@ -451,7 +451,7 @@ impl<'v> Visitor<'v> {
             if let Some(action) = self.get_default_fail_action(&mut body) {
                 captures.set_default_fail(&action);
             }
-            let go = &self.crate_ident;
+            let go = self.crate_ident;
             let outer = captures.outer_tokens(go);
             let inner = captures.inner_tokens(go, false);
             body.inputs = FromIterator::from_iter(inputs.into_iter());
@@ -624,7 +624,7 @@ impl<'v> VisitMut for Visitor<'v> {
     }
 }
 
-pub fn closures(item: &mut syn::Item, crate_ident: syn::Ident, errors: &Errors) {
+pub fn closures(item: &mut syn::Item, crate_ident: &syn::Ident, errors: &Errors) {
     let mut visitor = Visitor {
         crate_ident,
         errors,

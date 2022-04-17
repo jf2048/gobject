@@ -13,7 +13,7 @@ pub fn clone_block(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut item = syn::parse_macro_input!(item as syn::Item);
     let errors = Errors::new();
     let go = crate_ident();
-    gobject_core::closures(&mut item, go, &errors);
+    gobject_core::closures(&mut item, &go, &errors);
     append_errors(item.to_token_stream(), errors)
 }
 

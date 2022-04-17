@@ -129,7 +129,7 @@ impl TypeDefinition {
         errors: &Errors,
     ) -> Self {
         let mut item = syn::Item::Mod(module);
-        super::closures(&mut item, crate_ident.clone(), errors);
+        super::closures(&mut item, &crate_ident, errors);
         let module = match item {
             syn::Item::Mod(m) => m,
             _ => unreachable!(),
