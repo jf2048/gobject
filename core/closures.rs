@@ -1,16 +1,24 @@
 use crate::util::Errors;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned, ToTokens};
+use std::collections::HashSet;
+use std::rc::Rc;
 use syn::{parse::Parser, parse_quote, parse_quote_spanned, spanned::Spanned, visit_mut::VisitMut};
 
-struct WatchCapture {
-    ident: Option<syn::Ident>,
-    from: Option<syn::Expr>,
-}
-
-struct StrongCapture {
-    ident: syn::Ident,
-    from: Option<syn::Expr>,
+enum Capture {
+    Strong {
+        ident: Option<syn::Ident>,
+        from: Option<syn::Expr>,
+    },
+    Weak {
+        ident: Option<syn::Ident>,
+        from: Option<syn::Expr>,
+        or: Option<Rc<UpgradeFailAction>>,
+    },
+    Watch {
+        ident: Option<syn::Ident>,
+        from: Option<syn::Expr>,
+    },
 }
 
 #[derive(Clone)]
@@ -21,51 +29,93 @@ enum UpgradeFailAction {
     Return(Option<syn::Expr>),
 }
 
-struct WeakCapture {
-    ident: syn::Ident,
-    from: Option<syn::Expr>,
-    or: Option<UpgradeFailAction>,
+#[derive(Eq, PartialEq, Ord, PartialOrd, Copy, Clone)]
+enum Mode {
+    Clone,
+    Closure,
+    ClosureAsync,
 }
 
-#[derive(Default)]
-struct Captures {
-    strong: Vec<StrongCapture>,
-    weak: Vec<WeakCapture>,
+fn is_simple_expr(mut expr: &syn::Expr) -> bool {
+    loop {
+        match expr {
+            syn::Expr::Cast(e) => expr = &*e.expr,
+            syn::Expr::Field(e) => expr = &*e.base,
+            syn::Expr::Index(e) => return is_simple_expr(&*e.expr) && is_simple_expr(&*e.index),
+            syn::Expr::Lit(_) => return true,
+            syn::Expr::Paren(e) => expr = &*e.expr,
+            syn::Expr::Path(_) => return true,
+            syn::Expr::Reference(e) => expr = &*e.expr,
+            syn::Expr::Type(e) => expr = &*e.expr,
+            _ => return false,
+        }
+    }
 }
 
-impl Captures {
-    fn set_default_fail(&mut self, action: &UpgradeFailAction) {
-        for weak in &mut self.weak {
-            if weak.or.is_none() {
-                weak.or = Some(action.clone());
+impl Capture {
+    fn set_default_fail(&mut self, action: &Rc<UpgradeFailAction>) {
+        if let Self::Weak { or, .. } = self {
+            if or.is_none() {
+                *or = Some(action.clone());
             }
         }
     }
-    fn outer_tokens(&self, go: &syn::Ident) -> Vec<TokenStream> {
-        let strongs = self.strong.iter().map(|s| {
-            let StrongCapture { ident, from } = s;
-            let from = from
-                .as_ref()
-                .map(|f| f.to_token_stream())
-                .unwrap_or_else(|| ident.to_token_stream());
-            quote! { let #ident = ::std::clone::Clone::clone(&#from); }
-        });
-        let weaks = self.weak.iter().map(|w| {
-            let WeakCapture { ident, from, .. } = w;
-            let from = from
-                .as_ref()
-                .map(|f| f.to_token_stream())
-                .unwrap_or_else(|| ident.to_token_stream());
-            quote! { let #ident = #go::glib::clone::Downgrade::downgrade(&#from); }
-        });
-        strongs.chain(weaks).collect()
+    fn outer_tokens(&self, index: usize, go: &syn::Ident) -> Option<TokenStream> {
+        Some(match self {
+            Self::Strong { ident, from } => {
+                let target = format_ident!("____strong{}", index, span = Span::mixed_site());
+                let input = from
+                    .as_ref()
+                    .map(|f| f.to_token_stream())
+                    .or_else(|| Some(ident.as_ref()?.to_token_stream()))?;
+                quote! { let #target = ::std::clone::Clone::clone(&#input); }
+            }
+            Self::Weak { ident, from, .. } => {
+                let target = format_ident!("____weak{}", index, span = Span::mixed_site());
+                let input = from
+                    .as_ref()
+                    .map(|f| f.to_token_stream())
+                    .or_else(|| Some(ident.as_ref()?.to_token_stream()))?;
+                quote! { let #target = #go::glib::clone::Downgrade::downgrade(&#input); }
+            }
+            Self::Watch { ident, from } => {
+                let target = format_ident!("____watch{}", index, span = Span::mixed_site());
+                let input = from
+                    .as_ref()
+                    .map(|f| f.to_token_stream())
+                    .or_else(|| Some(ident.as_ref()?.to_token_stream()))?;
+                if from.as_ref().map(is_simple_expr).unwrap_or(true) {
+                    quote! {
+                        let #target = #go::glib::object::Watchable::watched_object(&#input);
+                    }
+                } else {
+                    let watch_ident = syn::Ident::new("____watch", Span::mixed_site());
+                    quote! {
+                        let #watch_ident = ::std::clone::Clone::clone(&#input);
+                        let #target = #go::glib::object::Watchable::watched_object(&#watch_ident);
+                    }
+                }
+            }
+        })
     }
-    fn inner_tokens(&self, go: &syn::Ident, is_closure: bool) -> Vec<TokenStream> {
-        self.weak
-            .iter()
-            .map(|WeakCapture { ident, or, .. }| {
-                let upgrade = quote! { #go::glib::clone::Upgrade::upgrade(&#ident) };
-                let upgrade = match or {
+    fn rename_tokens(&self, index: usize) -> Option<TokenStream> {
+        Some(match self {
+            Self::Strong { ident, .. } => {
+                let ident = ident.as_ref()?;
+                let input = format_ident!("____strong{}", index, span = Span::mixed_site());
+                quote! { let #ident = #input; }
+            }
+            _ => return None,
+        })
+    }
+    fn inner_tokens(&self, index: usize, mode: Mode, go: &syn::Ident) -> Option<TokenStream> {
+        Some(match self {
+            Self::Strong { .. } => return None,
+            Self::Weak { ident, or, .. } => {
+                let ident = ident.as_ref()?;
+                let input = format_ident!("____weak{}", index, span = Span::mixed_site());
+                let upgrade = quote! { #go::glib::clone::Upgrade::upgrade(&#input) };
+                let upgrade = match or.as_ref().map(|or| or.as_ref()) {
                     None | Some(UpgradeFailAction::AllowNone) => upgrade,
                     Some(or) => {
                         let action = match or {
@@ -74,15 +124,17 @@ impl Captures {
                                 quote! { ::std::panic!("Failed to upgrade `{}`", #name) }
                             }
                             UpgradeFailAction::Default(expr) => expr.to_token_stream(),
-                            UpgradeFailAction::Return(expr) => if is_closure {
-                                quote! {
-                                    return #go::glib::closure::ToClosureReturnValue::to_closure_return_value(
-                                        &#expr
-                                    )
+                            UpgradeFailAction::Return(expr) => {
+                                if mode != Mode::Clone {
+                                    quote! {
+                                        return #go::glib::closure::ToClosureReturnValue::to_closure_return_value(
+                                            &#expr
+                                        )
+                                    }
+                                } else {
+                                    quote! { return #expr }
                                 }
-                            } else {
-                                quote! { return #expr }
-                            },
+                            }
                             UpgradeFailAction::AllowNone => unreachable!(),
                         };
                         quote_spanned! { Span::mixed_site() =>
@@ -94,8 +146,61 @@ impl Captures {
                     }
                 };
                 quote! { let #ident = #upgrade;  }
-            })
-            .collect()
+            }
+            Self::Watch { ident, .. } => {
+                if mode == Mode::ClosureAsync {
+                    return None;
+                }
+                let ident = ident.as_ref()?;
+                let input = format_ident!("____watch{}", index, span = Span::mixed_site());
+                quote! {
+                    let #ident = unsafe { #input.borrow() };
+                    let #ident = ::std::convert::AsRef::as_ref(&#ident);
+                }
+            }
+        })
+    }
+    fn async_inner_tokens(&self, index: usize) -> Option<TokenStream> {
+        Some(match self {
+            Self::Strong { ident, .. } => {
+                ident.as_ref()?;
+                quote! { let #ident = ::std::clone::Clone::clone(&#ident); }
+            }
+            Self::Weak { ident, .. } => {
+                ident.as_ref()?;
+                let input = format_ident!("____weak{}", index, span = Span::mixed_site());
+                quote! { let #input = ::std::clone::Clone::clone(&#input); }
+            }
+            Self::Watch { ident, .. } => {
+                let ident = ident.as_ref()?;
+                let input = format_ident!("____watch{}", index, span = Span::mixed_site());
+                quote! {
+                    let #ident = ::std::clone::Clone::clone(unsafe { &*#input.borrow() });
+                }
+            }
+        })
+    }
+    fn after_tokens(&self, go: &syn::Ident) -> Option<TokenStream> {
+        Some(match self {
+            Self::Watch { ident, from } if ident.is_some() || from.is_some() => {
+                let closure_ident = syn::Ident::new("____closure", Span::mixed_site());
+                if from.as_ref().map(is_simple_expr).unwrap_or(true) {
+                    let input = from
+                        .as_ref()
+                        .map(|f| f.to_token_stream())
+                        .or_else(|| Some(ident.as_ref()?.to_token_stream()))?;
+                    quote! {
+                        #go::glib::object::Watchable::watch_closure(&#input, &#closure_ident);
+                    }
+                } else {
+                    let watch_ident = syn::Ident::new("____watch", Span::mixed_site());
+                    quote! {
+                        #go::glib::object::ObjectExt::watch_closure(&#watch_ident, &#closure_ident);
+                    }
+                }
+            }
+            _ => return None,
+        })
     }
 }
 
@@ -265,16 +370,16 @@ impl<'v> Visitor<'v> {
             .attrs
             .iter()
             .position(|a| a.path.is_ident("closure"));
-        let watch_index = closure.inputs.iter().position(|pat| {
+        let has_watch = closure.inputs.iter().any(|pat| {
             pat_attrs(pat)
-                .map(|attrs| attrs.iter().any(|a| a.path.is_ident("watch")))
-                .unwrap_or(false)
+                .iter()
+                .any(|attrs| attrs.iter().any(|a| a.path.is_ident("watch")))
         });
-        if closure_index.is_none() && watch_index.is_none() {
+        if closure_index.is_none() && !has_watch {
             return None;
         }
         let has_captures = has_captures(closure.inputs.iter());
-        if (has_captures || watch_index.is_some()) && closure.capture.is_none() {
+        if (has_captures || has_watch) && closure.capture.is_none() {
             self.errors.push_spanned(
                 closure,
                 "Closure must be `move` to use #[watch] or #[strong] or #[weak]",
@@ -294,72 +399,28 @@ impl<'v> Visitor<'v> {
         } else {
             true
         };
-        let mut watch = None;
-        let mut captures = if watch_index.is_some() || has_captures {
-            let mut inputs = closure.inputs.iter().cloned().collect::<Vec<_>>();
-            if let Some(watch_index) = watch_index {
-                let mut pat = inputs.remove(watch_index);
-                let attrs = pat_attrs_mut(&mut pat).unwrap();
-                let index = attrs.iter().position(|a| a.path.is_ident("watch")).unwrap();
-                let strong = attrs.remove(index);
-                let span = strong.span();
-                for attr in attrs {
-                    self.errors.push_spanned(
-                        attr,
-                        "Extra attributes not allowed after #[watch]",
-                    );
-                }
-                let from = parse_strong.parse2(strong.tokens).unwrap_or_else(|e| {
-                    self.errors.push_syn(e);
-                    None
-                });
-                if matches!(pat, syn::Pat::Wild(_)) {
-                    watch = Some(WatchCapture { ident: None, from });
-                } else if let Some(ident) = self.validate_pat_ident(pat) {
-                    watch = Some(WatchCapture {
-                        ident: Some(ident),
-                        from,
-                    });
-                } else {
-                    self.errors.push(
-                        span,
-                        "#[watch] capture must be named or provide a source expression using #[watch(...)]",
-                    );
-                }
-            }
-            let captures = if has_captures {
-                self.get_captures(&mut inputs)
-            } else {
-                None
-            };
-            body.inputs = FromIterator::from_iter(inputs.into_iter());
-            captures
-        } else {
-            None
-        }
-        .unwrap_or_default();
 
+        let mode = match body.body.as_ref() {
+            syn::Expr::Async(_) => Mode::ClosureAsync,
+            _ => Mode::Closure,
+        };
+        let mut captures = (has_captures || has_watch)
+            .then(|| {
+                let mut inputs = closure.inputs.iter().cloned().collect::<Vec<_>>();
+                let captures = self.get_captures(&mut inputs, mode);
+                body.inputs = FromIterator::from_iter(inputs.into_iter());
+                captures
+            })
+            .flatten()
+            .unwrap_or_default();
         if let Some(action) = self.get_default_fail_action(&mut body) {
-            captures.set_default_fail(&action);
-        }
-
-        if watch_index.is_some() {
-            for pat in &body.inputs {
-                if let Some(attrs) = pat_attrs(pat) {
-                    for attr in attrs {
-                        if attr.path.is_ident("watch") {
-                            self.errors.push_spanned(
-                                attr,
-                                "Only one watch capture is allowed per closure",
-                            );
-                        }
-                    }
-                }
+            let action = Rc::new(action);
+            for capture in &mut captures {
+                capture.set_default_fail(&action);
             }
         }
 
         let go = self.crate_ident;
-        let watch_ident = syn::Ident::new("____watch", Span::mixed_site());
         let closure_ident = syn::Ident::new("____closure", Span::mixed_site());
         let values_ident = syn::Ident::new("____values", Span::mixed_site());
         let constructor = if local {
@@ -367,39 +428,16 @@ impl<'v> Visitor<'v> {
         } else {
             format_ident!("new")
         };
-        let outer = captures.outer_tokens(go);
-        let inner = captures.inner_tokens(go, true);
-        let watch_outer = watch.as_ref().map(|WatchCapture { ident, from }| {
-            let target = ident
-                .as_ref()
-                .map(|i| i.to_token_stream())
-                .unwrap_or_else(|| watch_ident.to_token_stream());
-            let from = from
-                .as_ref()
-                .map(|f| f.to_token_stream())
-                .unwrap_or_else(|| target.clone());
-            quote! {
-                let #target = #go::Watchable::watched_object(&#from);
-                let #watch_ident = unsafe { #target.borrow() };
-                let #watch_ident = ::std::convert::AsRef::as_ref(&#watch_ident);
-            }
-        });
-        let is_async = matches!(body.body.as_ref(), syn::Expr::Async(_));
-        let watch_inner = watch.as_ref().and_then(|WatchCapture { ident, .. }| {
-            if is_async {
-                return None;
-            }
-            let target = ident.as_ref()?;
-            Some(quote! {
-                let #target = unsafe { #target.borrow() };
-                let #target = ::std::convert::AsRef::as_ref(&#target);
-            })
-        });
-        let watch_after = watch.as_ref().map(|_| {
-            quote! {
-                #go::glib::object::ObjectExt::watch_closure(#watch_ident, &#closure_ident);
-            }
-        });
+        let outer = captures
+            .iter()
+            .enumerate()
+            .map(|(i, c)| c.outer_tokens(i, go));
+        let rename = captures.iter().enumerate().map(|(i, c)| c.rename_tokens(i));
+        let inner = captures
+            .iter()
+            .enumerate()
+            .map(|(i, c)| c.inner_tokens(i, mode, go));
+        let after = captures.iter().map(|c| c.after_tokens(go));
         let args_len = body.inputs.len();
         let arg_names = body.inputs.iter().enumerate().map(|(i, p)| match p {
             syn::Pat::Wild(_) => None,
@@ -427,33 +465,17 @@ impl<'v> Visitor<'v> {
                 );
             }
             #(#inner)*
-            #watch_inner
             #(#arg_values)*
             (#body)(#(#args),*)
         } };
-        let body = if is_async {
-            let async_clones = captures
-                .strong
+        let body = if mode == Mode::ClosureAsync {
+            let async_inner = captures
                 .iter()
-                .map(|s| {
-                    let ident = &s.ident;
-                    quote! { let #ident = ::std::clone::Clone::clone(&#ident); }
-                })
-                .chain(captures.weak.iter().map(|w| {
-                    let ident = &w.ident;
-                    quote! { let #ident = ::std::clone::Clone::clone(&#ident); }
-                }))
-                .chain(watch.iter().filter_map(|w| {
-                    let ident = w.ident.as_ref()?;
-                    Some(quote! {
-                        let #ident = ::std::clone::Clone::clone(
-                            unsafe { &*#ident.borrow() }
-                        );
-                    })
-                }));
+                .enumerate()
+                .map(|(i, c)| c.async_inner_tokens(i));
             quote! {
                 let #values_ident = #values_ident.to_vec();
-                #(#async_clones)*
+                #(#async_inner)*
                 #go::glib::MainContext::default().spawn_local(
                     async move { let _: () = #closure_body.await; }
                 );
@@ -469,11 +491,11 @@ impl<'v> Visitor<'v> {
         Some(parse_quote_spanned! { Span::mixed_site() =>
             {
                 #(#outer)*
-                #watch_outer
+                #(#rename)*
                 let #closure_ident = #go::glib::closure::RustClosure::#constructor(move |#values_ident| {
                     #body
                 });
-                #watch_after
+                #(#after)*
                 #closure_ident
             }
         })
@@ -490,52 +512,64 @@ impl<'v> Visitor<'v> {
             );
         }
         let mut inputs = closure.inputs.iter().cloned().collect::<Vec<_>>();
-        self.get_captures(&mut inputs).map(|mut captures| {
-            let mut body = closure.clone();
-            if let Some(action) = self.get_default_fail_action(&mut body) {
-                captures.set_default_fail(&action);
-            }
-            let go = self.crate_ident;
-            let outer = captures.outer_tokens(go);
-            let inner = captures.inner_tokens(go, false);
-            body.inputs = FromIterator::from_iter(inputs.into_iter());
-            if matches!(body.body.as_ref(), syn::Expr::Async(_)) {
-                body.body = Box::new({
-                    let syn::ExprAsync {
-                        attrs,
-                        capture,
-                        block,
-                        ..
-                    } = match body.body.as_ref() {
-                        syn::Expr::Async(e) => e,
-                        _ => unreachable!(),
-                    };
-                    parse_quote! {
-                        #(#attrs)*
-                        async #capture {
-                            #(#inner)*
-                            #block
-                        }
+        self.get_captures(&mut inputs, Mode::Clone)
+            .map(|mut captures| {
+                let mut body = closure.clone();
+                if let Some(action) = self.get_default_fail_action(&mut body) {
+                    let action = Rc::new(action);
+                    for capture in &mut captures {
+                        capture.set_default_fail(&action);
                     }
-                });
-            } else {
-                body.body = Box::new({
-                    let old_body = &body.body;
-                    parse_quote! {
-                        {
-                            #(#inner)*
-                            #old_body
-                        }
-                    }
-                });
-            }
-            parse_quote_spanned! { Span::mixed_site() =>
-                {
-                    #(#outer)*
-                    #body
                 }
-            }
-        })
+                let go = self.crate_ident;
+                let outer = captures
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| c.outer_tokens(i, go));
+                let rename = captures.iter().enumerate().map(|(i, c)| c.rename_tokens(i));
+                let inner = captures
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| c.inner_tokens(i, Mode::Clone, go));
+                body.inputs = FromIterator::from_iter(inputs.into_iter());
+                if matches!(body.body.as_ref(), syn::Expr::Async(_)) {
+                    body.body = Box::new({
+                        let syn::ExprAsync {
+                            attrs,
+                            capture,
+                            block,
+                            ..
+                        } = match body.body.as_ref() {
+                            syn::Expr::Async(e) => e,
+                            _ => unreachable!(),
+                        };
+                        parse_quote! {
+                            #(#attrs)*
+                            async #capture {
+                                #(#inner)*
+                                #block
+                            }
+                        }
+                    });
+                } else {
+                    body.body = Box::new({
+                        let old_body = &body.body;
+                        parse_quote! {
+                            {
+                                #(#inner)*
+                                #old_body
+                            }
+                        }
+                    });
+                }
+                parse_quote_spanned! { Span::mixed_site() =>
+                    {
+                        #(#outer)*
+                        #(#rename)*
+                        #body
+                    }
+                }
+            })
     }
 
     fn validate_pat_ident(&mut self, pat: syn::Pat) -> Option<syn::Ident> {
@@ -549,54 +583,167 @@ impl<'v> Visitor<'v> {
         }
     }
 
-    fn get_captures(&mut self, inputs: &mut Vec<syn::Pat>) -> Option<Captures> {
-        let mut captures = Captures::default();
+    fn get_captures(&mut self, inputs: &mut Vec<syn::Pat>, mode: Mode) -> Option<Vec<Capture>> {
+        let mut captures = Vec::new();
+        let mut names = inputs
+            .iter()
+            .filter_map(|pat| {
+                if let syn::Pat::Ident(syn::PatIdent { ident, .. }) = pat {
+                    if !pat_attrs(pat).iter().any(|attrs| {
+                        attrs.iter().any(|a| {
+                            a.path.is_ident("strong")
+                                || a.path.is_ident("weak")
+                                || (mode != Mode::Clone && a.path.is_ident("watch"))
+                        })
+                    }) {
+                        return Some(ident.clone());
+                    }
+                }
+                None
+            })
+            .collect::<HashSet<_>>();
         let mut index = 0;
+        let mut has_watch = false;
         while index < inputs.len() {
             let mut strong = None;
             let mut weak = None;
+            let mut watch = None;
             if let Some(attrs) = pat_attrs_mut(&mut inputs[index]) {
-                let index = attrs
-                    .iter()
-                    .position(|a| a.path.is_ident("strong") || a.path.is_ident("weak"));
+                let index = attrs.iter().position(|a| {
+                    a.path.is_ident("strong")
+                        || a.path.is_ident("weak")
+                        || (mode != Mode::Clone && a.path.is_ident("watch"))
+                });
                 if let Some(index) = index {
                     let attr = attrs.remove(index);
                     if attr.path.is_ident("strong") {
                         strong = Some(attr);
-                    } else {
+                    } else if attr.path.is_ident("weak") {
                         weak = Some(attr);
+                    } else if attr.path.is_ident("watch") {
+                        if !has_watch {
+                            watch = Some(attr);
+                            has_watch = true;
+                        } else {
+                            self.errors.push_spanned(
+                                attr,
+                                "Only one #[watch] attribute is allowed on closure",
+                            );
+                        }
                     }
                     for attr in attrs {
                         self.errors.push_spanned(
                             attr,
-                            "Extra attributes not allowed after #[strong] or #[weak]",
+                            "Extra attributes not allowed after #[strong] or #[weak] or #[watch]",
                         );
                     }
                 }
             }
             if let Some(strong) = strong {
+                let span = strong.span();
                 let from = parse_strong.parse2(strong.tokens).unwrap_or_else(|e| {
                     self.errors.push_syn(e);
                     None
                 });
                 let pat = inputs.remove(index);
-                if let Some(ident) = self.validate_pat_ident(pat) {
-                    captures.strong.push(StrongCapture { ident, from });
+                if from.is_some() && matches!(pat, syn::Pat::Wild(_)) {
+                    captures.push(Capture::Strong { ident: None, from });
+                } else if let Some(ident) = self.validate_pat_ident(pat) {
+                    if names.contains(&ident) {
+                        self.errors.push_spanned(
+                            &ident,
+                            format!(
+                                "Identifier `{}` is used more than once in this parameter list",
+                                ident
+                            ),
+                        );
+                    } else {
+                        names.insert(ident.clone());
+                        captures.push(Capture::Strong {
+                            ident: Some(ident),
+                            from,
+                        });
+                    }
+                } else {
+                    self.errors.push(
+                        span,
+                        "capture must be named or provide a source expression using #[strong(...)]",
+                    );
                 }
             } else if let Some(weak) = weak {
+                let span = weak.span();
                 let (from, or) = parse_weak.parse2(weak.tokens).unwrap_or_else(|e| {
                     self.errors.push_syn(e);
                     (None, None)
                 });
                 let pat = inputs.remove(index);
-                if let Some(ident) = self.validate_pat_ident(pat) {
-                    captures.weak.push(WeakCapture { ident, from, or });
+                if from.is_some() && matches!(pat, syn::Pat::Wild(_)) {
+                    let or = or.map(Rc::new);
+                    captures.push(Capture::Weak {
+                        ident: None,
+                        from,
+                        or,
+                    });
+                } else if let Some(ident) = self.validate_pat_ident(pat) {
+                    if names.contains(&ident) {
+                        self.errors.push_spanned(
+                            &ident,
+                            format!(
+                                "Identifier `{}` is used more than once in this parameter list",
+                                ident
+                            ),
+                        );
+                    } else {
+                        names.insert(ident.clone());
+                        let or = or.map(Rc::new);
+                        captures.push(Capture::Weak {
+                            ident: Some(ident),
+                            from,
+                            or,
+                        });
+                    }
+                } else {
+                    self.errors.push(
+                        span,
+                        "capture must be named or provide a source expression using #[weak(...)]",
+                    );
+                }
+            } else if let Some(watch) = watch {
+                let span = watch.span();
+                let from = parse_strong.parse2(watch.tokens).unwrap_or_else(|e| {
+                    self.errors.push_syn(e);
+                    None
+                });
+                let pat = inputs.remove(index);
+                if from.is_some() && matches!(pat, syn::Pat::Wild(_)) {
+                    captures.push(Capture::Watch { ident: None, from });
+                } else if let Some(ident) = self.validate_pat_ident(pat) {
+                    if names.contains(&ident) {
+                        self.errors.push_spanned(
+                            &ident,
+                            format!(
+                                "Identifier `{}` is used more than once in this parameter list",
+                                ident
+                            ),
+                        );
+                    } else {
+                        names.insert(ident.clone());
+                        captures.push(Capture::Watch {
+                            ident: Some(ident),
+                            from,
+                        });
+                    }
+                } else {
+                    self.errors.push(
+                        span,
+                        "capture must be named or provide a source expression using #[watch(...)]",
+                    );
                 }
             } else {
                 index += 1;
             }
         }
-        if captures.strong.is_empty() && captures.weak.is_empty() {
+        if captures.is_empty() {
             None
         } else {
             Some(captures)
