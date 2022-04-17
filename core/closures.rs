@@ -404,6 +404,7 @@ impl<'v> Visitor<'v> {
             syn::Expr::Async(_) => Mode::ClosureAsync,
             _ => Mode::Closure,
         };
+        let mut rest_index = None;
         let mut captures = (has_captures || has_watch)
             .then(|| {
                 let mut inputs = closure.inputs.iter().cloned().collect::<Vec<_>>();
@@ -417,6 +418,29 @@ impl<'v> Visitor<'v> {
             let action = Rc::new(action);
             for capture in &mut captures {
                 capture.set_default_fail(&action);
+            }
+        }
+
+        for (index, pat) in body.inputs.iter_mut().enumerate() {
+            if let Some(attrs) = pat_attrs_mut(pat) {
+                let attr_index = attrs.iter().position(|a| a.path.is_ident("rest"));
+                if let Some(attr_index) = attr_index {
+                    let attr = attrs.remove(attr_index);
+                    if !attr.tokens.is_empty() {
+                        self.errors
+                            .push_spanned(&attr.tokens, "Unknown tokens on rest parameter");
+                    }
+                    rest_index = Some(index);
+                    break;
+                }
+            }
+        }
+        if let Some(rest_index) = rest_index {
+            while body.inputs.len() > rest_index + 1 {
+                if let Some(pair) = body.inputs.pop() {
+                    self.errors
+                        .push_spanned(pair.value(), "Arguments not allowed past #[rest] parameter");
+                }
             }
         }
 
@@ -438,18 +462,24 @@ impl<'v> Visitor<'v> {
             .enumerate()
             .map(|(i, c)| c.inner_tokens(i, mode, go));
         let after = captures.iter().map(|c| c.after_tokens(go));
-        let args_len = body.inputs.len();
+        let args_len = body.inputs.len() - rest_index.map(|_| 1).unwrap_or(0);
         let arg_names = body.inputs.iter().enumerate().map(|(i, p)| match p {
             syn::Pat::Wild(_) => None,
             _ => Some(format_ident!("____arg{}", i)),
         });
         let arg_values = arg_names.clone().enumerate().filter_map(|(index, arg)| {
             let arg = arg?;
-            Some(quote! {
-                let #arg = #go::glib::Value::get(&#values_ident[#index])
-                    .unwrap_or_else(|e| {
-                        ::std::panic!("Wrong type for closure argument {}: {:?}", #index, e)
-                    });
+            Some(if Some(index) == rest_index {
+                quote! {
+                    let #arg = &#values_ident[#index..#values_ident.len()];
+                }
+            } else {
+                quote! {
+                    let #arg = #go::glib::Value::get(&#values_ident[#index])
+                        .unwrap_or_else(|e| {
+                            ::std::panic!("Wrong type for closure argument {}: {:?}", #index, e)
+                        });
+                }
             })
         });
         let args = arg_names.map(|n| {
@@ -457,7 +487,7 @@ impl<'v> Visitor<'v> {
                 .unwrap_or_else(|| quote! { () })
         });
         let closure_body = quote! { {
-            if #values_ident.len() != #args_len {
+            if #values_ident.len() < #args_len {
                 ::std::panic!(
                     "Closure called with wrong number of arguments: Expected {}, got {}",
                     #args_len,

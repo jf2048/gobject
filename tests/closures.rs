@@ -159,6 +159,14 @@ fn closure() {
         };
         cast_test.invoke::<()>(&[]);
     }
+
+    let sum = #[closure]
+    |x: i32, #[rest] rest: &[glib::Value]| -> i32 {
+        x + rest.iter().map(|v| v.get::<i32>().unwrap()).sum::<i32>()
+    };
+    assert_eq!(sum.invoke::<i32>(&[&2i32]), 2i32);
+    assert_eq!(sum.invoke::<i32>(&[&2i32, &3i32]), 5i32);
+    assert_eq!(sum.invoke::<i32>(&[&10i32, &100i32, &1000i32]), 1110i32);
 }
 
 #[gobject::class(final)]
