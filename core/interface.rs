@@ -55,7 +55,7 @@ impl InterfaceDefinition {
             TypeDefinition::parse(module, TypeBase::Interface, attrs.name, crate_ident, errors);
 
         let name = inner.name.clone();
-        let mut iface = Self {
+        let iface = Self {
             inner,
             ns: attrs.ns,
             ext_trait: attrs
@@ -79,14 +79,16 @@ impl InterfaceDefinition {
             );
         }
 
-        let extra = iface.extra_private_items();
+        iface
+    }
+    pub fn add_private_items(&mut self, errors: &Errors) {
+        let extra = self.extra_private_items();
+        self.inner.ensure_items().extend(extra);
 
-        iface.inner.ensure_items().extend(extra.into_iter());
-
-        if !iface.inner.virtual_methods.is_empty() {
-            if let Some(index) = iface.inner.properties_item_index {
-                let fields = iface.inner.type_struct_fields();
-                let items = iface.inner.ensure_items();
+        if !self.inner.virtual_methods.is_empty() {
+            if let Some(index) = self.inner.properties_item_index {
+                let fields = self.inner.type_struct_fields();
+                let items = self.inner.ensure_items();
                 match &mut items[index] {
                     syn::Item::Struct(s) => match &mut s.fields {
                         syn::Fields::Named(n) => {
@@ -102,13 +104,11 @@ impl InterfaceDefinition {
                     },
                     _ => unreachable!(),
                 }
-            } else if let Some(def) = iface.interface_struct_definition() {
-                let items = iface.inner.ensure_items();
+            } else if let Some(def) = self.interface_struct_definition() {
+                let items = self.inner.ensure_items();
                 items.push(syn::Item::Verbatim(def));
             }
         }
-
-        iface
     }
     fn extra_private_items(&self) -> Vec<syn::Item> {
         self.inner

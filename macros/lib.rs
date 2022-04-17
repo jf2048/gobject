@@ -39,26 +39,27 @@ pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
     let tokens = module
         .map(|module| {
             let go = crate_ident();
-            let mut _class_def = ClassDefinition::parse(module, opts, go, &errors);
+            let mut class = ClassDefinition::parse(module, opts, go, &errors);
             #[cfg(feature = "serde")]
             {
-                let parent_type = (!_class_def.extends.is_empty())
+                let parent_type = (!class.extends.is_empty())
                     .then(|| {
-                        let ident = _class_def.parent_type_alias()?;
+                        let ident = class.parent_type_alias()?;
                         Some(syn::parse_quote! { super::#ident })
                     })
                     .flatten();
                 serde::extend_serde(
-                    &mut _class_def.inner,
-                    _class_def.final_,
-                    _class_def.abstract_,
+                    &mut class.inner,
+                    class.final_,
+                    class.abstract_,
                     parent_type.as_ref(),
-                    _class_def.ext_trait.as_ref(),
-                    _class_def.ns.as_ref(),
+                    class.ext_trait.as_ref(),
+                    class.ns.as_ref(),
                     &errors,
                 );
             }
-            _class_def.to_token_stream()
+            class.add_private_items();
+            class.to_token_stream()
         })
         .unwrap_or_default();
     append_errors(tokens, errors)
@@ -74,20 +75,21 @@ pub fn interface(attr: TokenStream, item: TokenStream) -> TokenStream {
     let tokens = module
         .map(|module| {
             let go = crate_ident();
-            let mut _iface_def = InterfaceDefinition::parse(module, opts, go, &errors);
+            let mut iface = InterfaceDefinition::parse(module, opts, go, &errors);
             #[cfg(feature = "serde")]
             {
                 serde::extend_serde(
-                    &mut _iface_def.inner,
+                    &mut iface.inner,
                     false,
                     true,
                     None,
-                    _iface_def.ext_trait.as_ref(),
-                    _iface_def.ns.as_ref(),
+                    iface.ext_trait.as_ref(),
+                    iface.ns.as_ref(),
                     &errors,
                 );
             }
-            _iface_def.to_token_stream()
+            iface.add_private_items(&errors);
+            iface.to_token_stream()
         })
         .unwrap_or_default();
     append_errors(tokens, errors)
@@ -113,9 +115,10 @@ pub fn gtk4_widget(attr: TokenStream, item: TokenStream) -> TokenStream {
     let tokens = module
         .map(|module| {
             let go = crate_ident();
-            let mut class_def = ClassDefinition::parse(module, opts, go, &errors);
-            gtk4::extend_gtk4(&mut class_def, &errors);
-            class_def.to_token_stream()
+            let mut class = ClassDefinition::parse(module, opts, go, &errors);
+            gtk4::extend_gtk4(&mut class, &errors);
+            class.add_private_items();
+            class.to_token_stream()
         })
         .unwrap_or_default();
     append_errors(tokens, errors)

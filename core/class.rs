@@ -85,7 +85,7 @@ impl ClassDefinition {
         }
 
         let name = inner.name.clone();
-        let mut class = Self {
+        let class = Self {
             inner,
             ns: attrs.ns,
             class: attrs
@@ -140,16 +140,11 @@ impl ClassDefinition {
             }
         }
 
-        let extra = class.extra_private_items();
-
-        let (_, items) = class
-            .inner
-            .module
-            .content
-            .get_or_insert_with(Default::default);
-        items.extend(extra.into_iter());
-
         class
+    }
+    pub fn add_private_items(&mut self) {
+        let extra = self.extra_private_items();
+        self.inner.ensure_items().extend(extra);
     }
     fn extra_private_items(&self) -> Vec<syn::Item> {
         self.inner
