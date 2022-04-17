@@ -28,6 +28,7 @@ struct Attrs {
     pub final_: SpannedValue<Flag>,
     pub extends: PathList,
     pub implements: PathList,
+    pub sync: Flag,
 }
 
 impl Attrs {
@@ -74,7 +75,12 @@ impl ClassDefinition {
         let attrs = opts.0;
         attrs.validate(errors);
 
-        let inner = TypeDefinition::parse(module, TypeBase::Class, attrs.name, crate_ident, errors);
+        let mut inner =
+            TypeDefinition::parse(module, TypeBase::Class, attrs.name, crate_ident, errors);
+
+        if attrs.sync.is_some() {
+            inner.concurrency = Concurrency::SendSync;
+        }
 
         let name = inner.name.clone();
         let mut class = Self {
@@ -188,20 +194,10 @@ impl ClassDefinition {
         let glib = self.inner.glib();
         let generics = self.inner.generics.as_ref();
         let vis = &self.inner.vis;
-        let concurrency = (self.inner.concurrency == Concurrency::SendSync).then(|| {
-            let name = parse_quote! { #name };
-            let send = self.inner.trait_head(&name, quote! { ::std::marker::Send });
-            let sync = self.inner.trait_head(&name, quote! { ::std::marker::Sync });
-            quote! {
-                unsafe #send {}
-                unsafe #sync {}
-            }
-        });
         Some(quote! {
             #glib::wrapper! {
                 #vis struct #name #generics(ObjectSubclass<self::#mod_name::#name #generics>) #(#inherits),*;
             }
-            #concurrency
         })
     }
     fn class_init_method(&self) -> Option<TokenStream> {

@@ -121,7 +121,7 @@ fn object_inner_methods() {
     assert_eq!(obj.property::<u32>("my-uint"), 500);
 }
 
-#[gobject::class(final)]
+#[gobject::class(final, sync)]
 mod obj_threadsafe {
     #[derive(Default)]
     struct ObjThreadSafe {
@@ -130,8 +130,6 @@ mod obj_threadsafe {
         #[property(get, set)]
         the_string: std::sync::RwLock<String>,
     }
-    unsafe impl Send for ObjThreadSafe {}
-    unsafe impl Sync for ObjThreadSafe {}
     impl ObjThreadSafe {
         #[signal]
         fn abc(&self) {}

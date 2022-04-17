@@ -103,23 +103,6 @@ fn type_ident(ty: &syn::Type) -> Option<&syn::Ident> {
     None
 }
 
-#[inline]
-fn is_marker(path: &syn::Path, marker: &str) -> bool {
-    if path.is_ident(marker) {
-        return true;
-    }
-    let path = path
-        .to_token_stream()
-        .into_iter()
-        .map(|i| i.to_string())
-        .collect::<Vec<_>>()
-        .join("");
-    path == format!("std::marker::{}", marker)
-        || path == format!("::std::marker::{}", marker)
-        || path == format!("core::marker::{}", marker)
-        || path == format!("::core::marker::{}", marker)
-}
-
 impl TypeDefinition {
     pub fn parse(
         module: syn::ItemMod,
@@ -313,27 +296,6 @@ impl TypeDefinition {
             }
             struct_.fields = fields;
             def.properties.extend(properties);
-            if def.base == TypeBase::Class {
-                let struct_name = struct_.ident.clone();
-                let mut send = false;
-                let mut sync = false;
-                for item in items.iter() {
-                    if let syn::Item::Impl(i) = item {
-                        if type_ident(&*i.self_ty) == Some(&struct_name) {
-                            if let Some((_, path, _)) = &i.trait_ {
-                                if is_marker(path, "Send") {
-                                    send = true;
-                                } else if is_marker(path, "Sync") {
-                                    sync = true;
-                                }
-                            }
-                        }
-                    }
-                }
-                if send && sync {
-                    def.concurrency = Concurrency::SendSync;
-                }
-            }
         } else {
             def.vis = def.module.vis.clone();
             match &def.vis {
