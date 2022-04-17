@@ -371,13 +371,12 @@ impl TypeDefinition {
                 mode,
                 errors,
             ));
-            if mode == TypeMode::Subclass {
-                def.virtual_methods.extend(VirtualMethod::many_from_items(
-                    &mut impl_.items,
-                    base,
-                    errors,
-                ));
-            }
+            def.virtual_methods.extend(VirtualMethod::many_from_items(
+                &mut impl_.items,
+                base,
+                mode,
+                errors,
+            ));
         }
         def.methods_item_indices = impls.into_iter().collect();
         def

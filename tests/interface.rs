@@ -21,6 +21,10 @@ mod iface {
         pub fn dosomething(&self) -> String {
             format!("{}", self.my_prop())
         }
+        #[virt]
+        fn my_virt2(&self, v: u64) -> u64 {
+            self.my_prop() + v
+        }
     }
 }
 
@@ -60,6 +64,9 @@ mod implement2 {
         fn my_virt(&self, obj: &Self::Type, _ignore: &glib::Object) -> u64 {
             obj.my_prop() + 200 + self.parent_my_virt(obj, _ignore)
         }
+        fn my_virt2(&self, obj: &Self::Type, v: u64) -> u64 {
+            self.parent_my_virt2(obj, v) + 1
+        }
     }
 }
 
@@ -71,9 +78,11 @@ fn interface() {
     obj.emit_my_sig(123);
     assert_eq!(obj.my_prop(), 123);
     assert_eq!(obj.my_virt(&obj), 223);
+    assert_eq!(obj.my_virt2(1), 124);
     let obj = glib::Object::new::<Implementor2>(&[]).unwrap();
     obj.emit_my_sig(133);
     assert_eq!(obj.my_prop(), 155);
     assert_eq!(obj.my_virt(&obj), 610);
     assert_eq!(obj.dosomething(), "155");
+    assert_eq!(obj.my_virt2(1), 157);
 }
