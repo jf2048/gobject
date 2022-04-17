@@ -28,6 +28,7 @@ struct Attrs {
     pub final_: SpannedValue<Flag>,
     pub extends: PathList,
     pub implements: PathList,
+    pub inherits: PathList,
     pub sync: Flag,
 }
 
@@ -63,6 +64,7 @@ pub struct ClassDefinition {
     pub final_: bool,
     pub extends: Vec<syn::Path>,
     pub implements: Vec<syn::Path>,
+    pub inherits: Vec<syn::Path>,
 }
 
 impl ClassDefinition {
@@ -119,6 +121,7 @@ impl ClassDefinition {
             final_: attrs.final_.is_some(),
             extends: (*attrs.extends).clone(),
             implements: (*attrs.implements).clone(),
+            inherits: (*attrs.inherits).clone(),
         };
 
         if class.inner.name.is_none() {
@@ -180,14 +183,21 @@ impl ClassDefinition {
         if !self.wrapper {
             return None;
         }
-        let mut inherits = Vec::new();
+        let mut params = Vec::new();
         if !self.extends.is_empty() {
             let extends = &self.extends;
-            inherits.push(quote! { @extends #(#extends),* });
+            params.push(quote! { @extends #(#extends),* });
         }
         if !self.implements.is_empty() {
             let implements = &self.implements;
-            inherits.push(quote! { @implements #(#implements),* });
+            params.push(quote! { @implements #(#implements),* });
+            if !self.inherits.is_empty() {
+                let inherits = &self.inherits;
+                params.push(quote! { , #(#inherits),* });
+            }
+        } else if !self.inherits.is_empty() {
+            let inherits = &self.inherits;
+            params.push(quote! { @implements #(#inherits),* });
         }
         let mod_name = &self.inner.module.ident;
         let name = self.inner.name.as_ref()?;
@@ -196,7 +206,7 @@ impl ClassDefinition {
         let vis = &self.inner.vis;
         Some(quote! {
             #glib::wrapper! {
-                #vis struct #name #generics(ObjectSubclass<self::#mod_name::#name #generics>) #(#inherits),*;
+                #vis struct #name #generics(ObjectSubclass<self::#mod_name::#name #generics>) #(#params),*;
             }
         })
     }
