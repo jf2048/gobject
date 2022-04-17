@@ -12,6 +12,7 @@ pub struct PublicMethod {
     pub sig: syn::Signature,
     pub mode: TypeMode,
     pub constructor: Option<ConstructorType>,
+    pub generic_args: util::GenericArgs,
 }
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Copy, Clone)]
@@ -102,11 +103,16 @@ impl PublicMethod {
                 );
             }
         }
+        let generic_args = match mode {
+            TypeMode::Subclass => util::GenericArgs::new(&mut method.sig),
+            TypeMode::Wrapper => Default::default(),
+        };
         let sig = method.sig.clone();
         Some(Self {
             sig,
             mode,
             constructor,
+            generic_args,
         })
     }
     fn external_sig(&self) -> syn::Signature {
@@ -125,11 +131,12 @@ impl PublicMethod {
     pub fn is_static(&self) -> bool {
         self.constructor.is_some() || self.sig.receiver().is_none()
     }
-    pub(crate) fn prototype(&self) -> Option<TokenStream> {
+    pub(crate) fn prototype(&self, glib: &TokenStream) -> Option<TokenStream> {
         if self.is_static() {
             return None;
         }
-        let sig = self.external_sig();
+        let mut sig = self.external_sig();
+        self.generic_args.substitute(&mut sig, glib);
         Some(quote! { #sig })
     }
     pub(crate) fn definition(
@@ -149,10 +156,10 @@ impl PublicMethod {
         {
             return None;
         }
-        let proto = self.external_sig();
-        let ident = &self.sig.ident;
-        let sig = self.external_sig();
-        let args = util::signature_args(&sig);
+        let mut proto = self.external_sig();
+        self.generic_args.substitute(&mut proto, glib);
+        let ident = &proto.ident;
+        let args = util::signature_args(&proto);
         let dest = match self.mode {
             TypeMode::Subclass => sub_ty,
             TypeMode::Wrapper => wrapper_ty,
@@ -170,6 +177,7 @@ impl PublicMethod {
                 }
             });
         }
+        let cast_args = self.generic_args.cast_args(&proto, &self.sig, glib);
         if let Some(recv) = self.sig.receiver() {
             let has_ref = util::arg_reference(recv).is_some();
             let this_ident = util::arg_name(recv)
@@ -188,6 +196,7 @@ impl PublicMethod {
             Some(quote! {
                 #proto {
                     #![inline]
+                    #cast_args
                     let #this_ident = #glib::Cast::#cast::<#wrapper_ty>(self);
                     #unwrap_recv
                     #dest::#ident(#this_ident, #(#args),*)
@@ -197,6 +206,7 @@ impl PublicMethod {
             Some(quote! {
                 #proto {
                     #![inline]
+                    #cast_args
                     #dest::#ident(#(#args),*)
                 }
             })

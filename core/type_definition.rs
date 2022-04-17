@@ -371,12 +371,13 @@ impl TypeDefinition {
                 mode,
                 errors,
             ));
-            def.virtual_methods.extend(VirtualMethod::many_from_items(
-                &mut impl_.items,
-                base,
-                mode,
-                errors,
-            ));
+            if mode == TypeMode::Subclass {
+                def.virtual_methods.extend(VirtualMethod::many_from_items(
+                    &mut impl_.items,
+                    base,
+                    errors,
+                ));
+            }
         }
         def.methods_item_indices = impls.into_iter().collect();
         def
@@ -632,7 +633,11 @@ impl TypeDefinition {
                     .iter()
                     .flat_map(|s| s.method_prototypes(self.concurrency, &glib)),
             )
-            .chain(self.public_methods.iter().filter_map(|m| m.prototype()))
+            .chain(
+                self.public_methods
+                    .iter()
+                    .filter_map(|m| m.prototype(&glib)),
+            )
             .chain(self.virtual_methods.iter().map(|m| m.prototype(&glib)))
             .collect()
     }

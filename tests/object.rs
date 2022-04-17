@@ -197,3 +197,95 @@ fn visibility() {
     let obj = glib::Object::new::<objects::ObjVis4>(&[]).unwrap();
     glib::Cast::upcast::<objects::IfaceVis>(obj);
 }
+
+#[gobject::class]
+mod public_methods {
+    use glib::subclass::prelude::ObjectSubclassIsExt;
+
+    #[derive(Default)]
+    pub struct PublicMethods {
+        #[property(get, set)]
+        number: std::cell::Cell<u64>,
+        #[property(get, set)]
+        string: std::cell::RefCell<String>,
+    }
+    impl PublicMethods {
+        #[public]
+        pub fn say_hello() -> String {
+            "hello".to_string()
+        }
+        #[public]
+        pub fn get_number(&self) -> u64 {
+            self.number.get()
+        }
+        #[public]
+        pub fn get_string(#[is_a] obj: &super::PublicMethods) -> String {
+            obj.imp().string.borrow().clone()
+        }
+    }
+    impl super::PublicMethods {
+        #[public]
+        pub fn say_goodbye() -> String {
+            "goodbye".to_string()
+        }
+        #[public]
+        pub fn get_number2(&self) -> u64 {
+            self.imp().number.get()
+        }
+        #[public]
+        pub fn get_string2(obj: &Self) -> String {
+            obj.imp().string.borrow().clone()
+        }
+        #[constructor]
+        pub fn new(number: u64, string: &str) -> Self {}
+        #[constructor]
+        pub fn default() -> Self {
+            Self::new(100, "100")
+        }
+    }
+}
+
+#[gobject::class(final, extends(PublicMethods))]
+mod public_methods_final {
+    use super::PublicMethodsExt;
+    use glib::subclass::prelude::ObjectSubclassExt;
+    use glib::Cast;
+
+    #[derive(Default)]
+    pub struct PublicMethodsFinal {}
+    impl PublicMethodsFinal {
+        #[public]
+        pub fn say_hello2() -> String {
+            "hello".to_string()
+        }
+        #[public]
+        pub fn get_number3(&self) -> u64 {
+            self.instance().get_number()
+        }
+        #[public]
+        pub fn get_string3(obj: &super::PublicMethodsFinal) -> String {
+            super::PublicMethods::get_string(obj)
+        }
+    }
+    impl super::PublicMethodsFinal {
+        #[public]
+        pub fn say_goodbye2() -> String {
+            "goodbye".to_string()
+        }
+        #[public]
+        pub fn get_number4(&self) -> u64 {
+            self.get_number2()
+        }
+        #[public]
+        pub fn get_string4(obj: &Self) -> String {
+            super::PublicMethods::get_string2(obj.upcast_ref())
+        }
+        #[constructor]
+        pub fn new(number: u64, string: &str) -> Self {}
+        #[constructor]
+        pub fn default() -> Self {
+            Self::new(100, "100")
+        }
+    }
+    impl super::PublicMethodsImpl for PublicMethodsFinal {}
+}
