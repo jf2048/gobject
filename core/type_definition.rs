@@ -698,7 +698,6 @@ impl TypeDefinition {
         let glib = self.glib();
         let final_ = trait_name.is_none();
         let mut items = self.public_method_definitions(final_)?.peekable();
-        items.peek()?;
         let name = self.name.as_ref()?;
         let type_ident = format_ident!("____Object");
         let vis = &self.inner_vis;
@@ -716,6 +715,22 @@ impl TypeDefinition {
         if let Some(generics) = self.generics.as_ref() {
             let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
             if let Some(trait_name) = trait_name {
+                let items = items.peek().is_some().then(|| {
+                    let mut generics = generics.clone();
+                    let param =
+                        parse_quote! { #type_ident: #glib::IsA<super::#name #type_generics> };
+                    generics.params.push(param);
+                    let (impl_generics, _, _) = generics.split_for_impl();
+                    let protos = self.public_method_prototypes();
+                    quote! {
+                        #vis trait #trait_name: 'static {
+                            #(#protos;)*
+                        }
+                        impl #impl_generics #trait_name for #type_ident #where_clause {
+                            #(#items)*
+                        }
+                    }
+                });
                 let constructors = constructors.peek().is_some().then(|| {
                     quote! {
                         impl #impl_generics super::#name #type_generics #where_clause {
@@ -723,18 +738,8 @@ impl TypeDefinition {
                         }
                     }
                 });
-                let mut generics = generics.clone();
-                let param = parse_quote! { #type_ident: #glib::IsA<super::#name #type_generics> };
-                generics.params.push(param);
-                let (impl_generics, _, _) = generics.split_for_impl();
-                let protos = self.public_method_prototypes();
                 Some(quote! {
-                    #vis trait #trait_name: 'static {
-                        #(#protos;)*
-                    }
-                    impl #impl_generics #trait_name for #type_ident #where_clause {
-                        #(#items)*
-                    }
+                    #items
                     #constructors
                 })
             } else {
@@ -747,6 +752,16 @@ impl TypeDefinition {
             }
         } else if let Some(trait_name) = trait_name {
             let protos = self.public_method_prototypes();
+            let items = items.peek().is_some().then(|| {
+                quote! {
+                    #vis trait #trait_name: 'static {
+                        #(#protos;)*
+                    }
+                    impl<#type_ident: #glib::IsA<super::#name>> #trait_name for #type_ident {
+                        #(#items)*
+                    }
+                }
+            });
             let constructors = constructors.peek().is_some().then(|| {
                 quote! {
                     impl super::#name {
@@ -755,12 +770,7 @@ impl TypeDefinition {
                 }
             });
             Some(quote! {
-                #vis trait #trait_name: 'static {
-                    #(#protos;)*
-                }
-                impl<#type_ident: #glib::IsA<super::#name>> #trait_name for #type_ident {
-                    #(#items)*
-                }
+                #items
                 #constructors
             })
         } else {
