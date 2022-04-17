@@ -56,7 +56,7 @@ impl PublicMethod {
         errors: &Errors,
     ) -> Option<Self> {
         let mut constructor = None;
-        if base == TypeBase::Class {
+        if base == TypeBase::Class && mode == TypeMode::Wrapper {
             if let Some(attr) = util::extract_attr(&mut method.attrs, "constructor") {
                 if !attr.tokens.is_empty() {
                     errors.push_spanned(&attr.tokens, "Unknown tokens on `constructor` attribute");
@@ -144,7 +144,8 @@ impl PublicMethod {
             return None;
         }
         if self.mode == TypeMode::Wrapper
-            && (final_ || self.constructor == Some(ConstructorType::Custom))
+            && self.constructor != Some(ConstructorType::Auto)
+            && (final_ || select_statics)
         {
             return None;
         }
