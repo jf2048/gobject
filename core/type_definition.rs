@@ -410,10 +410,25 @@ impl TypeDefinition {
         &mut self.module.content.get_or_insert_with(Default::default).1
     }
     pub fn has_method(&self, mode: TypeMode, method: &str) -> bool {
-        self.find_method(mode, &format_ident!("{}", method))
-            .is_some()
+        self.find_method(mode, method).is_some()
     }
-    pub fn find_method(&self, mode: TypeMode, ident: &syn::Ident) -> Option<&syn::ImplItemMethod> {
+    pub fn find_method(&self, mode: TypeMode, method: &str) -> Option<&syn::ImplItemMethod> {
+        self.methods_items().find_map(|item| {
+            let item_mode = TypeMode::for_item_type(&*item.self_ty)?;
+            if item_mode != mode {
+                return None;
+            }
+            item.items.iter().find_map(|item| match item {
+                syn::ImplItem::Method(m) if m.sig.ident == method => Some(m),
+                _ => None,
+            })
+        })
+    }
+    pub fn find_method_ident(
+        &self,
+        mode: TypeMode,
+        ident: &syn::Ident,
+    ) -> Option<&syn::ImplItemMethod> {
         self.methods_items().find_map(|item| {
             let item_mode = TypeMode::for_item_type(&*item.self_ty)?;
             if item_mode != mode {
@@ -527,7 +542,7 @@ impl TypeDefinition {
             && extra.is_some())
         .then(|| {
             quote_spanned! { Span::mixed_site() =>
-                _GENERATED_PROPERTIES_BASE_INDEX.set(properties.len()).unwrap();
+                self::_GENERATED_PROPERTIES_BASE_INDEX.set(properties.len()).unwrap();
             }
         });
         Some(quote_spanned! { Span::mixed_site() =>

@@ -175,15 +175,19 @@ impl PublicMethod {
             });
         }
         let ident = &sig.ident;
-        let args = util::signature_args(&sig);
         let dest = match self.mode {
             TypeMode::Subclass => sub_ty,
             TypeMode::Wrapper => wrapper_ty,
         };
         if is_auto {
-            let args = args.map(|ident| {
+            let args = sig.inputs.iter().filter_map(|arg| {
+                let ident = util::arg_name(arg)?;
+                let span = match arg {
+                    syn::FnArg::Receiver(r) => r.span(),
+                    syn::FnArg::Typed(t) => t.ty.span(),
+                };
                 let name = ident.to_string().to_kebab_case();
-                quote! { (#name, &#ident) }
+                Some(quote_spanned! { span => (#name, &#ident) })
             });
             return Some(quote_spanned! { self.sig.span() =>
                 #proto {
@@ -193,6 +197,7 @@ impl PublicMethod {
                 }
             });
         }
+        let args = util::signature_args(&sig);
         let cast_args = self.generic_args.cast_args(&sig, &self.sig, glib);
         let await_ = self.sig.asyncness.as_ref().map(|_| quote! { .await });
         if let Some(recv) = self.sig.receiver() {
@@ -206,7 +211,7 @@ impl PublicMethod {
             };
             let unwrap_recv = (self.mode == TypeMode::Subclass).then(|| {
                 let ref_ = (!has_ref).then(|| quote! { & });
-                quote! {
+                quote_spanned! { recv.span() =>
                     let #this_ident = #glib::subclass::prelude::ObjectSubclassIsExt::imp(#ref_ #this_ident);
                 }
             });

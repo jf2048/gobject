@@ -207,7 +207,7 @@ impl ClassDefinition {
     }
     fn class_init_method(&self) -> Option<TokenStream> {
         let glib = self.inner.glib();
-        let class_ident = syn::Ident::new("____class", Span::mixed_site());
+        let class_ident = syn::Ident::new("class", Span::mixed_site());
         let body = self.inner.type_init_body(&quote! { #class_ident });
         let custom = self
             .inner
@@ -379,14 +379,14 @@ impl ClassDefinition {
         self.inner
             .has_method(TypeMode::Subclass, "properties")
             .then(|| {
-                quote! {
-                    let id = id - _GENERATED_PROPERTIES_BASE_INDEX.get().unwrap();
+                quote_spanned! { Span::mixed_site() =>
+                    let id = id - self::_GENERATED_PROPERTIES_BASE_INDEX.get().unwrap();
                 }
             })
     }
     #[inline]
     fn unimplemented_property(glib: &TokenStream) -> TokenStream {
-        quote! {
+        quote_spanned! { Span::mixed_site() =>
             ::std::unimplemented!(
                 "invalid property id {} for \"{}\" of type '{}' in '{}'",
                 id,
@@ -400,7 +400,7 @@ impl ClassDefinition {
     }
     #[inline]
     fn find_property_method(&self, ident: &syn::Ident) -> Option<(TypeMode, TypeMode)> {
-        if let Some(method) = self.inner.find_method(TypeMode::Wrapper, ident) {
+        if let Some(method) = self.inner.find_method_ident(TypeMode::Wrapper, ident) {
             return Some((
                 TypeMode::Wrapper,
                 method
@@ -410,7 +410,7 @@ impl ClassDefinition {
                     .unwrap_or(TypeMode::Subclass),
             ));
         }
-        if let Some(method) = self.inner.find_method(TypeMode::Subclass, ident) {
+        if let Some(method) = self.inner.find_method_ident(TypeMode::Subclass, ident) {
             return Some((
                 TypeMode::Subclass,
                 method
@@ -441,22 +441,32 @@ impl ClassDefinition {
                     .and_then(|ident| self.find_property_method(&*ident));
                 prop.set_impl(index, method, go)
             });
+        let self_ident = syn::Ident::new("self", Span::mixed_site());
+        let obj_ident = syn::Ident::new("obj", Span::mixed_site());
+        let id_ident = syn::Ident::new("id", Span::mixed_site());
+        let value_ident = syn::Ident::new("value", Span::mixed_site());
+        let pspec_ident = syn::Ident::new("pspec", Span::mixed_site());
         let rest = self
             .inner
-            .has_method(TypeMode::Subclass, "set_property")
-            .then(|| {
-                quote! {
-                    Self::set_property(self, obj, id, value, pspec)
+            .find_method(TypeMode::Subclass, "set_property")
+            .map(|method| {
+                quote_spanned! { method.sig.span() =>
+                    Self::set_property(#self_ident, #obj_ident, #id_ident, #value_ident, #pspec_ident)
                 }
             })
             .unwrap_or_else(|| Self::unimplemented_property(&glib));
-        Some(quote! {
+        let span = self
+            .inner
+            .properties_item()
+            .map(|i| i.span())
+            .unwrap_or_else(Span::call_site);
+        Some(quote_spanned! { span =>
             fn set_property(
-                &self,
-                obj: &<Self as #glib::subclass::types::ObjectSubclass>::Type,
-                id: usize,
-                value: &#glib::Value,
-                pspec: &#glib::ParamSpec
+                &#self_ident,
+                #obj_ident: &<Self as #glib::subclass::types::ObjectSubclass>::Type,
+                #id_ident: usize,
+                #value_ident: &#glib::Value,
+                #pspec_ident: &#glib::ParamSpec
             ) {
                 #adjust_index
                 #extra
@@ -484,21 +494,30 @@ impl ClassDefinition {
                     .and_then(|ident| self.find_property_method(&*ident));
                 prop.get_impl(index, method, go)
             });
+        let self_ident = syn::Ident::new("self", Span::mixed_site());
+        let obj_ident = syn::Ident::new("obj", Span::mixed_site());
+        let id_ident = syn::Ident::new("id", Span::mixed_site());
+        let pspec_ident = syn::Ident::new("pspec", Span::mixed_site());
         let rest = self
             .inner
-            .has_method(TypeMode::Subclass, "property")
-            .then(|| {
-                quote! {
-                    Self::property(self, obj, id, pspec)
+            .find_method(TypeMode::Subclass, "property")
+            .map(|method| {
+                quote_spanned! { method.sig.span() =>
+                    Self::property(#self_ident, #obj_ident, #id_ident, #pspec_ident)
                 }
             })
             .unwrap_or_else(|| Self::unimplemented_property(&glib));
-        Some(quote! {
+        let span = self
+            .inner
+            .properties_item()
+            .map(|i| i.span())
+            .unwrap_or_else(Span::call_site);
+        Some(quote_spanned! { span =>
             fn property(
-                &self,
-                obj: &<Self as #glib::subclass::types::ObjectSubclass>::Type,
-                id: usize,
-                pspec: &#glib::ParamSpec
+                &#self_ident,
+                #obj_ident: &<Self as #glib::subclass::types::ObjectSubclass>::Type,
+                #id_ident: usize,
+                #pspec_ident: &#glib::ParamSpec
             ) -> #glib::Value {
                 #adjust_index
                 #extra

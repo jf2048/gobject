@@ -3,8 +3,8 @@ use crate::{
     TypeBase, TypeMode,
 };
 use proc_macro2::{Span, TokenStream};
-use quote::{format_ident, quote};
-use syn::parse_quote;
+use quote::{format_ident, quote, quote_spanned};
+use syn::{parse_quote, parse_quote_spanned, spanned::Spanned};
 
 #[derive(Debug)]
 pub struct VirtualMethod {
@@ -45,6 +45,12 @@ impl VirtualMethod {
     ) -> Option<Self> {
         if !attr.tokens.is_empty() {
             errors.push_spanned(&attr.tokens, "Unknown tokens on virtual method");
+        }
+        if let Some(async_) = &method.sig.asyncness {
+            errors.push_spanned(
+                async_,
+                "Virtual method cannot be async, return a Future instead",
+            );
         }
         let syn::ImplItemMethod {
             attrs, vis, sig, ..
@@ -98,7 +104,7 @@ impl VirtualMethod {
     }
     pub(crate) fn prototype(&self, glib: &TokenStream) -> TokenStream {
         let sig = self.public_sig(glib);
-        quote! { #sig }
+        quote_spanned! { self.sig.span() => #sig }
     }
     pub(crate) fn definition(&self, wrapper_ty: &TokenStream, glib: &TokenStream) -> TokenStream {
         let ident = &self.sig.ident;
@@ -123,7 +129,7 @@ impl VirtualMethod {
             },
         };
         let cast_args = self.generic_args.cast_args(&sig, &self.sig, glib);
-        quote! {
+        quote_spanned! { self.sig.span() =>
             #sig {
                 #![inline]
                 let #obj_ident = #glib::Cast::upcast_ref::<#wrapper_ty>(self);
@@ -140,7 +146,7 @@ impl VirtualMethod {
         if !sig.inputs.is_empty() {
             sig.inputs.insert(
                 1,
-                parse_quote! {
+                parse_quote_spanned! { self.sig.span() =>
                     #ident: &<Self as #glib::subclass::types::ObjectSubclass>::Type
                 },
             );
@@ -157,7 +163,7 @@ impl VirtualMethod {
         let parent_ident = std::mem::replace(&mut sig.ident, self.sig.ident.clone());
         let external_sig = self.external_sig();
         let args = util::signature_args(&external_sig);
-        quote! {
+        quote_spanned! { self.sig.span() =>
             #sig {
                 #![inline]
                 #ext_trait::#parent_ident(self, #this_ident, #(#args),*)
@@ -171,7 +177,7 @@ impl VirtualMethod {
         }
         let this_ident = syn::Ident::new(&name, Span::mixed_site());
         let sig = self.parent_sig(&this_ident, glib);
-        quote! { #sig }
+        quote_spanned! { self.sig.span() => #sig }
     }
     pub(crate) fn parent_definition(&self, ty: &syn::Type, glib: &TokenStream) -> TokenStream {
         let this_ident = syn::Ident::new("____this", Span::mixed_site());
@@ -183,7 +189,7 @@ impl VirtualMethod {
             TypeBase::Class => quote! { parent_class },
             TypeBase::Interface => quote! { parent_interface::<#ty> },
         };
-        quote! {
+        quote_spanned! { self.sig.span() =>
             #sig {
                 #![inline]
                 let #this_ident = unsafe {
@@ -206,12 +212,12 @@ impl VirtualMethod {
             Some(ref arg @ syn::FnArg::Receiver(ref recv)) => {
                 let attrs = &recv.attrs;
                 let ref_ = util::arg_reference(arg);
-                sig.inputs[0] = parse_quote! {
+                sig.inputs[0] = parse_quote_spanned! { recv.span() =>
                     #(#attrs)* #ident: #ref_ #ty
                 };
             }
             Some(syn::FnArg::Typed(mut pat)) => {
-                pat.pat = parse_quote! { #ident };
+                pat.pat = parse_quote_spanned! { pat.span() => #ident };
                 if let syn::Type::Reference(r) = &mut *pat.ty {
                     r.elem = Box::new(ty);
                 } else {
@@ -231,7 +237,7 @@ impl VirtualMethod {
             syn::FnArg::Typed(syn::PatType { ty, .. }) => ty.as_ref(),
             _ => unreachable!(),
         });
-        quote! {
+        quote_spanned! { self.sig.span() =>
             #ident: fn(#(#args),*) #output
         }
     }
@@ -249,8 +255,8 @@ impl VirtualMethod {
         sig.ident = trampoline_ident.clone();
         let unwrap_recv = (self.mode == TypeMode::Subclass)
             .then(|| {
-                self.sig.receiver().map(|_| {
-            quote! {
+                self.sig.receiver().map(|recv| {
+            quote_spanned! { recv.span() =>
                 let #this_ident = #glib::subclass::prelude::ObjectSubclassIsExt::imp(#this_ident);
             }
         })
@@ -261,7 +267,7 @@ impl VirtualMethod {
             TypeMode::Wrapper => quote! { super::#type_name },
         };
         let args = util::signature_args(&sig);
-        quote! {
+        quote_spanned! { self.sig.span() =>
             #sig {
                 #unwrap_recv
                 #type_name::#ident(#(#args),*)
@@ -288,7 +294,7 @@ impl VirtualMethod {
         };
         sig.generics.params.push(param);
         let args = util::signature_args(&sig);
-        quote! {
+        quote_spanned! { self.sig.span() =>
             #sig {
                 let #this_ident = #glib::Cast::dynamic_cast_ref::<<#type_ident as #glib::subclass::types::ObjectSubclass>::Type>(
                     #this_ident

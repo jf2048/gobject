@@ -487,9 +487,14 @@ impl PropertyType {
         go: &syn::Ident,
     ) -> TokenStream {
         let glib = quote! { #go::glib };
+        let span = extra
+            .iter()
+            .map(|e| e.span())
+            .reduce(|a, b| a.join(b).unwrap_or(a))
+            .unwrap_or_else(|| ty.span());
         let pspec_type = match self {
             Self::Unspecified => {
-                return quote! {
+                return quote_spanned! { span =>
                     <#ty as #go::ParamSpecBuildable>::ParamSpec::builder(#name, #(#extra),*)
                 }
             }
@@ -498,7 +503,7 @@ impl PropertyType {
             Self::Boxed => format_ident!("ParamSpecBoxed"),
             Self::Object => format_ident!("ParamSpecObject"),
         };
-        quote! {
+        quote_spanned! { span =>
             #glib::#pspec_type::builder(
                 #name,
                 <<#ty as #glib::value::ValueType>::Type as #glib::StaticType>::static_type(),
@@ -566,10 +571,10 @@ pub enum PropertyOverride {
 impl PropertyOverride {
     fn pspec(&self, name: &str, glib: &TokenStream) -> TokenStream {
         match self {
-            PropertyOverride::Interface(target) => quote! {
+            PropertyOverride::Interface(target) => quote_spanned! { target.span() =>
                 #glib::ParamSpecOverride::for_interface::<#target>(#name)
             },
-            PropertyOverride::Class(target) => quote! {
+            PropertyOverride::Class(target) => quote_spanned! { target.span() =>
                 #glib::ParamSpecOverride::for_class::<#target>(#name)
             },
         }
@@ -753,7 +758,7 @@ impl Property {
         let props = self
             .buildable_props
             .iter()
-            .map(|(ident, value)| quote! { .#ident(#value) });
+            .map(|(ident, value)| quote_spanned! { value.span() => .#ident(#value) });
         let builder = self
             .special_type
             .builder(&name, &self.buildable_defaults, &ty, go);
@@ -768,22 +773,25 @@ impl Property {
     }
     pub fn inner_type(&self, go: &syn::Ident) -> TokenStream {
         let ty = &self.field.ty;
-        quote! { <#ty as #go::ParamStore>::Type }
+        quote_spanned! { ty.span() => <#ty as #go::ParamStore>::Type }
     }
     fn field_storage(&self, object_type: Option<&TokenStream>, go: &syn::Ident) -> TokenStream {
+        let self_ident = syn::Ident::new("self", Span::mixed_site());
         let recv = if let Some(object_type) = object_type {
-            quote! {
+            quote_spanned! { self.span() =>
                 #go::glib::subclass::prelude::ObjectSubclassIsExt::imp(
-                    #go::glib::Cast::upcast_ref::<#object_type>(self)
+                    #go::glib::Cast::upcast_ref::<#object_type>(#self_ident)
                 )
             }
         } else {
-            quote! { self }
+            quote_spanned! { self.span() => #self_ident }
         };
         match &self.storage {
-            PropertyStorage::NamedField(field) => quote! { #recv.#field },
-            PropertyStorage::UnnamedField(index) => quote! { #recv.#index },
-            PropertyStorage::Delegate(delegate) => quote! { #recv.#delegate },
+            PropertyStorage::NamedField(field) => quote_spanned! { field.span() => #recv.#field },
+            PropertyStorage::UnnamedField(index) => quote_spanned! { self.span() => #recv.#index },
+            PropertyStorage::Delegate(delegate) => {
+                quote_spanned! { delegate.span() => #recv.#delegate }
+            }
             _ => unreachable!("cannot get storage for interface/computed property"),
         }
     }
@@ -799,7 +807,7 @@ impl Property {
     #[inline]
     fn pspec_cmp(&self, index: usize) -> TokenStream {
         let index = index + 1;
-        quote! { id == #index }
+        quote_spanned! { Span::mixed_site() => id == #index }
     }
     pub fn custom_method_path(&self, set: bool) -> Option<Cow<'_, syn::Ident>> {
         let perm = match set {
@@ -845,30 +853,31 @@ impl Property {
                     true => format_ident!("set_{}", name),
                     false => format_ident!("{}", name),
                 };
-                quote! { #(#dest)*::#method }
+                quote_spanned! { self.span() => #(#dest)*::#method }
             }
             PropertyPermission::AllowCustom(path) => {
                 if path.segments.len() == 1 {
-                    quote! { #(#dest)*::#path }
+                    quote_spanned! { self.span() => #(#dest)*::#path }
                 } else {
-                    quote! { #path }
+                    quote_spanned! { self.span() => #path }
                 }
             }
             _ => return None,
         };
         let recv = match method.as_ref().map(|(_, recv)| recv) {
-            Some(TypeMode::Wrapper) => quote! { obj },
-            _ => quote! { self },
+            Some(TypeMode::Wrapper) => quote_spanned! { Span::mixed_site() => obj },
+            _ => quote_spanned! { Span::mixed_site() => self },
         };
         Some(
             set_ty
                 .map(|s| {
-                    quote! {
-                        #path(#recv, value.get::<#s>().unwrap())
+                    let value_ident = syn::Ident::new("value", Span::mixed_site());
+                    quote_spanned! { self.span() =>
+                        #path(#recv, #value_ident.get::<#s>().unwrap())
                     }
                 })
                 .unwrap_or_else(|| {
-                    quote! {
+                    quote_spanned! { self.span() =>
                         #path(#recv)
                     }
                 }),
@@ -882,7 +891,7 @@ impl Property {
         {
             name.push('_');
         }
-        format_ident!("{}", name)
+        format_ident!("{}", name, span = self.span())
     }
     pub(crate) fn get_impl(
         &self,
@@ -894,10 +903,10 @@ impl Property {
             let glib = quote! { #go::glib };
             let cmp = self.pspec_cmp(index);
             let body = if let Some(call) = self.custom_call(None, method, &glib) {
-                quote! { #glib::ToValue::to_value(&#call) }
+                quote_spanned! { self.span() => #glib::ToValue::to_value(&#call) }
             } else {
                 let field = self.field_storage(None, go);
-                quote! { #go::ParamStoreReadValue::get_value(&#field) }
+                quote_spanned! { self.span() => #go::ParamStoreReadValue::get_value(&#field) }
             };
             quote_spanned! { self.span() =>
                 if #cmp {
@@ -910,17 +919,20 @@ impl Property {
         (!self.is_inherited() && matches!(self.get, PropertyPermission::Allow)).then(|| {
             let method_name = self.getter_name();
             let ty = self.inner_type(go);
-            quote_spanned! { self.span() => fn #method_name(&self) -> #ty }
+            quote_spanned! { Span::mixed_site() => fn #method_name(&self) -> #ty }
         })
     }
     fn getter_definition(&self, object_type: &TokenStream, go: &syn::Ident) -> Option<TokenStream> {
         self.getter_prototype(go).map(|proto| {
             let body = if self.is_abstract() {
                 let name = self.name.to_string();
-                quote! { <Self as #go::glib::object::ObjectExt>::property(self, #name) }
+                let self_ident = syn::Ident::new("self", Span::mixed_site());
+                quote_spanned! { self.span() =>
+                    <Self as #go::glib::object::ObjectExt>::property(#self_ident, #name)
+                }
             } else {
                 let field = self.field_storage(Some(object_type), go);
-                quote! { #go::ParamStoreRead::get_owned(&#field) }
+                quote_spanned! { self.span() => #go::ParamStoreRead::get_owned(&#field) }
             };
             quote_spanned! { self.span() =>
                 #proto {
@@ -932,7 +944,7 @@ impl Property {
     }
     #[inline]
     fn borrow_name(&self) -> syn::Ident {
-        format_ident!("borrow_{}", self.name.field_name())
+        format_ident!("borrow_{}", self.name.field_name(), span = self.span())
     }
     fn borrow_prototype(&self, go: &syn::Ident) -> Option<TokenStream> {
         self.borrow.then(|| {
@@ -941,9 +953,9 @@ impl Property {
                 self.inner_type(go)
             } else {
                 let ty = &self.field.ty;
-                quote! { <#ty as #go::ParamStoreBorrow<'_>>::BorrowType }
+                quote_spanned! { ty.span() => <#ty as #go::ParamStoreBorrow<'_>>::BorrowType }
             };
-            quote_spanned! { self.span() => fn #method_name(&self) -> #ty }
+            quote_spanned! { Span::mixed_site() => fn #method_name(&self) -> #ty }
         })
     }
     fn borrow_definition(&self, object_type: &TokenStream, go: &syn::Ident) -> Option<TokenStream> {
@@ -962,7 +974,7 @@ impl Property {
     }
     #[inline]
     fn setter_name(&self) -> syn::Ident {
-        format_ident!("set_{}", self.name.field_name())
+        format_ident!("set_{}", self.name.field_name(), span = self.span())
     }
     #[inline]
     fn inline_set_impl<N>(
@@ -974,20 +986,21 @@ impl Property {
     where
         N: FnOnce() -> TokenStream,
     {
+        let value_ident = syn::Ident::new("value", Span::mixed_site());
         let field = self.field_storage(object_type, go);
         let construct_only = self.flags.contains(PropertyFlags::CONSTRUCT_ONLY);
         if self.get.is_allowed() && !construct_only {
             if let Some(notify) = notify {
                 let notify = notify();
                 return quote! {
-                    if #go::ParamStoreWriteChanged::set_owned_checked(&#field, value) {
+                    if #go::ParamStoreWriteChanged::set_owned_checked(&#field, #value_ident) {
                         #notify
                     }
                 };
             }
         }
         quote! {
-            #go::ParamStoreWrite::set_owned(&#field, value);
+            #go::ParamStoreWrite::set_owned(&#field, #value_ident);
         }
     }
     pub(crate) fn set_impl(
@@ -1000,29 +1013,32 @@ impl Property {
             let glib = quote! { #go::glib };
             let cmp = self.pspec_cmp(index);
             let ty = self.inner_type(go);
+            let value_ident = syn::Ident::new("value", Span::mixed_site());
             let body = if let Some(call) = self.custom_call(Some(&ty), method, &glib) {
                 quote! { #call; }
             } else if self.is_set_inline() {
+                let obj_ident = syn::Ident::new("obj", Span::mixed_site());
+                let pspec_ident = syn::Ident::new("pspec", Span::mixed_site());
                 let body = self.inline_set_impl(
                     None,
                     self.flags.contains(PropertyFlags::EXPLICIT_NOTIFY)
-                    .then(|| || quote! {
+                    .then(|| || quote_spanned! { self.span() =>
                         <<Self as #glib::subclass::types::ObjectSubclass>::Type as #glib::object::ObjectExt>::notify_by_pspec(
-                            obj,
-                            pspec
+                            #obj_ident,
+                            #pspec_ident
                         );
                     }),
                     go
                 );
                 let ty = self.inner_type(go);
                 quote! {
-                    let value = value.get::<#ty>().unwrap();
+                    let #value_ident = #value_ident.get::<#ty>().unwrap();
                     #body
                 }
             } else {
                 let field = self.field_storage(None, go);
                 quote! {
-                    #go::ParamStoreWrite::set_value(&#field, &value);
+                    #go::ParamStoreWrite::set_value(&#field, &#value_ident);
                 }
             };
             quote_spanned! { self.span() =>
@@ -1045,7 +1061,7 @@ impl Property {
         (allowed && !construct_only && !self.is_inherited()).then(|| {
             let method_name = self.setter_name();
             let ty = self.inner_type(go);
-            quote_spanned! { self.span() => fn #method_name(&self, value: #ty) }
+            quote_spanned! { Span::mixed_site() => fn #method_name(&self, value: #ty) }
         })
     }
     fn setter_definition(
@@ -1056,13 +1072,15 @@ impl Property {
         go: &syn::Ident,
     ) -> Option<TokenStream> {
         self.setter_prototype(go).map(|proto| {
+            let self_ident = syn::Ident::new("self", Span::mixed_site());
+            let value_ident = syn::Ident::new("value", Span::mixed_site());
             let body = if !self.is_abstract() && self.is_set_inline() {
                 self.inline_set_impl(
                     Some(object_type),
                     Some(|| {
-                        quote! {
+                        quote_spanned! { self.span() =>
                             <Self as #go::glib::object::ObjectExt>::notify_by_pspec(
-                                self,
+                                #self_ident,
                                 &#properties_path()[#index]
                             );
                         }
@@ -1071,8 +1089,8 @@ impl Property {
                 )
             } else {
                 let name = self.name.to_string();
-                quote! {
-                    <Self as #go::glib::object::ObjectExt>::set_property(self, #name, value);
+                quote_spanned! { self.span() =>
+                    <Self as #go::glib::object::ObjectExt>::set_property(#self_ident, #name, #value_ident);
                 }
             };
             quote_spanned! { self.span() =>
@@ -1089,8 +1107,9 @@ impl Property {
             && !self.flags.contains(PropertyFlags::CONSTRUCT_ONLY)
             && self.notify)
             .then(|| {
-                let method_name = format_ident!("notify_{}", self.name.field_name());
-                quote_spanned! { self.span() => fn #method_name(&self) }
+                let method_name =
+                    format_ident!("notify_{}", self.name.field_name(), span = self.span());
+                quote_spanned! { Span::mixed_site() => fn #method_name(&self) }
             })
     }
     fn notify_definition(
@@ -1100,7 +1119,7 @@ impl Property {
         glib: &TokenStream,
     ) -> Option<TokenStream> {
         self.notify_prototype().map(|proto| {
-            quote_spanned! { self.span() =>
+            quote_spanned! { Span::mixed_site() =>
                 #proto {
                     #![inline]
                     <Self as #glib::object::ObjectExt>::notify_by_pspec(
@@ -1123,12 +1142,12 @@ impl Property {
             && self.connect_notify)
             .then(|| {
                 let method_name = if local {
-                    format_ident!("connect_{}_notify_local", self.name.field_name())
+                    format_ident!("connect_{}_notify_local", self.name.field_name(), span = self.span())
                 } else {
-                    format_ident!("connect_{}_notify", self.name.field_name())
+                    format_ident!("connect_{}_notify", self.name.field_name(), span = self.span())
                 };
-                quote_spanned! { self.span() =>
-                    fn #method_name<____Func: Fn(&Self) #concurrency + 'static>(&self, f: ____Func) -> #glib::SignalHandlerId
+                quote_spanned! { Span::mixed_site() =>
+                    fn #method_name<Func: Fn(&Self) #concurrency + 'static>(&self, func: Func) -> #glib::SignalHandlerId
                 }
             })
     }
@@ -1142,17 +1161,17 @@ impl Property {
             .map(|proto| {
                 let name = self.name.to_string();
                 let call = if concurrency == Concurrency::None {
-                    format_ident!("connect_notify_local")
+                    format_ident!("connect_notify_local", span = self.span())
                 } else {
-                    format_ident!("connect_notify")
+                    format_ident!("connect_notify", span = self.span())
                 };
-                quote_spanned! { self.span() =>
+                quote_spanned! { Span::mixed_site() =>
                     #proto {
                         #![inline]
                         <Self as #glib::object::ObjectExt>::#call(
                             self,
                             Some(#name),
-                            move |recv, _| f(recv),
+                            move |recv, _| func(recv),
                         )
                     }
                 }
