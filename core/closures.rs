@@ -407,12 +407,9 @@ impl<'v> Visitor<'v> {
             );
         }
 
-        let mut body = closure.clone();
-        body.capture = None;
+        let mut attrs = closure.attrs.clone();
         let local = if let Some(closure_index) = closure_index {
-            let mut attrs = closure.attrs.clone();
             let attr = attrs.remove(closure_index);
-            body.attrs = attrs;
             parse_closure.parse2(attr.tokens).unwrap_or_else(|e| {
                 self.errors.push_syn(e);
                 false
@@ -421,28 +418,24 @@ impl<'v> Visitor<'v> {
             true
         };
 
-        let mode = match body.body.as_ref() {
+        let mode = match closure.body.as_ref() {
             syn::Expr::Async(_) => Mode::ClosureAsync,
             _ => Mode::Closure,
         };
+        let mut inputs = closure.inputs.iter().cloned().collect::<Vec<_>>();
         let mut rest_index = None;
         let mut captures = (has_captures || has_watch)
-            .then(|| {
-                let mut inputs = closure.inputs.iter().cloned().collect::<Vec<_>>();
-                let captures = self.get_captures(&mut inputs, mode);
-                body.inputs = FromIterator::from_iter(inputs.into_iter());
-                captures
-            })
+            .then(|| self.get_captures(&mut inputs, mode))
             .flatten()
             .unwrap_or_default();
-        if let Some(action) = self.get_default_fail_action(&mut body) {
+        if let Some(action) = self.get_default_fail_action(&mut attrs) {
             let action = Rc::new(action);
             for capture in &mut captures {
                 capture.set_default_fail(&action);
             }
         }
 
-        for (index, pat) in body.inputs.iter_mut().enumerate() {
+        for (index, pat) in inputs.iter_mut().enumerate() {
             if let Some(attrs) = pat_attrs_mut(pat) {
                 let attr_index = attrs.iter().position(|a| a.path.is_ident("rest"));
                 if let Some(attr_index) = attr_index {
@@ -457,11 +450,10 @@ impl<'v> Visitor<'v> {
             }
         }
         if let Some(rest_index) = rest_index {
-            while body.inputs.len() > rest_index + 1 {
-                if let Some(pair) = body.inputs.pop() {
-                    self.errors
-                        .push_spanned(pair.value(), "Arguments not allowed past #[rest] parameter");
-                }
+            while inputs.len() > rest_index + 1 {
+                let pat = inputs.remove(rest_index + 1);
+                self.errors
+                    .push_spanned(pat, "Arguments not allowed past #[rest] parameter");
             }
         }
 
@@ -483,31 +475,29 @@ impl<'v> Visitor<'v> {
             .enumerate()
             .map(|(i, c)| c.inner_tokens(i, mode, go));
         let after = captures.iter().map(|c| c.after_tokens(go));
-        let args_len = body.inputs.len() - rest_index.map(|_| 1).unwrap_or(0);
-        let arg_names = body.inputs.iter().enumerate().map(|(i, p)| match p {
+        let args_len = inputs.len() - rest_index.map(|_| 1).unwrap_or(0);
+        let arg_unwraps = inputs.iter().enumerate().map(|(index, pat)| match pat {
             syn::Pat::Wild(_) => None,
-            _ => Some(format_ident!("____arg{}", i)),
+            _ => {
+                let attrs = pat_attrs(pat).into_iter().flat_map(|a| a.iter());
+                Some(if Some(index) == rest_index {
+                    quote! {
+                        #(#attrs)*
+                        let #pat = &#values_ident[#index..#values_ident.len()];
+                    }
+                } else {
+                    quote! {
+                        #(#attrs)*
+                        let #pat = #go::glib::Value::get(&#values_ident[#index])
+                            .unwrap_or_else(|e| {
+                                ::std::panic!("Wrong type for closure argument {}: {:?}", #index, e)
+                            });
+                    }
+                })
+            }
         });
-        let arg_values = arg_names.clone().enumerate().filter_map(|(index, arg)| {
-            let arg = arg?;
-            Some(if Some(index) == rest_index {
-                quote! {
-                    let #arg = &#values_ident[#index..#values_ident.len()];
-                }
-            } else {
-                quote! {
-                    let #arg = #go::glib::Value::get(&#values_ident[#index])
-                        .unwrap_or_else(|e| {
-                            ::std::panic!("Wrong type for closure argument {}: {:?}", #index, e)
-                        });
-                }
-            })
-        });
-        let args = arg_names.map(|n| {
-            n.map(|n| n.to_token_stream())
-                .unwrap_or_else(|| quote! { () })
-        });
-        let closure_body = quote! { {
+        let expr = &closure.body;
+        let inner_body = quote! { {
             if #values_ident.len() < #args_len {
                 ::std::panic!(
                     "Closure called with wrong number of arguments: Expected {}, got {}",
@@ -516,8 +506,8 @@ impl<'v> Visitor<'v> {
                 );
             }
             #(#inner)*
-            #(#arg_values)*
-            (#body)(#(#args),*)
+            #(#arg_unwraps)*
+            #expr
         } };
         let body = if mode == Mode::ClosureAsync {
             let async_inner = captures
@@ -528,14 +518,26 @@ impl<'v> Visitor<'v> {
                 let #values_ident = #values_ident.to_vec();
                 #(#async_inner)*
                 #go::glib::MainContext::default().spawn_local(
-                    async move { let _: () = #closure_body.await; }
+                    async move { let _: () = #inner_body.await; }
                 );
                 ::std::option::Option::None
             }
         } else {
+            let inner_body = match &closure.output {
+                syn::ReturnType::Type(_, ty) => {
+                    let ret = syn::Ident::new("____ret", Span::mixed_site());
+                    quote! {
+                        {
+                            let #ret: #ty = #inner_body;
+                            #ret
+                        }
+                    }
+                }
+                _ => quote! { #inner_body },
+            };
             quote! {
                 #go::glib::closure::ToClosureReturnValue::to_closure_return_value(
-                    &#closure_body
+                    &#inner_body
                 )
             }
         };
@@ -566,7 +568,7 @@ impl<'v> Visitor<'v> {
         self.get_captures(&mut inputs, Mode::Clone)
             .map(|mut captures| {
                 let mut body = closure.clone();
-                if let Some(action) = self.get_default_fail_action(&mut body) {
+                if let Some(action) = self.get_default_fail_action(&mut body.attrs) {
                     let action = Rc::new(action);
                     for capture in &mut captures {
                         capture.set_default_fail(&action);
@@ -802,18 +804,15 @@ impl<'v> Visitor<'v> {
 
     fn get_default_fail_action(
         &mut self,
-        closure: &mut syn::ExprClosure,
+        attrs: &mut Vec<syn::Attribute>,
     ) -> Option<UpgradeFailAction> {
-        let index = closure
-            .attrs
-            .iter()
-            .position(|syn::Attribute { path: p, .. }| {
-                p.is_ident("default_panic")
-                    || p.is_ident("default_allow_none")
-                    || p.is_ident("default_return")
-            });
+        let index = attrs.iter().position(|syn::Attribute { path: p, .. }| {
+            p.is_ident("default_panic")
+                || p.is_ident("default_allow_none")
+                || p.is_ident("default_return")
+        });
         if let Some(index) = index {
-            let attr = closure.attrs.remove(index);
+            let attr = attrs.remove(index);
             if attr.path.is_ident("default_panic") {
                 if let Err(e) = syn::parse2::<syn::parse::Nothing>(attr.tokens) {
                     self.errors.push_syn(e);

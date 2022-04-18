@@ -190,9 +190,12 @@ fn async_closure() {
     let ctx = glib::MainContext::default();
     let (tx, mut rx) = futures_channel::mpsc::unbounded::<u64>();
     let obj = SendObject::new();
-    let obj2 = &obj;
+    let get_obj = || &obj;
     let closure = #[closure]
-    move |s: String, #[strong] tx, #[weak(obj)] _obj, #[watch] obj2| async move {
+    move |s: &str,
+                        #[strong] tx,
+                        #[weak(obj or_panic)] _obj,
+                        #[watch(*get_obj())] obj2| async move {
         glib::timeout_future_seconds(0).await;
         let v = s.parse().unwrap();
         tx.unbounded_send(v).unwrap();
