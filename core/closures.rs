@@ -204,6 +204,27 @@ impl Capture {
     }
 }
 
+fn extract_idents(pat: &syn::Pat, idents: &mut HashSet<syn::Ident>) {
+    use syn::Pat::*;
+    match pat {
+        Box(p) => extract_idents(&*p.pat, idents),
+        Ident(p) => {
+            idents.insert(p.ident.clone());
+        }
+        Or(p) => p.cases.iter().for_each(|p| extract_idents(p, idents)),
+        Reference(p) => extract_idents(&*p.pat, idents),
+        Slice(p) => p.elems.iter().for_each(|p| extract_idents(p, idents)),
+        Struct(p) => p
+            .fields
+            .iter()
+            .for_each(|p| extract_idents(&*p.pat, idents)),
+        Tuple(p) => p.elems.iter().for_each(|p| extract_idents(p, idents)),
+        TupleStruct(p) => p.pat.elems.iter().for_each(|p| extract_idents(p, idents)),
+        Type(p) => extract_idents(&*p.pat, idents),
+        _ => {}
+    }
+}
+
 mod keywords {
     syn::custom_keyword!(local);
     syn::custom_keyword!(or);
@@ -615,23 +636,22 @@ impl<'v> Visitor<'v> {
 
     fn get_captures(&mut self, inputs: &mut Vec<syn::Pat>, mode: Mode) -> Option<Vec<Capture>> {
         let mut captures = Vec::new();
-        let mut names = inputs
-            .iter()
-            .filter_map(|pat| {
-                if let syn::Pat::Ident(syn::PatIdent { ident, .. }) = pat {
-                    if !pat_attrs(pat).iter().any(|attrs| {
-                        attrs.iter().any(|a| {
-                            a.path.is_ident("strong")
-                                || a.path.is_ident("weak")
-                                || (mode != Mode::Clone && a.path.is_ident("watch"))
-                        })
-                    }) {
-                        return Some(ident.clone());
-                    }
+        let mut names = HashSet::new();
+        for pat in &*inputs {
+            if let syn::Pat::Ident(syn::PatIdent { ident, .. }) = pat {
+                if !pat_attrs(pat).iter().any(|attrs| {
+                    attrs.iter().any(|a| {
+                        a.path.is_ident("strong")
+                            || a.path.is_ident("weak")
+                            || (mode != Mode::Clone && a.path.is_ident("watch"))
+                    })
+                }) {
+                    names.insert(ident.clone());
                 }
-                None
-            })
-            .collect::<HashSet<_>>();
+            } else {
+                extract_idents(pat, &mut names);
+            }
+        }
         let mut index = 0;
         let mut has_watch = false;
         while index < inputs.len() {
