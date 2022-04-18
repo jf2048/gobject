@@ -100,7 +100,7 @@ impl FromMeta for InnerExpr {
                 return Err(darling::Error::unsupported_format("meta"));
             }
         };
-        Ok(Self(syn::parse_str(&lit.value())?))
+        Ok(Self(lit.parse()?))
     }
     fn from_value(value: &syn::Lit) -> darling::Result<Self> {
         Ok(Self(syn::Expr::Lit(syn::ExprLit {
@@ -379,8 +379,11 @@ impl PropertyAttrs {
 struct PropertyStorageAttr(syn::Expr);
 
 impl FromMeta for PropertyStorageAttr {
-    fn from_string(value: &str) -> darling::Result<Self> {
-        Ok(Self(syn::parse_str(value)?))
+    fn from_value(lit: &syn::Lit) -> darling::Result<Self> {
+        match lit {
+            syn::Lit::Str(lit) => Ok(Self(lit.parse()?)),
+            _ => Err(darling::Error::unexpected_lit_type(lit)),
+        }
     }
 }
 
@@ -403,17 +406,23 @@ impl FromMeta for PropertyPermission {
     fn from_word() -> darling::Result<Self> {
         Ok(Self::Allow)
     }
-    fn from_bool(allow: bool) -> darling::Result<Self> {
-        Ok(if allow { Self::Allow } else { Self::Deny })
-    }
-    fn from_string(value: &str) -> darling::Result<Self> {
-        if value == "()" {
-            return Ok(Self::AllowNoMethod);
+    fn from_value(lit: &syn::Lit) -> darling::Result<Self> {
+        match lit {
+            syn::Lit::Str(lit) => {
+                let value = lit.value();
+                if value == "()" {
+                    return Ok(Self::AllowNoMethod);
+                }
+                if value == "_" {
+                    return Ok(Self::AllowCustomDefault);
+                }
+                Ok(Self::AllowCustom(lit.parse()?))
+            }
+            syn::Lit::Bool(syn::LitBool { value, .. }) => {
+                Ok(if *value { Self::Allow } else { Self::Deny })
+            }
+            _ => Err(darling::Error::unexpected_lit_type(lit)),
         }
-        if value == "_" {
-            return Ok(Self::AllowCustomDefault);
-        }
-        Ok(Self::AllowCustom(syn::parse_str(value)?))
     }
 }
 
