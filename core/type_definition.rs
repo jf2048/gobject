@@ -643,7 +643,7 @@ impl TypeDefinition {
             )?;
             self.public_methods
                 .iter()
-                .filter_map(move |m| m.definition(&ty, &sub_ty, false, final_, &glib))
+                .filter_map(move |m| m.definition(&ty, &sub_ty, false, false, final_, &glib))
         };
         let virtual_methods = {
             let glib = self.glib();
@@ -675,8 +675,14 @@ impl TypeDefinition {
         let mut constructors = self
             .public_methods
             .iter()
-            .filter_map(|m| m.definition(&ty, &sub_ty, true, final_, &glib))
+            .filter_map(|m| m.definition(&ty, &sub_ty, true, false, final_, &glib))
             .peekable();
+        let mut auto_constructors = self
+            .public_methods
+            .iter()
+            .filter_map(|m| m.definition(&ty, &sub_ty, true, true, final_, &glib))
+            .peekable();
+        let has_constructors = constructors.peek().is_some() || auto_constructors.peek().is_some();
         let async_trait = match self.concurrency {
             Concurrency::None => quote! { #[#go::async_trait::async_trait(?Send)] },
             Concurrency::SendSync => quote! { #[#go::async_trait::async_trait] },
@@ -702,10 +708,11 @@ impl TypeDefinition {
                         }
                     }
                 });
-                let constructors = constructors.peek().is_some().then(|| {
+                let constructors = has_constructors.then(|| {
                     quote! {
                         impl #impl_generics super::#name #type_generics #where_clause {
                             #(pub #constructors)*
+                            #(#auto_constructors)*
                         }
                     }
                 });
@@ -718,6 +725,7 @@ impl TypeDefinition {
                     impl #impl_generics super::#name #type_generics #where_clause {
                         #(pub #items)*
                         #(pub #constructors)*
+                        #(#auto_constructors)*
                     }
                 })
             }
@@ -735,10 +743,11 @@ impl TypeDefinition {
                     }
                 }
             });
-            let constructors = constructors.peek().is_some().then(|| {
+            let constructors = has_constructors.then(|| {
                 quote! {
                     impl super::#name {
                         #(pub #constructors)*
+                        #(#auto_constructors)*
                     }
                 }
             });
@@ -751,6 +760,7 @@ impl TypeDefinition {
                 impl super::#name {
                     #(pub #items)*
                     #(pub #constructors)*
+                    #(#auto_constructors)*
                 }
             })
         }

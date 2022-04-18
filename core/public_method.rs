@@ -4,8 +4,8 @@ use crate::{
 };
 use heck::ToKebabCase;
 use proc_macro2::{Span, TokenStream};
-use quote::{format_ident, quote};
-use syn::parse_quote;
+use quote::{format_ident, quote, quote_spanned};
+use syn::{parse_quote, spanned::Spanned};
 
 #[derive(Debug)]
 pub struct PublicMethod {
@@ -13,11 +13,12 @@ pub struct PublicMethod {
     pub mode: TypeMode,
     pub constructor: Option<ConstructorType>,
     pub generic_args: util::GenericArgs,
+    pub custom_body: Option<Box<syn::Expr>>,
 }
 
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Copy, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub enum ConstructorType {
-    Auto,
+    Auto(syn::Visibility),
     Custom,
 }
 
@@ -35,7 +36,7 @@ impl PublicMethod {
             if let syn::ImplItem::Method(method) = item {
                 let public_method = Self::from_method(method, base, mode, errors);
                 if let Some(public_method) = public_method {
-                    if public_method.constructor == Some(ConstructorType::Auto) {
+                    if matches!(public_method.constructor, Some(ConstructorType::Auto(_))) {
                         to_remove.push(index);
                     }
                     public_methods.push(public_method);
@@ -78,7 +79,7 @@ impl PublicMethod {
                             }
                         }
                     }
-                    constructor = Some(ConstructorType::Auto);
+                    constructor = Some(ConstructorType::Auto(method.vis.clone()));
                 } else {
                     constructor = Some(ConstructorType::Custom);
                 }
@@ -113,6 +114,7 @@ impl PublicMethod {
             mode,
             constructor,
             generic_args,
+            custom_body: None,
         })
     }
     fn external_sig(&self) -> syn::Signature {
@@ -144,32 +146,46 @@ impl PublicMethod {
         wrapper_ty: &TokenStream,
         sub_ty: &TokenStream,
         select_statics: bool,
+        select_auto: bool,
         final_: bool,
         glib: &TokenStream,
     ) -> Option<TokenStream> {
         if select_statics != self.is_static() {
             return None;
         }
-        if self.mode == TypeMode::Wrapper
-            && self.constructor != Some(ConstructorType::Auto)
-            && (final_ || select_statics)
-        {
+        let is_auto = matches!(self.constructor, Some(ConstructorType::Auto(_)));
+        if select_auto != is_auto {
             return None;
         }
-        let mut proto = self.external_sig();
-        self.generic_args.substitute(&mut proto, glib);
-        let ident = &proto.ident;
-        let args = util::signature_args(&proto);
+        if self.mode == TypeMode::Wrapper && !is_auto && (final_ || select_statics) {
+            return None;
+        }
+        let mut sig = self.external_sig();
+        self.generic_args.substitute(&mut sig, glib);
+        let proto = match &self.constructor {
+            Some(ConstructorType::Auto(vis)) => quote! { #vis #sig },
+            _ => quote! { #sig },
+        };
+        if let Some(custom_body) = self.custom_body.as_ref() {
+            return Some(quote_spanned! { self.sig.span() =>
+                #proto {
+                    #![inline]
+                    #custom_body
+                }
+            });
+        }
+        let ident = &sig.ident;
+        let args = util::signature_args(&sig);
         let dest = match self.mode {
             TypeMode::Subclass => sub_ty,
             TypeMode::Wrapper => wrapper_ty,
         };
-        if self.constructor == Some(ConstructorType::Auto) {
+        if is_auto {
             let args = args.map(|ident| {
                 let name = ident.to_string().to_kebab_case();
                 quote! { (#name, &#ident) }
             });
-            return Some(quote! {
+            return Some(quote_spanned! { self.sig.span() =>
                 #proto {
                     #![inline]
                     #glib::Object::new::<#wrapper_ty>(&[#(#args),*])
@@ -177,7 +193,7 @@ impl PublicMethod {
                 }
             });
         }
-        let cast_args = self.generic_args.cast_args(&proto, &self.sig, glib);
+        let cast_args = self.generic_args.cast_args(&sig, &self.sig, glib);
         let await_ = self.sig.asyncness.as_ref().map(|_| quote! { .await });
         if let Some(recv) = self.sig.receiver() {
             let has_ref = util::arg_reference(recv).is_some();
@@ -194,7 +210,7 @@ impl PublicMethod {
                     let #this_ident = #glib::subclass::prelude::ObjectSubclassIsExt::imp(#ref_ #this_ident);
                 }
             });
-            Some(quote! {
+            Some(quote_spanned! { self.sig.span() =>
                 #proto {
                     #![inline]
                     #cast_args
@@ -204,7 +220,7 @@ impl PublicMethod {
                 }
             })
         } else {
-            Some(quote! {
+            Some(quote_spanned! { self.sig.span() =>
                 #proto {
                     #![inline]
                     #cast_args

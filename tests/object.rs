@@ -245,7 +245,7 @@ mod public_methods {
             obj.imp().string.borrow().clone()
         }
         #[constructor]
-        pub fn new(number: u64, string: &str) -> Self {}
+        fn new(number: u64, string: &str) -> Self {}
         #[constructor]
         pub fn default() -> Self {
             Self::new(100, "100")
@@ -294,7 +294,7 @@ mod public_methods_final {
             super::PublicMethods::get_string2(obj.upcast_ref())
         }
         #[constructor]
-        pub fn new(number: u64, string: &str) -> Self {}
+        fn new(number: u64, string: &str) -> Self {}
         #[constructor]
         pub fn default() -> Self {
             Self::new(100, "100")
