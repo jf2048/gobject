@@ -456,9 +456,11 @@ impl TypeDefinition {
         let sig = sig_func(&ident);
         let call_user_method = has_method.then(|| {
             let input_names = sig.inputs.iter().map(|arg| match arg {
-                syn::FnArg::Receiver(_) => quote! { self },
+                syn::FnArg::Receiver(_) => quote_spanned! { Span::mixed_site() => self },
                 syn::FnArg::Typed(arg) => match &*arg.pat {
-                    syn::Pat::Ident(syn::PatIdent { ident, .. }) => quote! { #ident },
+                    syn::Pat::Ident(syn::PatIdent { ident, .. }) => {
+                        quote_spanned! { Span::mixed_site() => #ident }
+                    }
                     _ => unimplemented!(),
                 },
             });

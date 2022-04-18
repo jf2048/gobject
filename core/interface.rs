@@ -6,7 +6,7 @@ use darling::{util::PathList, FromMeta};
 use heck::ToUpperCamelCase;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned, ToTokens};
-use syn::{parse_quote, spanned::Spanned};
+use syn::{parse_quote, parse_quote_spanned, spanned::Spanned};
 
 #[derive(Debug, Default, FromMeta)]
 #[darling(default)]
@@ -208,7 +208,7 @@ impl InterfaceDefinition {
         let properties = self.inner.properties_method();
         let signals = self.inner.signals_method();
         let type_init = self.inner.method_wrapper("type_init", |ident| {
-            parse_quote! {
+            parse_quote_spanned! { Span::mixed_site() =>
                 fn #ident(type_: &mut #glib::subclass::types::InitializingType<Self>)
             }
         });

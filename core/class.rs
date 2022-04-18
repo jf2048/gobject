@@ -9,7 +9,7 @@ use darling::{
 use heck::ToUpperCamelCase;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned, ToTokens};
-use syn::{parse_quote, spanned::Spanned};
+use syn::{parse_quote, parse_quote_spanned, spanned::Spanned};
 
 #[derive(Debug, Default, FromMeta)]
 #[darling(default)]
@@ -322,20 +322,22 @@ impl ClassDefinition {
         });
         let class_init = self.class_init_method();
         let instance_init = self.inner.method_wrapper("instance_init", |ident| {
-            parse_quote! {
+            parse_quote_spanned! { Span::mixed_site() =>
                 fn #ident(obj: &#glib::subclass::types::InitializingObject<Self>)
             }
         });
         let type_init = self.inner.method_wrapper("type_init", |ident| {
-            parse_quote! {
+            parse_quote_spanned! { Span::mixed_site() =>
                 fn #ident(type_: &mut #glib::subclass::types::InitializingType<Self>)
             }
         });
-        let new = self
-            .inner
-            .method_wrapper("new", |ident| parse_quote! { fn #ident() -> Self });
+        let new = self.inner.method_wrapper("new", |ident| {
+            parse_quote_spanned! { Span::mixed_site() =>
+                fn #ident() -> Self
+            }
+        });
         let with_class = self.inner.method_wrapper("with_class", |ident| {
-            parse_quote! {
+            parse_quote_spanned! { Span::mixed_site() =>
                 fn #ident(klass: &<Self as #glib::subclass::types::ObjectSubclass>::Class) -> Self
             }
         });
@@ -514,12 +516,12 @@ impl ClassDefinition {
         let set_property = self.set_property_method();
         let property = self.property_method();
         let constructed = self.inner.method_wrapper("constructed", |ident| {
-            parse_quote! {
+            parse_quote_spanned! { Span::mixed_site() =>
                 fn #ident(&self, obj: &<Self as #glib::subclass::types::ObjectSubclass>::Type)
             }
         });
         let dispose = self.inner.method_wrapper("dispose", |ident| {
-            parse_quote! {
+            parse_quote_spanned! { Span::mixed_site() =>
                 fn #ident(&self, obj: &<Self as #glib::subclass::types::ObjectSubclass>::Type)
             }
         });
