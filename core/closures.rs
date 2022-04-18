@@ -475,7 +475,25 @@ impl<'v> Visitor<'v> {
             .enumerate()
             .map(|(i, c)| c.inner_tokens(i, mode, go));
         let after = captures.iter().map(|c| c.after_tokens(go));
-        let args_len = inputs.len() - rest_index.map(|_| 1).unwrap_or(0);
+        let required_arg_count = inputs
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(i, p)| {
+                (Some(i) != rest_index && !matches!(p, syn::Pat::Wild(_))).then(|| i + 1)
+            })
+            .unwrap_or(0);
+        let assert_arg_count = (required_arg_count > 0).then(|| {
+            quote! {
+                if #values_ident.len() < #required_arg_count {
+                    ::std::panic!(
+                        "Closure called with wrong number of arguments: Expected {}, got {}",
+                        #required_arg_count,
+                        #values_ident.len(),
+                    );
+                }
+            }
+        });
         let arg_unwraps = inputs.iter().enumerate().map(|(index, pat)| match pat {
             syn::Pat::Wild(_) => None,
             _ => {
@@ -498,13 +516,7 @@ impl<'v> Visitor<'v> {
         });
         let expr = &closure.body;
         let inner_body = quote! { {
-            if #values_ident.len() < #args_len {
-                ::std::panic!(
-                    "Closure called with wrong number of arguments: Expected {}, got {}",
-                    #args_len,
-                    #values_ident.len(),
-                );
-            }
+            #assert_arg_count
             #(#inner)*
             #(#arg_unwraps)*
             #expr
