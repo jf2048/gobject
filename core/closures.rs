@@ -596,6 +596,16 @@ impl<'v> Visitor<'v> {
                             syn::Expr::Async(e) => e,
                             _ => unreachable!(),
                         };
+                        let block = match &body.output {
+                            syn::ReturnType::Type(_, ty) => {
+                                let ret = syn::Ident::new("____ret", Span::mixed_site());
+                                quote! {
+                                    let #ret: #ty = #block;
+                                    #ret
+                                }
+                            }
+                            _ => quote! { #block },
+                        };
                         parse_quote! {
                             #(#attrs)*
                             async #capture {
@@ -604,6 +614,7 @@ impl<'v> Visitor<'v> {
                             }
                         }
                     });
+                    body.output = syn::ReturnType::Default;
                 } else {
                     body.body = Box::new({
                         let old_body = &body.body;
