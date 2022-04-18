@@ -133,6 +133,10 @@ mod obj_threadsafe {
     impl ObjThreadSafe {
         #[signal]
         fn abc(&self) {}
+        #[public]
+        async fn async_method(&self) {
+            glib::timeout_future_seconds(0).await;
+        }
     }
 }
 
@@ -151,6 +155,7 @@ fn concurrency() {
         o.set_the_uint(256);
         o.set_the_string("Hello".into());
         o.emit_abc();
+        glib::MainContext::default().block_on(o.async_method());
     })
     .join()
     .unwrap();
@@ -220,6 +225,11 @@ mod public_methods {
         pub fn get_string(#[is_a] obj: &super::PublicMethods) -> String {
             obj.imp().string.borrow().clone()
         }
+        #[public]
+        async fn get_string_async(&self) -> String {
+            glib::timeout_future_seconds(0).await;
+            self.string.borrow().clone()
+        }
     }
     impl super::PublicMethods {
         #[public]
@@ -239,6 +249,11 @@ mod public_methods {
         #[constructor]
         pub fn default() -> Self {
             Self::new(100, "100")
+        }
+        #[public]
+        async fn get_string2_async(&self) -> String {
+            glib::timeout_future_seconds(0).await;
+            self.imp().string.borrow().clone()
         }
     }
 }

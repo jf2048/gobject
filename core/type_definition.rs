@@ -659,6 +659,7 @@ impl TypeDefinition {
         )
     }
     pub(crate) fn public_methods(&self, trait_name: Option<&syn::Ident>) -> Option<TokenStream> {
+        let go = &self.crate_ident;
         let glib = self.glib();
         let final_ = trait_name.is_none();
         let mut items = self.public_method_definitions(final_)?.peekable();
@@ -676,6 +677,10 @@ impl TypeDefinition {
             .iter()
             .filter_map(|m| m.definition(&ty, &sub_ty, true, final_, &glib))
             .peekable();
+        let async_trait = match self.concurrency {
+            Concurrency::None => quote! { #[#go::async_trait::async_trait(?Send)] },
+            Concurrency::SendSync => quote! { #[#go::async_trait::async_trait] },
+        };
         if let Some(generics) = self.generics.as_ref() {
             let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
             if let Some(trait_name) = trait_name {
@@ -687,9 +692,11 @@ impl TypeDefinition {
                     let (impl_generics, _, _) = generics.split_for_impl();
                     let protos = self.public_method_prototypes();
                     quote! {
+                        #async_trait
                         #vis trait #trait_name: 'static {
                             #(#protos;)*
                         }
+                        #async_trait
                         impl #impl_generics #trait_name for #type_ident #where_clause {
                             #(#items)*
                         }
@@ -718,9 +725,11 @@ impl TypeDefinition {
             let protos = self.public_method_prototypes();
             let items = items.peek().is_some().then(|| {
                 quote! {
+                    #async_trait
                     #vis trait #trait_name: 'static {
                         #(#protos;)*
                     }
+                    #async_trait
                     impl<#type_ident: #glib::IsA<super::#name>> #trait_name for #type_ident {
                         #(#items)*
                     }

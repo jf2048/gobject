@@ -113,6 +113,8 @@
 //! ```
 
 #[doc(hidden)]
+pub use async_trait;
+#[doc(hidden)]
 #[cfg(feature = "gio_macros")]
 pub use gio;
 #[doc(hidden)]

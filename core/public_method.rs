@@ -178,6 +178,7 @@ impl PublicMethod {
             });
         }
         let cast_args = self.generic_args.cast_args(&proto, &self.sig, glib);
+        let await_ = self.sig.asyncness.as_ref().map(|_| quote! { .await });
         if let Some(recv) = self.sig.receiver() {
             let has_ref = util::arg_reference(recv).is_some();
             let this_ident = util::arg_name(recv)
@@ -199,7 +200,7 @@ impl PublicMethod {
                     #cast_args
                     let #this_ident = #glib::Cast::#cast::<#wrapper_ty>(self);
                     #unwrap_recv
-                    #dest::#ident(#this_ident, #(#args),*)
+                    #dest::#ident(#this_ident, #(#args),*) #await_
                 }
             })
         } else {
@@ -207,7 +208,7 @@ impl PublicMethod {
                 #proto {
                     #![inline]
                     #cast_args
-                    #dest::#ident(#(#args),*)
+                    #dest::#ident(#(#args),*) #await_
                 }
             })
         }
