@@ -138,6 +138,13 @@ impl ClassDefinition {
                     "Virtual method not allowed on final class",
                 );
             }
+        } else if let Some(extends) = class.extends.first() {
+            if class.parent_trait.is_none() {
+                errors.push_spanned(
+                    extends,
+                    "Derivable class must specify `parent_trait` when using `extends`",
+                );
+            }
         }
 
         class
