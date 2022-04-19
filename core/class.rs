@@ -343,6 +343,7 @@ impl ClassDefinition {
         });
         Some(quote! {
             const _: () = {
+                #[allow(unused_imports)]
                 use #glib;
                 #[#glib::object_subclass]
                 #head {
@@ -606,7 +607,10 @@ impl ToTokens for ClassDefinition {
                 .then(|| {
                     let mod_name = &module.ident;
                     let vis = &self.inner.vis;
-                    quote! { #vis use #mod_name::#ext; }
+                    quote! {
+                        #[allow(unused_imports)]
+                        #vis use #mod_name::#ext;
+                    }
                 })
         });
         let parent_trait = self.parent_trait.as_ref().map(|p| quote! { #p });
@@ -630,7 +634,7 @@ impl ToTokens for ClassDefinition {
             }
         });
 
-        let class = quote_spanned! { module.span() =>
+        let class = quote! {
             #module
             #wrapper
             #is_subclassable

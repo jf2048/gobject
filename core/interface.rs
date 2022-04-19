@@ -5,7 +5,7 @@ use crate::{
 use darling::{util::PathList, FromMeta};
 use heck::ToUpperCamelCase;
 use proc_macro2::{Span, TokenStream};
-use quote::{format_ident, quote, quote_spanned, ToTokens};
+use quote::{format_ident, quote, ToTokens};
 use syn::{parse_quote, parse_quote_spanned, spanned::Spanned};
 
 #[derive(Debug, Default, FromMeta)]
@@ -214,6 +214,7 @@ impl InterfaceDefinition {
         });
         Some(quote! {
             const _: () = {
+                #[allow(unused_imports)]
                 use #glib;
                 #[#glib::object_interface]
                 unsafe #head {
@@ -291,7 +292,10 @@ impl ToTokens for InterfaceDefinition {
                 .then(|| {
                     let mod_name = &module.ident;
                     let vis = &self.inner.vis;
-                    quote! { #vis use #mod_name::#ext; }
+                    quote! {
+                        #[allow(unused_imports)]
+                        #vis use #mod_name::#ext;
+                    }
                 })
         });
         let parent_trait = self.parent_trait.as_ref().map(|p| quote! { #p });
@@ -308,7 +312,7 @@ impl ToTokens for InterfaceDefinition {
             }
         });
 
-        let iface = quote_spanned! { module.span() =>
+        let iface = quote! {
             #module
             #wrapper
             #is_implementable
