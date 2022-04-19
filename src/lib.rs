@@ -132,6 +132,10 @@ pub use gobject_macros::gtk4_widget;
 pub use gobject_macros::serde_cast;
 pub use gobject_macros::{class, clone_block, interface, Properties};
 
+#[cfg(feature = "gio_macros")]
+mod action;
+#[cfg(feature = "gio_macros")]
+pub use action::*;
 mod buildable;
 pub use buildable::*;
 mod construct_cell;

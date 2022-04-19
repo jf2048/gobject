@@ -3,16 +3,21 @@ use darling::util::{Flag, SpannedValue};
 use proc_macro2::Span;
 
 #[inline]
-pub(crate) fn check_flag(flag: &SpannedValue<Flag>) -> Option<Span> {
+pub fn check_spanned<T>(value: &Option<SpannedValue<T>>) -> Option<Span> {
+    value.as_ref().map(|v| v.span())
+}
+
+#[inline]
+pub fn check_flag(flag: &SpannedValue<Flag>) -> Option<Span> {
     flag.is_some().then(|| flag.span())
 }
 
 #[inline]
-pub(crate) fn check_bool(flag: &SpannedValue<Option<bool>>) -> Option<Span> {
+pub fn check_bool(flag: &SpannedValue<Option<bool>>) -> Option<Span> {
     flag.is_some().then(|| flag.span())
 }
 
-pub(crate) fn disallow<'t>(
+pub fn disallow<'t>(
     name: &str,
     flags: impl IntoIterator<Item = &'t (&'static str, Option<Span>)>,
     errors: &Errors,
@@ -24,7 +29,7 @@ pub(crate) fn disallow<'t>(
     }
 }
 
-pub(crate) fn only_one<'t>(
+pub fn only_one<'t>(
     flags: impl IntoIterator<Item = &'t (&'static str, Option<Span>)> + Clone,
     errors: &Errors,
 ) {

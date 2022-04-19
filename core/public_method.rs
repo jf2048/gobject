@@ -169,7 +169,6 @@ impl PublicMethod {
         if let Some(custom_body) = self.custom_body.as_ref() {
             return Some(quote_spanned! { self.sig.span() =>
                 #proto {
-                    #![inline]
                     #custom_body
                 }
             });

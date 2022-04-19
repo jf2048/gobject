@@ -869,6 +869,17 @@ impl<'v> Visitor<'v> {
         }
         None
     }
+
+    fn visit_one(&mut self, expr: &mut syn::Expr) {
+        if let syn::Expr::Closure(closure) = expr {
+            let new_expr = self
+                .create_gclosure(closure)
+                .or_else(|| self.create_closure(closure));
+            if let Some(new_expr) = new_expr {
+                *expr = new_expr;
+            }
+        };
+    }
 }
 
 impl<'v> VisitMut for Visitor<'v> {
@@ -893,4 +904,12 @@ pub fn closures(item: &mut syn::Item, crate_ident: &syn::Ident, errors: &Errors)
         errors,
     };
     visitor.visit_item_mut(item);
+}
+
+pub fn closure_expr(expr: &mut syn::Expr, crate_ident: &syn::Ident, errors: &Errors) {
+    let mut visitor = Visitor {
+        crate_ident,
+        errors,
+    };
+    visitor.visit_one(expr);
 }

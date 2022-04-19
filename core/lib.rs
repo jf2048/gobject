@@ -6,7 +6,7 @@ mod public_method;
 mod signal;
 mod type_definition;
 pub mod util;
-mod validations;
+pub mod validations;
 mod virtual_method;
 
 pub use class::*;

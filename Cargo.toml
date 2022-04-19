@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 gtk4_macros = ["gtk4", "gobject-macros/gtk4"]
-gio_macros = ["gio"]
+gio_macros = ["gio", "gobject-macros/gio"]
 serde_macros = ["serde", "gobject-macros/serde"]
 
 [dependencies]

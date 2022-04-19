@@ -2,6 +2,8 @@ use gobject_core::util::{self, Errors};
 use proc_macro::TokenStream;
 use quote::ToTokens;
 
+#[cfg(feature = "gio")]
+mod actions;
 #[cfg(feature = "gtk4")]
 mod gtk4;
 #[cfg(feature = "serde")]
@@ -40,6 +42,8 @@ pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
         .map(|module| {
             let go = crate_ident();
             let mut class = ClassDefinition::parse(module, opts, go, &errors);
+            #[cfg(feature = "gio")]
+            actions::extend_actions(&mut class, &errors);
             #[cfg(feature = "serde")]
             {
                 let parent_type = (!class.extends.is_empty())

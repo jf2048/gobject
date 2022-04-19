@@ -112,13 +112,19 @@ where
     let args = parse::<ParenAttributeArgs>(input, errors)
         .unwrap_or_default()
         .0;
-    match T::from_list(&args) {
-        Ok(args) => args,
-        Err(e) => {
-            errors.push_darling(e);
-            Default::default()
-        }
-    }
+    T::from_list(&args)
+        .map_err(|e| errors.push_darling(e))
+        .unwrap_or_default()
+}
+
+pub fn parse_paren_list_optional<T>(input: TokenStream, errors: &Errors) -> Option<T>
+where
+    T: darling::FromMeta,
+{
+    let args = parse::<ParenAttributeArgs>(input, errors)
+        .unwrap_or_default()
+        .0;
+    T::from_list(&args).map_err(|e| errors.push_darling(e)).ok()
 }
 
 pub(crate) fn format_name(ident: &syn::Ident) -> String {
@@ -147,7 +153,7 @@ pub(crate) fn is_valid_name(name: &str) -> bool {
     }
 }
 
-pub(crate) fn arg_reference(arg: &syn::FnArg) -> Option<TokenStream> {
+pub fn arg_reference(arg: &syn::FnArg) -> Option<TokenStream> {
     match arg {
         syn::FnArg::Receiver(syn::Receiver {
             reference,
