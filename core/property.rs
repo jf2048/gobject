@@ -850,10 +850,8 @@ impl Property {
             false => &self.get,
         };
         let dest = std::iter::once_with(|| match method.as_ref().map(|(dest, _)| dest) {
-            Some(TypeMode::Wrapper) => quote! {
-                <Self as #glib::subclass::types::ObjectSubclass>::Type
-            },
-            _ => quote! { Self },
+            Some(TypeMode::Subclass) => quote! { Self },
+            _ => quote! { <Self as #glib::subclass::types::ObjectSubclass>::Type },
         });
         let path = match perm {
             PropertyPermission::AllowCustomDefault => {
@@ -874,8 +872,8 @@ impl Property {
             _ => return None,
         };
         let recv = match method.as_ref().map(|(_, recv)| recv) {
-            Some(TypeMode::Wrapper) => quote_spanned! { Span::mixed_site() => obj },
-            _ => quote_spanned! { Span::mixed_site() => self },
+            Some(TypeMode::Subclass) => quote_spanned! { Span::mixed_site() => self },
+            _ => quote_spanned! { Span::mixed_site() => obj },
         };
         Some(
             set_ty
