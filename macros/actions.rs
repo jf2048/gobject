@@ -1,10 +1,10 @@
 use darling::{
     util::{Flag, SpannedValue},
-    FromMeta,
+    FromAttributes, FromMeta,
 };
 use gobject_core::{
     util::{self, Errors},
-    validations, TypeContext, TypeMode,
+    validations, PublicMethod, TypeContext, TypeMode,
 };
 use heck::ToKebabCase;
 use proc_macro2::{Span, TokenStream};
@@ -24,22 +24,13 @@ pub(crate) fn extend_actions(def: &mut gobject_core::ClassDefinition, errors: &E
         return;
     }
     validate_actions(&actions, errors);
-    {
-        use TypeContext::*;
-        use TypeMode::*;
-        let sub_ty = def.inner.type_(Subclass, Subclass, External);
-        let sub_ty = sub_ty.as_ref();
-        let wrapper_ty = def.inner.type_(Subclass, Wrapper, External);
-        let wrapper_ty = wrapper_ty.as_ref();
-        for a in &actions {
-            try_customize_public_method(a, true, sub_ty, wrapper_ty, def, errors);
-            try_customize_public_method(a, false, sub_ty, wrapper_ty, def, errors);
-        }
+    for action in &actions {
+        action.override_public_methods(None, def, errors);
     }
     let go = &def.inner.crate_ident;
     let this_ident = syn::Ident::new("obj", Span::mixed_site());
     let actions = actions.iter().map(|action| {
-        let action = action.to_token_stream(&this_ident, go);
+        let action = action.to_token_stream(&this_ident, true, go);
         quote! { #go::gio::prelude::ActionMapExt::add_action(#this_ident, &#action); }
     });
     def.inner.add_custom_stmt(
@@ -67,88 +58,11 @@ pub(crate) fn validate_actions(actions: &[Action], errors: &Errors) {
     }
 }
 
-fn try_customize_public_method(
-    action: &Action,
-    activate: bool,
-    sub_ty: Option<&TokenStream>,
-    wrapper_ty: Option<&TokenStream>,
-    def: &mut gobject_core::ClassDefinition,
-    errors: &Errors,
-) -> Option<()> {
-    let handler = match activate {
-        true => action.activate.as_ref()?,
-        false => action.change_state.as_ref()?,
-    };
-    let sub_ty = sub_ty?;
-    let wrapper_ty = wrapper_ty?;
-    let public_method = def
-        .inner
-        .public_methods
-        .iter_mut()
-        .find(|pm| pm.mode == handler.mode && pm.sig.ident == handler.sig.ident)?;
-    if def.final_ && handler.mode == TypeMode::Wrapper {
-        errors.push_spanned(
-            &handler.sig,
-            "Action on final class wrapper cannot be #[public]",
-        );
-        return None;
-    }
-    if handler.sig.receiver().is_none() {
-        errors.push_spanned(&handler.sig, "Action without `self` cannot be #[public]");
-        return None;
-    }
-    public_method.sig.output = syn::ReturnType::Default;
-    public_method.sig.inputs = handler
-        .sig
-        .inputs
-        .iter()
-        .cloned()
-        .enumerate()
-        .filter_map(|(i, mut arg)| {
-            if Some(i) == handler.parameter_index.map(|p| p.0) {
-                match &mut arg {
-                    syn::FnArg::Typed(ty) => {
-                        ty.pat = parse_quote_spanned! { Span::mixed_site() => param };
-                    }
-                    _ => {}
-                }
-                return Some(arg);
-            }
-            (Some(i) != handler.state_index.map(|p| p.0)
-                && Some(i) != handler.action_index.map(|p| p.0))
-            .then(|| arg)
-        })
-        .collect();
-    if let Some(recv) = handler.sig.receiver() {
-        let mut recv = recv.clone();
-        match &mut recv {
-            syn::FnArg::Receiver(recv) => {
-                recv.self_token = parse_quote_spanned! { Span::mixed_site() => self }
-            }
-            syn::FnArg::Typed(pat) => {
-                if let syn::Pat::Ident(p) = &mut *pat.pat {
-                    p.ident = parse_quote_spanned! { Span::mixed_site() => self };
-                }
-            }
-        }
-        public_method.sig.inputs[0] = recv;
-    }
-    public_method.custom_body = Some(Box::new(handler.to_public_method_expr(
-        &action.name,
-        sub_ty,
-        wrapper_ty,
-        action,
-        activate,
-        &def.inner.crate_ident,
-    )));
-    Some(())
-}
-
-#[derive(Default, FromMeta)]
-#[darling(default)]
+#[derive(Default, FromAttributes)]
+#[darling(default, attributes(action))]
 struct ActionAttrs {
     name: Option<syn::LitStr>,
-    parameter_type: Option<SpannedValue<syn::LitStr>>,
+    parameter_type: Option<SpannedValue<ParameterType>>,
     change_state: SpannedValue<Flag>,
     default: Option<SpannedValue<syn::Expr>>,
     default_variant: Option<SpannedValue<syn::Expr>>,
@@ -156,17 +70,29 @@ struct ActionAttrs {
     disabled: SpannedValue<Flag>,
 }
 
+#[derive(Eq, PartialEq, Ord, PartialOrd, Copy, Clone)]
+pub(crate) enum HandlerType {
+    Activate,
+    ChangeState,
+}
+
 pub(crate) struct ActionHandler {
     pub span: Span,
     pub sig: syn::Signature,
     pub mode: TypeMode,
+    pub ty: HandlerType,
     pub parameter_index: Option<(usize, Span)>,
     pub state_index: Option<(usize, Span)>,
     pub action_index: Option<(usize, Span)>,
 }
 
 impl ActionHandler {
-    fn new(method: &mut syn::ImplItemMethod, mode: TypeMode, errors: &Errors) -> Self {
+    fn new(
+        method: &mut syn::ImplItemMethod,
+        mode: TypeMode,
+        ty: HandlerType,
+        errors: &Errors,
+    ) -> Self {
         let skip = if let Some(recv) = method.sig.receiver() {
             if mode == TypeMode::Subclass && util::arg_reference(recv).is_none() {
                 errors.push_spanned(recv, "Subclass action receiver must be `&self`");
@@ -184,18 +110,14 @@ impl ActionHandler {
                 _ => continue,
             };
             if let Some(attr) = util::extract_attr(&mut arg.attrs, "state") {
-                if !attr.tokens.is_empty() {
-                    errors.push_spanned(&attr.tokens, "Unknown tokens on #[state]");
-                }
+                util::require_empty(&attr, errors);
                 if state_index.is_some() {
                     errors.push_spanned(&attr, "Duplicate state argument");
                 } else {
                     state_index = Some((index, arg.span()));
                 }
             } else if let Some(attr) = util::extract_attr(&mut arg.attrs, "action") {
-                if !attr.tokens.is_empty() {
-                    errors.push_spanned(&attr.tokens, "Unknown tokens on #[action]");
-                }
+                util::require_empty(&attr, errors);
                 if action_index.is_some() {
                     errors.push_spanned(&attr, "Duplicate action argument");
                 } else {
@@ -207,10 +129,17 @@ impl ActionHandler {
                 parameter_index = Some((index, arg.span()));
             }
         }
+        if ty == HandlerType::ChangeState && parameter_index.is_none() {
+            errors.push_spanned(
+                &method.sig,
+                "Change state handler must have a parameter to receive the new state",
+            );
+        }
         let mut handler = Self {
             span: method.span(),
             sig: method.sig.clone(),
             mode,
+            ty,
             parameter_index,
             state_index,
             action_index,
@@ -228,33 +157,48 @@ impl ActionHandler {
         }
         handler
     }
-    fn parameter_type(&self) -> Option<&syn::Type> {
-        self.parameter_index
-            .map(|(index, _)| {
-                let param = self.sig.inputs.iter().nth(index);
-                match param {
-                    Some(syn::FnArg::Typed(p)) => Some(&*p.ty),
-                    _ => None,
-                }
-            })
-            .flatten()
+    fn parameter_type(&self, action: &Action) -> Option<&syn::Type> {
+        if self.ty != HandlerType::Activate
+            && !matches!(&action.parameter_type, ParameterType::Inferred)
+        {
+            return None;
+        }
+        self.parameter_index.and_then(|(index, _)| {
+            let param = self.sig.inputs.iter().nth(index);
+            match param {
+                Some(syn::FnArg::Typed(p)) => Some(&*p.ty),
+                _ => None,
+            }
+        })
     }
     fn state_type(&self, go: &syn::Ident) -> Option<Cow<'_, syn::Type>> {
-        self.state_index
-            .map(|(index, _)| {
-                let param = self.sig.inputs.iter().nth(index);
-                match param {
-                    Some(syn::FnArg::Typed(p)) => Some(Cow::Borrowed(&*p.ty)),
-                    _ => None,
-                }
+        (self.ty == HandlerType::ChangeState)
+            .then(|| {
+                self.parameter_index.and_then(|(index, _)| {
+                    let param = self.sig.inputs.iter().nth(index);
+                    match param {
+                        Some(syn::FnArg::Typed(p)) => Some(Cow::Borrowed(&*p.ty)),
+                        _ => None,
+                    }
+                })
             })
             .flatten()
             .or_else(|| {
-                self.return_type().map(|ty| {
-                    Cow::Owned(parse_quote_spanned! { ty.span() =>
-                        <#ty as #go::ActionStateReturn>::ReturnType
+                self.state_index
+                    .and_then(|(index, _)| {
+                        let param = self.sig.inputs.iter().nth(index);
+                        match param {
+                            Some(syn::FnArg::Typed(p)) => Some(Cow::Borrowed(&*p.ty)),
+                            _ => None,
+                        }
                     })
-                })
+                    .or_else(|| {
+                        self.return_type().map(|ty| {
+                            Cow::Owned(parse_quote_spanned! { ty.span() =>
+                                <#ty as #go::ActionStateReturn>::ReturnType
+                            })
+                        })
+                    })
             })
     }
     fn return_type(&self) -> Option<&syn::Type> {
@@ -263,11 +207,17 @@ impl ActionHandler {
             _ => None,
         }
     }
-    fn to_token_stream(
+    pub(crate) fn param_needs_convert(&self, action: &Action) -> bool {
+        match self.ty {
+            HandlerType::Activate => matches!(&action.parameter_type, ParameterType::Inferred),
+            HandlerType::ChangeState => !action.state_variant,
+        }
+    }
+    fn to_signal_closure(
         &self,
-        this_ident: &syn::Ident,
         action: &Action,
-        activate: bool,
+        this_ident: &syn::Ident,
+        is_object: bool,
         go: &syn::Ident,
     ) -> TokenStream {
         let glib = quote! { #go::glib };
@@ -298,7 +248,13 @@ impl ActionHandler {
                     .map(|_| quote! { #param_ident: #glib::Variant })
                     .unwrap_or_else(|| quote! { _ }),
             ),
-            self.sig.receiver().map(|_| quote! { #[watch] #this_ident }),
+            self.sig.receiver().map(|_| {
+                if is_object {
+                    quote! { #[watch] #this_ident }
+                } else {
+                    quote! { #[weak(or_panic)] #this_ident }
+                }
+            }),
         ]
         .into_iter()
         .flatten();
@@ -316,18 +272,23 @@ impl ActionHandler {
                     }
                 }),
             }),
-            (action.parameter_type.is_none())
+            (!matches!(&action.parameter_type, ParameterType::Empty))
                 .then(|| ())
-                .and_then(|_| self.parameter_index)
+                .and(self.parameter_index)
                 .map(|(_, span)| {
-                    let cast_ty = action.parameter_type().map(|param_ty| {
-                        quote_spanned! { span =>
-                            let #param_ident: #param_ty = #param_ident;
-                        }
+                    let param_ty = match self.ty {
+                        HandlerType::Activate => action.parameter_type().map(Cow::Borrowed),
+                        HandlerType::ChangeState => action.state_type(go),
+                    };
+                    let cast_ty = param_ty.map(|param_ty| quote_spanned! { span =>
+                        let #param_ident: #param_ty = #param_ident;
                     });
-                    quote_spanned! { span =>
+                    let convert = self.param_needs_convert(action).then(|| quote_spanned! { span =>
                         let #param_ident = #glib::FromVariant::from_variant(&#param_ident)
                             .expect("Invalid type passed for action parameter");
+                    });
+                    quote_spanned! { span =>
+                        #convert
                         #cast_ty
                     }
                 }),
@@ -366,30 +327,26 @@ impl ActionHandler {
                         #glib::ToVariant::to_variant(&#ret_ident)
                     }
                 });
-            let call = activate
-                .then(|| {
+            let call = match self.ty {
+                HandlerType::Activate => {
                     let ref_ = action_ref.is_none().then(|| quote! { & });
                     quote_spanned! { ty.span() =>
-                        #go::gio::prelude::ActionExt::change_state(#ref_ #action_ident, &#state)
+                        #go::gio::prelude::ActionExt::change_state(#ref_ #action_ident, &#state);
                     }
-                })
-                .unwrap_or_else(|| {
-                    quote_spanned! { ty.span() =>
-                        #action_ident.set_state(&#state)
-                    }
-                });
+                }
+                HandlerType::ChangeState => quote_spanned! { ty.span() =>
+                    #action_ident.set_state(&#state);
+                },
+            };
             let cast_ty = action.state_type(go).map(|state_ty| {
                 quote_spanned! { ty.span() =>
                     let #ret_ident: #state_ty = #ret_ident;
                 }
             });
             quote_spanned! { ty.span() =>
-                match #ret_ident {
-                    ::std::option::Option::Some(#ret_ident) => {
-                        #cast_ty
-                        #call
-                    },
-                    _ => {},
+                if let ::std::option::Option::Some(#ret_ident) = #ret_ident {
+                    #cast_ty
+                    #call
                 }
             }
         });
@@ -435,16 +392,66 @@ impl ActionHandler {
     }
     fn to_public_method_expr(
         &self,
-        name: &str,
+        action: &Action,
         sub_ty: &TokenStream,
         wrapper_ty: &TokenStream,
-        action: &Action,
-        activate: bool,
+        bind_expr: Option<&syn::Expr>,
         go: &syn::Ident,
     ) -> syn::Expr {
         let glib = quote! { #go::glib };
         let ident = &self.sig.ident;
         let self_ident = syn::Ident::new("self", Span::mixed_site());
+        let name = &action.name;
+        let recv = match self.sig.receiver() {
+            Some(recv) => recv,
+            None => match self.ty {
+                HandlerType::Activate => {
+                    let param = self
+                        .parameter_index
+                        .map(|(_, span)| {
+                            let param_ident = syn::Ident::new("param", Span::mixed_site());
+                            let param = self
+                                .param_needs_convert(action)
+                                .then(|| {
+                                    quote_spanned! { self.sig.span() =>
+                                        #go::glib::ToVariant::to_variant(&#param_ident)
+                                    }
+                                })
+                                .unwrap_or_else(|| quote! { #param_ident });
+                            quote_spanned! { span => ::std::option::Option::Some(&#param) }
+                        })
+                        .unwrap_or_else(|| quote! { ::std::option::Option::None });
+                    return parse_quote_spanned! { self.sig.span() => {
+                        #go::gio::prelude::ActionGroupExt::activate_action(
+                            #self_ident
+                            #name,
+                            #param,
+                        );
+                    }};
+                }
+                HandlerType::ChangeState => {
+                    if self.parameter_index.is_none() {
+                        return parse_quote! {{}};
+                    }
+                    let param_ident = syn::Ident::new("param", Span::mixed_site());
+                    let param = self
+                        .param_needs_convert(action)
+                        .then(|| {
+                            quote_spanned! { self.sig.span() =>
+                                #go::glib::ToVariant::to_variant(&#param_ident)
+                            }
+                        })
+                        .unwrap_or_else(|| quote! { #param_ident });
+                    return parse_quote_spanned! { self.sig.span() => {
+                        #go::gio::prelude::ActionGroupExt::change_action_state(
+                            #self_ident
+                            #name,
+                            &#param,
+                        );
+                    }};
+                }
+            },
+        };
         let this_ident = syn::Ident::new("obj", Span::mixed_site());
         let param_ident = syn::Ident::new("param", Span::mixed_site());
         let action_ident = syn::Ident::new("action", Span::mixed_site());
@@ -452,24 +459,25 @@ impl ActionHandler {
         let state_ident = syn::Ident::new("state", Span::mixed_site());
         let ret_ident = syn::Ident::new("_ret", Span::mixed_site());
         let await_ = self.sig.asyncness.as_ref().map(|_| quote! { .await });
-        let recv_has_ref = self.sig.receiver().and_then(util::arg_reference).is_some();
+        let recv_has_ref = util::arg_reference(recv).is_some();
         let action_ref = self
             .action_index
             .and_then(|(index, _)| util::arg_reference(self.sig.inputs.iter().nth(index)?));
         let before = [
-            (action.parameter_type.is_none())
+            (!matches!(&action.parameter_type, ParameterType::Empty))
                 .then(|| ())
-                .and_then(|_| self.parameter_index.zip(action.parameter_type()))
+                .and_then(|_| self.parameter_index.zip(match self.ty {
+                    HandlerType::Activate => action.parameter_type().map(Cow::Borrowed),
+                    HandlerType::ChangeState => action.state_type(go),
+                }))
                 .map(|((_, span), param_ty)| quote_spanned! { span =>
                     let #param_ident: #param_ty = #param_ident;
                 }),
-            self.sig.receiver().and_then(|recv| {
-                (self.mode == TypeMode::Subclass).then(|| {
-                    let ref_ = (!recv_has_ref).then(|| quote! { & });
-                    quote_spanned! { recv.span() =>
-                        let #this_ident = #glib::subclass::prelude::ObjectSubclassIsExt::imp(#ref_ #this_ident);
-                    }
-                })
+            (self.mode == TypeMode::Subclass).then(|| {
+                let ref_ = (!recv_has_ref).then(|| quote! { & });
+                quote_spanned! { recv.span() =>
+                    let #this_ident = #glib::subclass::prelude::ObjectSubclassIsExt::imp(#ref_ #this_ident);
+                }
             }),
             self.state_index.map(|(_, span)| {
                 let unwrap = (!action.state_variant).then(|| quote_spanned! { span =>
@@ -505,29 +513,23 @@ impl ActionHandler {
                         #glib::ToVariant::to_variant(&#ret_ident)
                     }
                 });
-            let call = activate
-                .then(|| {
-                    quote_spanned! { ty.span() =>
-                        #go::gio::prelude::ActionExt::change_state(&#action_ident, &#state)
-                    }
-                })
-                .unwrap_or_else(|| {
-                    quote_spanned! { ty.span() =>
-                        #action_ident.set_state(&#state)
-                    }
-                });
+            let call = match self.ty {
+                HandlerType::Activate => quote_spanned! { ty.span() =>
+                    #go::gio::prelude::ActionExt::change_state(&#action_ident, &#state);
+                },
+                HandlerType::ChangeState => quote_spanned! { ty.span() =>
+                    #action_ident.set_state(&#state);
+                },
+            };
             let cast_ty = action.state_type(go).map(|state_ty| {
                 quote_spanned! { ty.span() =>
                     let #ret_ident: #state_ty = #ret_ident;
                 }
             });
             quote_spanned! { ty.span() =>
-                match #ret_ident {
-                    ::std::option::Option::Some(#ret_ident) => {
-                        #cast_ty
-                        #call
-                    },
-                    _ => {},
+                if let ::std::option::Option::Some(#ret_ident) = #ret_ident {
+                    #cast_ty
+                    #call
                 }
             }
         });
@@ -557,9 +559,23 @@ impl ActionHandler {
             .then(|| quote! { upcast_ref })
             .unwrap_or_else(|| quote! { upcast });
         let recv_ref = (!recv_has_ref).then(|| quote! { & });
+        let action_map = quote_spanned! { Span::mixed_site() => #recv_ref #this_ident };
+        let action_map = bind_expr
+            .map(|expr| {
+                let group_ident = syn::Ident::new("group", Span::mixed_site());
+                quote_spanned! { expr.span() =>
+                    &match #go::ParamStoreReadOptional::get_owned_optional(
+                        &#glib::subclass::prelude::ObjectSubclassIsExt::imp(#action_map).#expr,
+                    ) {
+                        ::std::option::Option::Some(#group_ident) => #group_ident,
+                        _ => return,
+                    }
+                }
+            })
+            .unwrap_or_else(|| action_map);
         parse_quote_spanned! { self.span => {
             let #this_ident = #glib::Cast::#recv_cast::<#wrapper_ty>(#self_ident);
-            let #action_ident = #go::gio::prelude::ActionMapExt::lookup_action(#recv_ref #this_ident, #name)
+            let #action_ident = #go::gio::prelude::ActionMapExt::lookup_action(#action_map, #name)
                 .expect("Action not found in action map");
             let #action_ident = #glib::Cast::downcast::<#go::gio::SimpleAction>(#action_ident)
                 .expect("Action not a gio::SimpleAction");
@@ -575,13 +591,42 @@ impl ActionHandler {
 
 impl Spanned for ActionHandler {
     fn span(&self) -> Span {
-        self.span.clone()
+        self.span
+    }
+}
+
+#[derive(Clone)]
+pub(crate) enum ParameterType {
+    Empty,
+    Inferred,
+    String(syn::LitStr),
+}
+
+impl Default for ParameterType {
+    fn default() -> Self {
+        Self::Inferred
+    }
+}
+
+impl darling::FromMeta for ParameterType {
+    fn from_value(lit: &syn::Lit) -> darling::Result<Self> {
+        match lit {
+            syn::Lit::Str(lit) => Ok(Self::String(lit.clone())),
+            syn::Lit::Bool(syn::LitBool { value, .. }) => {
+                if *value {
+                    Ok(Self::Inferred)
+                } else {
+                    Ok(Self::Empty)
+                }
+            }
+            _ => Err(darling::Error::unexpected_lit_type(lit)),
+        }
     }
 }
 
 pub(crate) struct Action {
     pub name: String,
-    pub parameter_type: Option<String>,
+    pub parameter_type: ParameterType,
     pub state_variant: bool,
     pub activate: Option<ActionHandler>,
     pub change_state: Option<ActionHandler>,
@@ -599,7 +644,8 @@ impl Action {
     ) {
         for item in items {
             if let syn::ImplItem::Method(method) = item {
-                if let Some(attr) = util::extract_attr(&mut method.attrs, "action") {
+                if let Some(attrs) = util::extract_attrs(&mut method.attrs, "action") {
+                    let attr = util::parse_attributes::<ActionAttrs>(&attrs, errors);
                     Self::from_method(method, attr, mode, actions, errors);
                 }
             }
@@ -608,14 +654,13 @@ impl Action {
     #[inline]
     fn from_method(
         method: &mut syn::ImplItemMethod,
-        attr: syn::Attribute,
+        attr: ActionAttrs,
         mode: TypeMode,
         actions: &mut Vec<Self>,
         errors: &Errors,
     ) {
-        let attrs = util::parse_paren_list::<ActionAttrs>(attr.tokens, errors);
         let sig = method.sig.clone();
-        let name = attrs
+        let name = attr
             .name
             .as_ref()
             .map(|n| n.value())
@@ -625,7 +670,7 @@ impl Action {
         } else {
             let action = Self {
                 name,
-                parameter_type: None,
+                parameter_type: ParameterType::default(),
                 state_variant: false,
                 activate: None,
                 change_state: None,
@@ -636,57 +681,67 @@ impl Action {
             actions.push(action);
             actions.last_mut().unwrap()
         };
-        if attrs.change_state.is_none() {
+        if attr.change_state.is_none() {
             if action.activate.is_some() {
                 errors.push_spanned(&method.sig, "Duplicate activate handler for action");
             } else {
-                action.activate = Some(ActionHandler::new(method, mode, errors));
+                action.activate = Some(ActionHandler::new(
+                    method,
+                    mode,
+                    HandlerType::Activate,
+                    errors,
+                ));
             }
         } else if action.change_state.is_some() {
             errors.push_spanned(&method.sig, "Duplicate change-state handler for action");
         } else {
-            action.change_state = Some(ActionHandler::new(method, mode, errors));
+            action.change_state = Some(ActionHandler::new(
+                method,
+                mode,
+                HandlerType::ChangeState,
+                errors,
+            ));
         }
-        if let Some(parameter_type) = attrs.parameter_type.as_ref() {
-            if action.parameter_type.is_some() {
+        if let Some(parameter_type) = attr.parameter_type {
+            if !matches!(action.parameter_type, ParameterType::Inferred) {
                 errors.push(
                     parameter_type.span(),
-                    "Duplicate `parameter_type` attribute",
+                    "Conflicting `parameter_type` attribute",
                 );
             } else {
-                action.parameter_type = Some(parameter_type.value());
+                action.parameter_type = (*parameter_type).clone();
             }
         }
         validations::only_one(
             [
-                &("default_state", validations::check_spanned(&attrs.default)),
+                &("default_state", validations::check_spanned(&attr.default)),
                 &(
                     "default_state_variant",
-                    validations::check_spanned(&attrs.default_variant),
+                    validations::check_spanned(&attr.default_variant),
                 ),
             ],
             errors,
         );
-        if let Some(default_state) = attrs.default.as_ref() {
+        if let Some(default_state) = attr.default {
             if action.default_state.is_none() {
-                action.default_state = Some((**default_state).clone());
+                action.default_state = Some((*default_state).clone());
             }
-        } else if let Some(default_state_variant) = attrs.default_variant.as_ref() {
+        } else if let Some(default_state_variant) = attr.default_variant {
             if action.default_state.is_none() {
-                action.default_state = Some((**default_state_variant).clone());
+                action.default_state = Some((*default_state_variant).clone());
                 action.state_variant = true;
             }
         }
-        if let Some(default_hint) = attrs.hint.as_ref() {
+        if let Some(default_hint) = attr.hint {
             if action.default_hint.is_some() {
                 errors.push(default_hint.span(), "Duplicate `default_hint` attribute");
             } else {
-                action.default_hint = Some((**default_hint).clone());
+                action.default_hint = Some((*default_hint).clone());
             }
         }
-        if attrs.disabled.is_some() {
+        if attr.disabled.is_some() {
             if action.disabled {
-                errors.push(attrs.disabled.span(), "Duplicate `disabled` attribute");
+                errors.push(attr.disabled.span(), "Duplicate `disabled` attribute");
             } else {
                 action.disabled = true;
             }
@@ -695,8 +750,12 @@ impl Action {
     fn parameter_type(&self) -> Option<&syn::Type> {
         self.activate
             .as_ref()
-            .and_then(|h| h.parameter_type())
-            .or_else(|| self.change_state.as_ref().and_then(|h| h.parameter_type()))
+            .and_then(|h| h.parameter_type(self))
+            .or_else(|| {
+                self.change_state
+                    .as_ref()
+                    .and_then(|h| h.parameter_type(self))
+            })
     }
     fn state_type(&self, go: &syn::Ident) -> Option<Cow<'_, syn::Type>> {
         self.activate
@@ -704,22 +763,140 @@ impl Action {
             .and_then(|h| h.state_type(go))
             .or_else(|| self.change_state.as_ref().and_then(|h| h.state_type(go)))
     }
-    pub(crate) fn to_token_stream(&self, this_ident: &syn::Ident, go: &syn::Ident) -> TokenStream {
+    pub(crate) fn override_public_methods(
+        &self,
+        bind_expr: Option<&syn::Expr>,
+        def: &mut gobject_core::ClassDefinition,
+        errors: &Errors,
+    ) {
+        use HandlerType::*;
+        use TypeContext::*;
+        use TypeMode::*;
+        let (sub_ty, wrapper_ty) = match (
+            def.inner.type_(Subclass, Subclass, External),
+            def.inner.type_(Subclass, Wrapper, External),
+        ) {
+            (Some(sub_ty), Some(wrapper_ty)) => (sub_ty, wrapper_ty),
+            _ => return,
+        };
+        self.override_public_method(Activate, &sub_ty, &wrapper_ty, bind_expr, def, errors);
+        self.override_public_method(ChangeState, &sub_ty, &wrapper_ty, bind_expr, def, errors);
+    }
+    pub(crate) fn prepare_public_method(
+        &self,
+        handler: &ActionHandler,
+        public_method: &mut PublicMethod,
+        final_: bool,
+        errors: &Errors,
+    ) {
+        if handler.mode == TypeMode::Wrapper
+            && !matches!(
+                &public_method.constructor,
+                Some(gobject_core::ConstructorType::Auto(_))
+            )
+            && public_method.target.is_none()
+            && final_
+        {
+            errors.push(
+                handler.sig.span(),
+                "action using #[public] on wrapper type for final class must be renamed with #[public(name = \"...\")]",
+            );
+        }
+        public_method.sig.output = syn::ReturnType::Default;
+        public_method.sig.inputs = handler
+            .sig
+            .inputs
+            .iter()
+            .cloned()
+            .enumerate()
+            .filter_map(|(i, mut arg)| {
+                if Some(i) == handler.parameter_index.map(|p| p.0) {
+                    if let syn::FnArg::Typed(ty) = &mut arg {
+                        ty.pat = parse_quote_spanned! { Span::mixed_site() => param };
+                    }
+                    return Some(arg);
+                }
+                (Some(i) != handler.state_index.map(|p| p.0)
+                    && Some(i) != handler.action_index.map(|p| p.0))
+                .then(|| arg)
+            })
+            .collect();
+        if let Some(recv) = handler.sig.receiver() {
+            let mut recv = recv.clone();
+            match &mut recv {
+                syn::FnArg::Receiver(recv) => {
+                    recv.self_token = parse_quote_spanned! { Span::mixed_site() => self }
+                }
+                syn::FnArg::Typed(pat) => {
+                    if let syn::Pat::Ident(p) = &mut *pat.pat {
+                        p.ident = parse_quote_spanned! { Span::mixed_site() => self };
+                    }
+                }
+            }
+            public_method.sig.inputs[0] = recv;
+        } else {
+            public_method.sig.asyncness = None;
+            public_method
+                .sig
+                .inputs
+                .insert(0, parse_quote_spanned! { Span::mixed_site() => &self });
+        }
+        if public_method.constructor.is_some() {
+            errors.push(
+                public_method.sig.span(),
+                "#[action] cannot be used on constructor",
+            );
+        } else if public_method.custom_body.is_some() {
+            errors.push(
+                public_method.sig.span(),
+                "#[action] cannot be used on public method already overriden by another attribute",
+            );
+        }
+    }
+    fn override_public_method(
+        &self,
+        handler_type: HandlerType,
+        sub_ty: &TokenStream,
+        wrapper_ty: &TokenStream,
+        bind_expr: Option<&syn::Expr>,
+        def: &mut gobject_core::ClassDefinition,
+        errors: &Errors,
+    ) -> Option<()> {
+        let handler = match handler_type {
+            HandlerType::Activate => self.activate.as_ref()?,
+            HandlerType::ChangeState => self.change_state.as_ref()?,
+        };
+        let go = def.inner.crate_ident.clone();
+        let public_method = def
+            .inner
+            .public_method_mut(handler.mode, &handler.sig.ident)?;
+        self.prepare_public_method(handler, public_method, def.final_, errors);
+        public_method.custom_body = Some(Box::new(
+            handler.to_public_method_expr(self, sub_ty, wrapper_ty, bind_expr, &go),
+        ));
+        Some(())
+    }
+    pub(crate) fn to_token_stream(
+        &self,
+        this_ident: &syn::Ident,
+        is_object: bool,
+        go: &syn::Ident,
+    ) -> TokenStream {
         let glib = quote! { #go::glib };
         let gio = quote! { #go::gio };
         let action_ident = syn::Ident::new("action", Span::mixed_site());
         let name = &self.name;
-        let parameter_type = self
-            .parameter_type
-            .as_ref()
-            .map(|vty| quote! { #glib::VariantTy::new(#vty).unwrap() })
-            .or_else(|| {
-                self.parameter_type().map(|ty| {
-                    quote_spanned! { ty.span() =>
-                        &*<#ty as #glib::StaticVariantType>::static_variant_type()
-                    }
-                })
-            });
+        let parameter_type = match &self.parameter_type {
+            ParameterType::Empty => None,
+            ParameterType::Inferred => self.parameter_type().map(|ty| {
+                quote_spanned! { ty.span() =>
+                    &*<#ty as #glib::StaticVariantType>::static_variant_type()
+                }
+            }),
+            ParameterType::String(vty) => Some(quote_spanned! { vty.span() =>
+                #glib::VariantTy::new(#vty).unwrap()
+            }),
+        };
         let type_option = parameter_type
             .as_ref()
             .map(|ty| quote! { ::std::option::Option::Some(#ty) })
@@ -764,7 +941,7 @@ impl Action {
             quote! { new(#name, #type_option) }
         };
         let activate = self.activate.as_ref().map(|handler| {
-            let handler = handler.to_token_stream(this_ident, self, true, go);
+            let handler = handler.to_signal_closure(self, this_ident, is_object, go);
             quote_spanned! { handler.span() =>
                 #glib::prelude::ObjectExt::connect_closure(
                     &#action_ident,
@@ -775,7 +952,7 @@ impl Action {
             }
         });
         let change_state = self.change_state.as_ref().map(|handler| {
-            let handler = handler.to_token_stream(this_ident, self, false, go);
+            let handler = handler.to_signal_closure(self, this_ident, is_object, go);
             quote_spanned! { handler.span() =>
                 #glib::prelude::ObjectExt::connect_closure(
                     &#action_ident,
@@ -818,6 +995,6 @@ impl Spanned for Action {
             .as_ref()
             .map(|h| h.span())
             .or_else(|| self.change_state.as_ref().map(|h| h.span()))
-            .unwrap_or_else(|| Span::call_site())
+            .unwrap_or_else(Span::call_site)
     }
 }

@@ -2,10 +2,12 @@ use gobject_core::util::{self, Errors};
 use proc_macro::TokenStream;
 use quote::ToTokens;
 
-#[cfg(feature = "gio")]
+#[cfg(any(feature = "gtk4", feature = "gio"))]
 mod actions;
 #[cfg(feature = "gtk4")]
 mod gtk4_templates;
+#[cfg(feature = "gtk4")]
+mod gtk4_actions;
 #[cfg(feature = "serde")]
 mod serde;
 
@@ -122,6 +124,7 @@ pub fn gtk4_widget(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut class = ClassDefinition::parse(module, opts, go.clone(), &errors);
             class.extends.push(syn::parse_quote! { #go::gtk4::Widget });
             gtk4_templates::extend_template(&mut class, &errors);
+            gtk4_actions::extend_widget_actions(&mut class, &errors);
             class.add_private_items();
             class.to_token_stream()
         })
