@@ -44,6 +44,47 @@ pub(crate) fn extend_actions(def: &mut gobject_core::ClassDefinition, errors: &E
     );
 }
 
+#[cfg(feature = "gio")]
+pub fn impl_actions(
+    mut impl_: syn::ItemImpl,
+    attrs: TokenStream,
+    go: &syn::Ident,
+    errors: &Errors,
+) -> TokenStream {
+    #[derive(Default, FromMeta)]
+    #[darling(default)]
+    struct ActionsAttrs {
+        register: Option<syn::LitStr>,
+    }
+
+    let attrs = util::parse_list::<ActionsAttrs>(attrs, errors);
+    let mut actions = Vec::new();
+    Action::many_from_items(&mut impl_.items, &mut actions, TypeMode::Wrapper, errors);
+    validate_actions(&actions, errors);
+    let ty = &impl_.self_ty;
+    let (impl_generics, _, where_clause) = impl_.generics.split_for_impl();
+    let register_func = attrs
+        .register
+        .map(|r| syn::Ident::new(&r.value(), r.span()))
+        .unwrap_or_else(|| syn::Ident::new("register_actions", Span::call_site()));
+    let self_ident = syn::Ident::new("self", Span::mixed_site());
+    let this_ident = syn::Ident::new("this", Span::mixed_site());
+    let group_ident = syn::Ident::new("group", Span::mixed_site());
+    let actions = actions.iter().map(|action| {
+        let action = action.to_token_stream(&this_ident, false, go);
+        quote! { #go::gio::prelude::ActionMapExt::add_action(#group_ident, &#action); }
+    });
+    quote! {
+        #impl_
+        impl #impl_generics #ty #where_clause {
+            fn #register_func(&#self_ident, #group_ident: &impl #go::glib::IsA<#go::gio::ActionMap>) {
+                let #this_ident = #self_ident;
+                #(#actions)*
+            }
+        }
+    }
+}
+
 pub(crate) fn validate_actions(actions: &[Action], errors: &Errors) {
     let go = syn::Ident::new("go", Span::call_site());
     for action in actions {

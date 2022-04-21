@@ -5,9 +5,9 @@ use quote::ToTokens;
 #[cfg(any(feature = "gtk4", feature = "gio"))]
 mod actions;
 #[cfg(feature = "gtk4")]
-mod gtk4_templates;
-#[cfg(feature = "gtk4")]
 mod gtk4_actions;
+#[cfg(feature = "gtk4")]
+mod gtk4_templates;
 #[cfg(feature = "serde")]
 mod serde;
 
@@ -108,6 +108,19 @@ pub fn serde_cast(input: TokenStream) -> TokenStream {
     let go = crate_ident();
     let output = serde::downcast_enum(input.into(), &go, &errors);
     append_errors(output, errors)
+}
+
+#[cfg(feature = "gio")]
+#[proc_macro_attribute]
+pub fn actions(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let errors = Errors::new();
+    let tokens = util::parse::<syn::ItemImpl>(item.into(), &errors)
+        .map(|impl_| {
+            let go = crate_ident();
+            actions::impl_actions(impl_, attr.into(), &go, &errors)
+        })
+        .unwrap_or_default();
+    append_errors(tokens, errors)
 }
 
 #[cfg(feature = "gtk4")]

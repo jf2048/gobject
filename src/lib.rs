@@ -126,6 +126,8 @@ pub use gtk4;
 #[cfg(feature = "serde_macros")]
 pub use serde;
 
+#[cfg(feature = "gio_macros")]
+pub use gobject_macros::actions;
 #[cfg(feature = "gtk4_macros")]
 pub use gobject_macros::gtk4_widget;
 #[cfg(feature = "serde_macros")]
