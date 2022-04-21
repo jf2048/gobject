@@ -515,41 +515,9 @@ fn parse_weak(
     Ok((expr, fail_action))
 }
 
-macro_rules! pat_attrs {
-    ($pat:ident) => {{
-        use syn::*;
-        Some(match $pat {
-            Pat::Box(PatBox { attrs, .. }) => attrs,
-            Pat::Ident(PatIdent { attrs, .. }) => attrs,
-            Pat::Lit(PatLit { attrs, .. }) => attrs,
-            Pat::Macro(PatMacro { attrs, .. }) => attrs,
-            Pat::Or(PatOr { attrs, .. }) => attrs,
-            Pat::Path(PatPath { attrs, .. }) => attrs,
-            Pat::Range(PatRange { attrs, .. }) => attrs,
-            Pat::Reference(PatReference { attrs, .. }) => attrs,
-            Pat::Rest(PatRest { attrs, .. }) => attrs,
-            Pat::Slice(PatSlice { attrs, .. }) => attrs,
-            Pat::Struct(PatStruct { attrs, .. }) => attrs,
-            Pat::Tuple(PatTuple { attrs, .. }) => attrs,
-            Pat::TupleStruct(PatTupleStruct { attrs, .. }) => attrs,
-            Pat::Type(PatType { attrs, .. }) => attrs,
-            Pat::Wild(PatWild { attrs, .. }) => attrs,
-            _ => return None,
-        })
-    }};
-}
-
-fn pat_attrs(pat: &syn::Pat) -> Option<&Vec<syn::Attribute>> {
-    pat_attrs!(pat)
-}
-
-fn pat_attrs_mut(pat: &mut syn::Pat) -> Option<&mut Vec<syn::Attribute>> {
-    pat_attrs!(pat)
-}
-
 fn has_captures<'p>(mut inputs: impl Iterator<Item = &'p syn::Pat>) -> bool {
     inputs.any(|pat| {
-        pat_attrs(pat).iter().any(|attrs| {
+        util::pat_attrs(pat).iter().any(|attrs| {
             attrs
                 .iter()
                 .any(|a| a.path.is_ident("strong") || a.path.is_ident("weak"))
@@ -566,7 +534,7 @@ impl<'v> Visitor<'v> {
     fn create_gclosure(&mut self, closure: &syn::ExprClosure) -> Option<syn::Expr> {
         let has_closure = closure.attrs.iter().any(|a| a.path.is_ident("closure"));
         let has_watch = closure.inputs.iter().any(|pat| {
-            pat_attrs(pat)
+            util::pat_attrs(pat)
                 .iter()
                 .any(|attrs| attrs.iter().any(|a| a.path.is_ident("watch")))
         });
@@ -622,7 +590,7 @@ impl<'v> Visitor<'v> {
 
         let mut rest_index = None;
         for (index, pat) in inputs.iter_mut().enumerate() {
-            if let Some(attrs) = pat_attrs_mut(pat) {
+            if let Some(attrs) = util::pat_attrs_mut(pat) {
                 let attr_index = attrs.iter().position(|a| a.path.is_ident("rest"));
                 if let Some(attr_index) = attr_index {
                     let attr = attrs.remove(attr_index);
@@ -683,7 +651,7 @@ impl<'v> Visitor<'v> {
         let arg_unwraps = inputs.iter().enumerate().map(|(index, pat)| match pat {
             syn::Pat::Wild(_) => None,
             _ => {
-                let attrs = pat_attrs(pat).into_iter().flat_map(|a| a.iter());
+                let attrs = util::pat_attrs(pat).into_iter().flat_map(|a| a.iter());
                 Some(if Some(index) == rest_index {
                     quote! {
                         #(#attrs)*
@@ -979,7 +947,7 @@ impl<'v> Visitor<'v> {
             let mut strong = None;
             let mut weak = None;
             let mut watch = None;
-            if let Some(attrs) = pat_attrs_mut(&mut inputs[index]) {
+            if let Some(attrs) = util::pat_attrs_mut(&mut inputs[index]) {
                 if let Some(attr) = util::extract_attr(attrs, "strong") {
                     strong = Some(attr);
                 } else if let Some(attr) = util::extract_attr(attrs, "weak") {

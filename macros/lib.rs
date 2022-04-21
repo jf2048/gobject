@@ -5,7 +5,7 @@ use quote::ToTokens;
 #[cfg(feature = "gio")]
 mod actions;
 #[cfg(feature = "gtk4")]
-mod gtk4;
+mod gtk4_templates;
 #[cfg(feature = "serde")]
 mod serde;
 
@@ -119,8 +119,9 @@ pub fn gtk4_widget(attr: TokenStream, item: TokenStream) -> TokenStream {
     let tokens = module
         .map(|module| {
             let go = crate_ident();
-            let mut class = ClassDefinition::parse(module, opts, go, &errors);
-            gtk4::extend_gtk4(&mut class, &errors);
+            let mut class = ClassDefinition::parse(module, opts, go.clone(), &errors);
+            class.extends.push(syn::parse_quote! { #go::gtk4::Widget });
+            gtk4_templates::extend_template(&mut class, &errors);
             class.add_private_items();
             class.to_token_stream()
         })

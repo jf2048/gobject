@@ -456,7 +456,7 @@ impl TypeDefinition {
         self.custom_stmts
             .borrow()
             .get(name)
-            .map(|stmts| quote! {{ #(#stmts)* };})
+            .map(|stmts| quote! { #({ #stmts };)* })
     }
     pub fn method_wrapper<F>(&self, name: &str, sig_func: F) -> Option<TokenStream>
     where

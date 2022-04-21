@@ -1,6 +1,6 @@
 use heck::ToKebabCase;
 use proc_macro2::{Span, TokenStream};
-use quote::quote;
+use quote::{quote, ToTokens};
 use std::cell::RefCell;
 use std::collections::HashSet;
 use syn::parse::{Parse, ParseStream, Parser};
@@ -127,6 +127,16 @@ where
     T::from_list(&args).map_err(|e| errors.push_darling(e)).ok()
 }
 
+#[inline]
+pub fn parse_attributes<T>(attrs: &[syn::Attribute], errors: &Errors) -> T
+where
+    T: darling::FromAttributes + Default,
+{
+    T::from_attributes(attrs)
+        .map_err(|e| errors.push_darling(e))
+        .unwrap_or_default()
+}
+
 pub(crate) fn format_name(ident: &syn::Ident) -> String {
     let ident = ident.to_string();
     let mut s = ident.as_str();
@@ -210,6 +220,59 @@ pub fn extract_attrs(attrs: &mut Vec<syn::Attribute>, name: &str) -> Option<Vec<
         }
     }
     (!found.is_empty()).then(|| found)
+}
+
+#[inline]
+pub fn require_empty(attr: &syn::Attribute, errors: &Errors) {
+    if !attr.tokens.is_empty() {
+        errors.push_spanned(
+            &attr.tokens,
+            format!(
+                "Unknown tokens on #[{}] attribute",
+                attr.path.to_token_stream().to_string(),
+            ),
+        );
+    }
+}
+
+macro_rules! pat_attrs {
+    ($pat:ident) => {{
+        use syn::*;
+        Some(match $pat {
+            Pat::Box(PatBox { attrs, .. }) => attrs,
+            Pat::Ident(PatIdent { attrs, .. }) => attrs,
+            Pat::Lit(PatLit { attrs, .. }) => attrs,
+            Pat::Macro(PatMacro { attrs, .. }) => attrs,
+            Pat::Or(PatOr { attrs, .. }) => attrs,
+            Pat::Path(PatPath { attrs, .. }) => attrs,
+            Pat::Range(PatRange { attrs, .. }) => attrs,
+            Pat::Reference(PatReference { attrs, .. }) => attrs,
+            Pat::Rest(PatRest { attrs, .. }) => attrs,
+            Pat::Slice(PatSlice { attrs, .. }) => attrs,
+            Pat::Struct(PatStruct { attrs, .. }) => attrs,
+            Pat::Tuple(PatTuple { attrs, .. }) => attrs,
+            Pat::TupleStruct(PatTupleStruct { attrs, .. }) => attrs,
+            Pat::Type(PatType { attrs, .. }) => attrs,
+            Pat::Wild(PatWild { attrs, .. }) => attrs,
+            _ => return None,
+        })
+    }};
+}
+
+pub fn pat_attrs(pat: &syn::Pat) -> Option<&Vec<syn::Attribute>> {
+    pat_attrs!(pat)
+}
+
+pub fn pat_attrs_mut(pat: &mut syn::Pat) -> Option<&mut Vec<syn::Attribute>> {
+    pat_attrs!(pat)
+}
+
+pub fn path_to_string(path: &syn::Path) -> String {
+    path.to_token_stream()
+        .into_iter()
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 #[derive(Debug, Default)]
