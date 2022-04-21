@@ -1,4 +1,4 @@
-use crate::{ConstructCell, OnceBool, OnceBox, OnceCell, SyncOnceCell, WeakCell};
+use crate::{ConstructCell, DowngradeCell, OnceBool, OnceBox, OnceCell, SyncOnceCell, WeakCell};
 use glib::{
     value::{
         FromValue, ValueType, ValueTypeChecker, ValueTypeMismatchOrNoneError, ValueTypeOptional,
@@ -549,7 +549,7 @@ where
 }
 impl<T> ParamStoreReadOptional for WeakCell<T>
 where
-    T: ObjectType + Clone,
+    T: ObjectType,
 {
     type OptionalType = T;
 
@@ -572,6 +572,63 @@ where
     fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool {
         let old = self.get_owned();
         self.set(Some(&value));
+        old != value
+    }
+}
+
+impl<T> ParamStore for DowngradeCell<T>
+where
+    T: ValueType + glib::clone::Downgrade,
+    <T as glib::clone::Downgrade>::Weak: glib::clone::Upgrade<Strong = T>,
+{
+    type Type = T;
+}
+impl<T> ParamStoreRead for DowngradeCell<T>
+where
+    T: ValueType + glib::clone::Downgrade,
+    <T as glib::clone::Downgrade>::Weak: glib::clone::Upgrade<Strong = T>,
+{
+    fn get_owned(&self) -> <Self as ParamStore>::Type {
+        glib::clone::Upgrade::upgrade(&*self.borrow()).expect("Failed to upgrade weak reference")
+    }
+}
+impl<T> ParamStoreReadValue for DowngradeCell<T>
+where
+    T: ValueType + glib::clone::Downgrade,
+    <T as glib::clone::Downgrade>::Weak: glib::clone::Upgrade<Strong = T>,
+{
+    fn get_value(&self) -> glib::Value {
+        self.get_owned().to_value()
+    }
+}
+impl<T> ParamStoreReadOptional for DowngradeCell<T>
+where
+    T: ValueType + glib::clone::Downgrade,
+    <T as glib::clone::Downgrade>::Weak: glib::clone::Upgrade<Strong = T>,
+{
+    type OptionalType = T;
+
+    fn get_owned_optional(&self) -> Option<Self::OptionalType> {
+        glib::clone::Upgrade::upgrade(&*self.borrow())
+    }
+}
+impl<'a, T> ParamStoreWrite<'a> for DowngradeCell<T>
+where
+    T: ValueType + glib::clone::Downgrade,
+    <T as glib::clone::Downgrade>::Weak: glib::clone::Upgrade<Strong = T>,
+{
+    fn set_owned(&'a self, value: <Self as ParamStore>::Type) {
+        self.replace(glib::clone::Downgrade::downgrade(&value));
+    }
+}
+impl<'a, T> ParamStoreWriteChanged<'a> for DowngradeCell<T>
+where
+    T: ValueType + glib::clone::Downgrade + PartialEq,
+    <T as glib::clone::Downgrade>::Weak: glib::clone::Upgrade<Strong = T>,
+{
+    fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool {
+        let old = self.get_owned();
+        self.replace(glib::clone::Downgrade::downgrade(&value));
         old != value
     }
 }
