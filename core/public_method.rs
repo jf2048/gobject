@@ -2,6 +2,7 @@ use crate::{
     util::{self, Errors},
     TypeBase, TypeMode,
 };
+use darling::FromAttributes;
 use heck::ToKebabCase;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
@@ -10,6 +11,7 @@ use syn::{parse_quote, spanned::Spanned};
 #[derive(Debug)]
 pub struct PublicMethod {
     pub sig: syn::Signature,
+    pub target: Option<syn::Ident>,
     pub mode: TypeMode,
     pub constructor: Option<ConstructorType>,
     pub generic_args: util::GenericArgs,
@@ -20,6 +22,12 @@ pub struct PublicMethod {
 pub enum ConstructorType {
     Auto(syn::Visibility),
     Custom,
+}
+
+#[derive(Default, FromAttributes)]
+#[darling(default, attributes(public, constructor))]
+struct PublicMethodAttrs {
+    name: Option<syn::Ident>,
 }
 
 impl PublicMethod {
@@ -57,12 +65,12 @@ impl PublicMethod {
         mode: TypeMode,
         errors: &Errors,
     ) -> Option<Self> {
+        let mut name = None;
         let mut constructor = None;
         if base == TypeBase::Class && mode == TypeMode::Wrapper {
-            if let Some(attr) = util::extract_attr(&mut method.attrs, "constructor") {
-                if !attr.tokens.is_empty() {
-                    errors.push_spanned(&attr.tokens, "Unknown tokens on `constructor` attribute");
-                }
+            if let Some(attrs) = util::extract_attrs(&mut method.attrs, "constructor") {
+                let attrs = util::parse_attributes::<PublicMethodAttrs>(&attrs, errors);
+                name = attrs.name;
                 if let Some(recv) = method.sig.receiver() {
                     errors.push_spanned(recv, "`self` not allowed on constructor");
                 }
@@ -86,14 +94,24 @@ impl PublicMethod {
             }
         }
         let mut public = false;
-        if let Some(attr) = util::extract_attr(&mut method.attrs, "public") {
-            if !attr.tokens.is_empty() {
-                errors.push_spanned(&attr.tokens, "Unknown tokens on `public` attribute");
+        if let Some(attrs) = util::extract_attrs(&mut method.attrs, "public") {
+            let attrs = util::parse_attributes::<PublicMethodAttrs>(&attrs, errors);
+            if let Some(n) = attrs.name {
+                if name.is_some() {
+                    errors.push_spanned(&n, "Duplicate `name` attribute");
+                } else {
+                    name = Some(n);
+                }
             }
             public = true;
         }
         if !public && constructor.is_none() {
             return None;
+        }
+        if let Some(name) = &name {
+            if matches!(&constructor, Some(ConstructorType::Auto(_))) {
+                errors.push_spanned(name, "Unnecessary `name` attribute on auto constructor");
+            }
         }
         if mode == TypeMode::Subclass && base == TypeBase::Interface {
             if let Some(recv) = method.sig.receiver() {
@@ -108,9 +126,11 @@ impl PublicMethod {
             TypeMode::Subclass => util::GenericArgs::new(&mut method.sig),
             TypeMode::Wrapper => Default::default(),
         };
-        let sig = method.sig.clone();
+        let mut sig = method.sig.clone();
+        let target = name.map(|n| std::mem::replace(&mut sig.ident, n));
         Some(Self {
             sig,
+            target,
             mode,
             constructor,
             generic_args,
@@ -157,7 +177,11 @@ impl PublicMethod {
         if select_auto != is_auto {
             return None;
         }
-        if self.mode == TypeMode::Wrapper && !is_auto && (final_ || select_statics) {
+        if self.mode == TypeMode::Wrapper
+            && !is_auto
+            && self.target.is_none()
+            && (final_ || select_statics)
+        {
             return None;
         }
         let mut sig = self.external_sig();
@@ -173,11 +197,6 @@ impl PublicMethod {
                 }
             });
         }
-        let ident = &sig.ident;
-        let dest = match self.mode {
-            TypeMode::Subclass => sub_ty,
-            TypeMode::Wrapper => wrapper_ty,
-        };
         if is_auto {
             let args = sig.inputs.iter().filter_map(|arg| {
                 let ident = util::arg_name(arg)?;
@@ -199,6 +218,11 @@ impl PublicMethod {
         let args = util::signature_args(&sig);
         let cast_args = self.generic_args.cast_args(&sig, &self.sig, glib);
         let await_ = self.sig.asyncness.as_ref().map(|_| quote! { .await });
+        let target = self.target.as_ref().unwrap_or(&sig.ident);
+        let dest = match self.mode {
+            TypeMode::Subclass => sub_ty,
+            TypeMode::Wrapper => wrapper_ty,
+        };
         if let Some(recv) = self.sig.receiver() {
             let has_ref = util::arg_reference(recv).is_some();
             let this_ident = util::arg_name(recv)
@@ -220,7 +244,7 @@ impl PublicMethod {
                     #cast_args
                     let #this_ident = #glib::Cast::#cast::<#wrapper_ty>(self);
                     #unwrap_recv
-                    #dest::#ident(#this_ident, #(#args),*) #await_
+                    #dest::#target(#this_ident, #(#args),*) #await_
                 }
             })
         } else {
@@ -228,7 +252,7 @@ impl PublicMethod {
                 #proto {
                     #![inline]
                     #cast_args
-                    #dest::#ident(#(#args),*) #await_
+                    #dest::#target(#(#args),*) #await_
                 }
             })
         }
