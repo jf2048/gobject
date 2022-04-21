@@ -666,9 +666,7 @@ impl Properties {
                 has_field = prop.storage.has_field();
                 properties.push(prop);
             }
-            while let Some(index) = field.attrs.iter().position(|a| a.path.is_ident("property")) {
-                field.attrs.remove(index);
-            }
+            util::extract_attrs(&mut field.attrs, "property");
             if has_field {
                 out_fields.push(field);
             }

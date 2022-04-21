@@ -150,14 +150,14 @@ impl TypeDefinition {
             for (index, item) in items.iter_mut().enumerate() {
                 match item {
                     syn::Item::Struct(s) if struct_.is_none() && &s.ident == name => {
-                        let attr = util::extract_attr(&mut s.attrs, "properties")
-                            .unwrap_or_else(|| parse_quote! { #[properties] });
-                        struct_ = Some((index, attr));
+                        let attrs = util::extract_attrs(&mut s.attrs, "properties")
+                            .unwrap_or_else(|| vec![parse_quote! { #[properties] }]);
+                        struct_ = Some((index, attrs));
                     }
                     syn::Item::Impl(i)
                         if i.trait_.is_none() && type_ident(&*i.self_ty) == Some(name) =>
                     {
-                        util::extract_attr(&mut i.attrs, "methods");
+                        util::extract_attrs(&mut i.attrs, "methods");
                         impls.push(index);
                     }
                     _ => {}
@@ -171,8 +171,8 @@ impl TypeDefinition {
                 let mut struct_name = None;
                 for (index, item) in items.iter_mut().enumerate() {
                     if let syn::Item::Struct(s) = item {
-                        if let Some(attr) = util::extract_attr(&mut s.attrs, "properties") {
-                            struct_ = Some((index, attr));
+                        if let Some(attrs) = util::extract_attrs(&mut s.attrs, "properties") {
+                            struct_ = Some((index, attrs));
                             struct_name = Some(s.ident.clone());
                             break;
                         } else if first_struct.is_none() {
@@ -183,7 +183,7 @@ impl TypeDefinition {
                 }
                 if struct_.is_none() {
                     if let Some(index) = first_struct {
-                        struct_ = Some((index, parse_quote! { #[properties] }));
+                        struct_ = Some((index, vec![parse_quote! { #[properties] }]));
                     }
                 }
                 if struct_.is_some() {
@@ -199,7 +199,7 @@ impl TypeDefinition {
                     if let syn::Item::Impl(i) = item {
                         if i.trait_.is_none() {
                             if let Some(ident) = type_ident(&*i.self_ty) {
-                                if util::extract_attr(&mut i.attrs, "methods").is_some() {
+                                if util::extract_attrs(&mut i.attrs, "methods").is_some() {
                                     impls.push(index);
                                     impl_name = Some(ident.clone());
                                     break;
@@ -230,14 +230,14 @@ impl TypeDefinition {
                     }
                     if let syn::Item::Impl(i) = item {
                         if i.trait_.is_none() && type_ident(&*i.self_ty) == Some(name) {
-                            util::extract_attr(&mut i.attrs, "methods");
+                            util::extract_attrs(&mut i.attrs, "methods");
                             impls.push(index);
                         }
                     }
                 }
             }
         }
-        if let Some((index, attr)) = struct_ {
+        if let Some((index, attrs)) = struct_ {
             def.properties_item_index = Some(index);
             let struct_ = match &mut items[index] {
                 syn::Item::Struct(s) => s,
@@ -270,7 +270,9 @@ impl TypeDefinition {
             def.generics = Some(struct_.generics.clone());
             def.name = Some(struct_.ident.clone());
             let mut input: syn::DeriveInput = struct_.clone().into();
-            input.attrs.insert(0, attr);
+            for attr in attrs.into_iter().rev() {
+                input.attrs.insert(0, attr);
+            }
             let Properties {
                 properties,
                 mut fields,

@@ -2,7 +2,7 @@ use crate::{
     util::{self, Errors},
     Concurrency, TypeBase, TypeMode,
 };
-use darling::{util::Flag, FromMeta};
+use darling::{util::Flag, FromAttributes};
 use heck::{ToShoutySnakeCase, ToSnakeCase};
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
@@ -43,8 +43,8 @@ impl SignalFlags {
     }
 }
 
-#[derive(Default, FromMeta)]
-#[darling(default)]
+#[derive(Default, FromAttributes)]
+#[darling(default, attributes(signal))]
 struct SignalAttrs {
     run_first: Flag,
     run_last: Flag,
@@ -76,8 +76,8 @@ impl SignalAttrs {
         flags
     }
 }
-#[derive(Default, FromMeta)]
-#[darling(default)]
+#[derive(Default, FromAttributes)]
+#[darling(default, attributes(accumulator))]
 struct AccumulatorAttrs {
     signal: Option<syn::LitStr>,
 }
@@ -104,34 +104,20 @@ impl Signal {
         errors: &Errors,
     ) {
         for item in items {
-            let mut signal_attr = None;
             if let syn::ImplItem::Method(method) = item {
-                let signal_index = method.attrs.iter().position(|attr| {
-                    attr.path.is_ident("signal") || attr.path.is_ident("accumulator")
-                });
-                if let Some(signal_index) = signal_index {
-                    signal_attr.replace(method.attrs.remove(signal_index));
-                }
-            }
-            if let Some(attr) = signal_attr {
-                let method = match item {
-                    syn::ImplItem::Method(method) => method,
-                    _ => unreachable!(),
-                };
-                if method.block.stmts.is_empty() {
-                    method.attrs.push(syn::parse_quote! { #[allow(dead_code)] });
-                    method
-                        .attrs
-                        .push(syn::parse_quote! { #[allow(unused_variables)] });
-                }
-                let method = method.clone();
-                if attr.path.is_ident("signal") {
-                    Self::from_handler(method, attr, base, mode, signals, errors);
-                } else if attr.path.is_ident("accumulator") {
-                    let method = method.clone();
-                    Self::from_accumulator(method, attr, mode, signals, errors);
-                } else {
-                    unreachable!();
+                if let Some(attrs) = util::extract_attrs(&mut method.attrs, "signal") {
+                    let attr = util::parse_attributes::<SignalAttrs>(&attrs, errors);
+                    let m = method.clone();
+                    if method.block.stmts.is_empty() {
+                        method.attrs.push(syn::parse_quote! { #[allow(dead_code)] });
+                        method
+                            .attrs
+                            .push(syn::parse_quote! { #[allow(unused_variables)] });
+                    }
+                    Self::from_handler(m, attr, base, mode, signals, errors);
+                } else if let Some(attrs) = util::extract_attrs(&mut method.attrs, "accumulator") {
+                    let attr = util::parse_attributes::<AccumulatorAttrs>(&attrs, errors);
+                    Self::from_accumulator(method.clone(), attr, mode, signals, errors);
                 }
             }
         }
@@ -157,7 +143,7 @@ impl Signal {
     #[allow(clippy::ptr_arg)]
     fn from_handler(
         method: syn::ImplItemMethod,
-        attr: syn::Attribute,
+        attr: SignalAttrs,
         base: TypeBase,
         mode: TypeMode,
         signals: &mut Vec<Self>,
@@ -172,8 +158,7 @@ impl Signal {
                 );
             }
         }
-        let signal_attrs = util::parse_paren_list::<SignalAttrs>(attr.tokens, errors);
-        let name = signal_attrs
+        let name = attr
             .name
             .as_ref()
             .map(|n| n.value())
@@ -196,9 +181,9 @@ impl Signal {
                 format!("Duplicate definition for signal `{}`", name),
             );
         }
-        signal.flags = signal_attrs.flags();
-        signal.connect = signal_attrs.connect.unwrap_or(true);
-        signal.override_ = signal_attrs.override_.is_some();
+        signal.flags = attr.flags();
+        signal.connect = attr.connect.unwrap_or(true);
+        signal.override_ = attr.override_.is_some();
         signal.sig = Some(method.sig);
         signal.handler = !method.block.stmts.is_empty();
         if base == TypeBase::Interface && signal.override_ {
@@ -210,7 +195,7 @@ impl Signal {
     #[allow(clippy::ptr_arg)]
     fn from_accumulator(
         method: syn::ImplItemMethod,
-        attr: syn::Attribute,
+        attr: AccumulatorAttrs,
         mode: TypeMode,
         signals: &mut Vec<Self>,
         errors: &Errors,
@@ -225,8 +210,7 @@ impl Signal {
             errors.push_spanned(&method.sig.output, "Accumulator must have return type");
         }
         let ident = &method.sig.ident;
-        let acc_attrs = util::parse_paren_list::<AccumulatorAttrs>(attr.tokens, errors);
-        let name = acc_attrs
+        let name = attr
             .signal
             .as_ref()
             .map(|n| n.value())

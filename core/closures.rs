@@ -591,13 +591,8 @@ impl<'v> Visitor<'v> {
         let mut rest_index = None;
         for (index, pat) in inputs.iter_mut().enumerate() {
             if let Some(attrs) = util::pat_attrs_mut(pat) {
-                let attr_index = attrs.iter().position(|a| a.path.is_ident("rest"));
-                if let Some(attr_index) = attr_index {
-                    let attr = attrs.remove(attr_index);
-                    if !attr.tokens.is_empty() {
-                        self.errors
-                            .push_spanned(&attr.tokens, "Unknown tokens on rest parameter");
-                    }
+                if let Some(attr) = util::extract_attr(attrs, "rest") {
+                    util::require_empty(&attr, self.errors);
                     rest_index = Some(index);
                     break;
                 }

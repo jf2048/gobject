@@ -229,7 +229,7 @@ pub fn require_empty(attr: &syn::Attribute, errors: &Errors) {
             &attr.tokens,
             format!(
                 "Unknown tokens on #[{}] attribute",
-                attr.path.to_token_stream().to_string(),
+                attr.path.to_token_stream(),
             ),
         );
     }

@@ -1,17 +1,17 @@
 use darling::{
     util::{Flag, PathList, SpannedValue},
-    FromMeta,
+    FromAttributes, FromMeta,
 };
 use gobject_core::{
-    PropertyOverride, PropertyPermission, PropertyStorage, TypeBase, TypeDefinition,
+    util, PropertyOverride, PropertyPermission, PropertyStorage, TypeBase, TypeDefinition,
 };
-use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use proc_macro2::{Span, TokenStream};
+use quote::{format_ident, quote, quote_spanned};
 use syn::{parse_quote, spanned::Spanned};
 
-#[derive(Debug, Default, FromMeta)]
-#[darling(default)]
-struct Attrs {
+#[derive(Debug, Default, FromAttributes)]
+#[darling(default, attributes(gobject_serde))]
+struct SerdeAttrs {
     pub serialize: Flag,
     pub deserialize: Flag,
     pub skip_parent: SpannedValue<Flag>,
@@ -25,32 +25,27 @@ pub(crate) fn extend_serde(
     parent_type: Option<&syn::Path>,
     ext_trait: Option<&syn::Ident>,
     ns: Option<&syn::Ident>,
-    errors: &gobject_core::util::Errors,
+    errors: &util::Errors,
 ) {
-    let attrs = def
+    let attr = def
         .properties_item_mut()
         .and_then(|item| {
-            item.attrs
-                .iter()
-                .position(|a| a.path.is_ident("gobject_serde"))
-                .map(|index| {
-                    let attr = item.attrs.remove(index);
-                    let span = attr.span();
-                    let attrs = gobject_core::util::parse_paren_list::<Attrs>(
-                        attr.tokens,
-                        errors,
+            util::extract_attrs(&mut item.attrs, "gobject_serde").map(|attrs| {
+                let attr = util::parse_attributes::<SerdeAttrs>(&attrs, errors);
+                if attr.serialize.is_none() && attr.deserialize.is_none() {
+                    errors.push(
+                        attrs.first().unwrap().span(),
+                        "Must have at least one of these attributes: `serialize`, `deserialize`",
                     );
-                    if attrs.serialize.is_none() && attrs.deserialize.is_none() {
-                        errors.push(span, "Must have at least one of these attributes: `serialize`, `deserialize`");
-                    }
-                    attrs
-                })
+                }
+                attr
+            })
         })
         .unwrap_or_default();
-    let ser = attrs.serialize.is_some();
-    let de = attrs.deserialize.is_some();
-    let skip_parent = (*attrs.skip_parent).is_some();
-    let child_types = attrs.child_types;
+    let ser = attr.serialize.is_some();
+    let de = attr.deserialize.is_some();
+    let skip_parent = (*attr.skip_parent).is_some();
+    let child_types = attr.child_types;
 
     if !ser && !de {
         return;
@@ -63,8 +58,8 @@ pub(crate) fn extend_serde(
         .map(|p| p.storage.clone())
         .collect::<Vec<_>>();
     if let Some(item) = def.properties_item_mut() {
-        while let Some(index) = item.attrs.iter().position(|a| a.path.is_ident("serde")) {
-            struct_attrs.push(item.attrs.remove(index));
+        if let Some(attrs) = util::extract_attrs(&mut item.attrs, "serde") {
+            struct_attrs.extend(attrs);
         }
         for storage in storages {
             let field = match &storage {
@@ -76,9 +71,7 @@ pub(crate) fn extend_serde(
                 _ => None,
             };
             if let Some(f) = field {
-                while let Some(index) = f.attrs.iter().position(|a| a.path.is_ident("serde")) {
-                    f.attrs.remove(index);
-                }
+                util::extract_attrs(&mut f.attrs, "serde");
             }
         }
     }
@@ -128,12 +121,12 @@ pub(crate) fn extend_serde(
     }) {
         parent_name.insert(0, '_');
     }
-    let parent_name = format_ident!("{}", parent_name);
+    let parent_name = syn::Ident::new(&parent_name, Span::mixed_site());
 
     let struct_vis = (!final_).then(|| quote! { pub });
 
     let ser = ser.then(|| {
-        let writer = format_ident!("____{}Writer", sub_ty);
+        let writer = format_ident!("____{}Writer", sub_ty, span = Span::mixed_site());
         let mut getters = Vec::new();
         let write_fields = props.iter().filter_map(|prop| {
             if !prop.get.is_allowed() {
@@ -231,7 +224,7 @@ pub(crate) fn extend_serde(
                     &*child_types,
                     &wrapper_ty,
                     def.base == TypeBase::Class && !abstract_,
-                    &go,
+                    go,
                 );
                 Some(quote! {
                     #ser_head {
@@ -278,7 +271,7 @@ pub(crate) fn extend_serde(
     });
 
     let de = de.then(|| {
-        let reader = format_ident!("____{}Reader", sub_ty);
+        let reader = format_ident!("____{}Reader", sub_ty, span = Span::mixed_site());
         let struct_head = def.generics.as_ref().map(|generics| {
             let (impl_generics, _, where_clause) = generics.split_for_impl();
             quote! { struct #reader #impl_generics #where_clause }
@@ -384,7 +377,7 @@ pub(crate) fn extend_serde(
                     &*child_types,
                     &wrapper_ty,
                     def.base == TypeBase::Class && !abstract_,
-                    &go,
+                    go,
                 );
                 Some(quote! {
                     #de_head {
@@ -507,7 +500,7 @@ fn serialize_child_types(
 ) -> TokenStream {
     let child_casts = child_types.iter().enumerate().map(|(index, child_ty)| {
         let index = u32::try_from(index).unwrap();
-        quote! {
+        quote_spanned! { child_ty.span() =>
             if let Some(obj) = #go::glib::Cast::downcast_ref::<#child_ty>(obj) {
                 return serializer.serialize_newtype_variant(
                     <#wrapper_ty as #go::glib::StaticType>::static_type().name(),

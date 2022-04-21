@@ -27,8 +27,9 @@ impl VirtualMethod {
 
         for item in items {
             if let syn::ImplItem::Method(method) = item {
-                if let Some(attr) = util::extract_attr(&mut method.attrs, "virt") {
-                    virtual_methods.extend(Self::from_method(method, attr, base, mode, errors));
+                if let Some(attrs) = util::extract_attrs(&mut method.attrs, "virt") {
+                    attrs.iter().for_each(|a| util::require_empty(a, errors));
+                    virtual_methods.extend(Self::from_method(method, base, mode, errors));
                 }
             }
         }
@@ -38,14 +39,10 @@ impl VirtualMethod {
     #[inline]
     fn from_method(
         method: &mut syn::ImplItemMethod,
-        attr: syn::Attribute,
         base: TypeBase,
         mode: TypeMode,
         errors: &Errors,
     ) -> Option<Self> {
-        if !attr.tokens.is_empty() {
-            errors.push_spanned(&attr.tokens, "Unknown tokens on virtual method");
-        }
         if let Some(async_) = &method.sig.asyncness {
             errors.push_spanned(
                 async_,
