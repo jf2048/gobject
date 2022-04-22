@@ -115,7 +115,7 @@ fn clone_closure() {
 fn clone_default_value() {
     let closure = {
         let state = Rc::new(RefCell::new(State::new()));
-        move |#[weak(or_return 42)] state, _| {
+        move |_, #[weak(or_return 42)] state| {
             state.borrow_mut().started = true;
             10
         }
@@ -188,19 +188,19 @@ fn test_clone_macro_self_rename() {
     impl Foo {
         #[allow(dead_code)]
         fn foo(&self) {
-            let closure = move |#[strong(self)] this, _x| {
+            let closure = move |_x, #[strong(self)] this| {
                 println!("v: {:?}", this);
             };
             closure(0i8); // to prevent compiler error for unknown `x` type.
             let _ = move |#[strong(self)] this| {
                 println!("v: {:?}", this);
             };
-            let closure = move |#[strong(self)] this, _x| println!("v: {:?}", this);
+            let closure = move |_x, #[strong(self)] this| println!("v: {:?}", this);
             closure(0i8); // to prevent compiler error for unknown `x` type.
             let _ = move |#[strong(self)] this| println!("v: {:?}", this);
 
             // Fields now!
-            let closure = move |#[strong(self.v)] v, _x| {
+            let closure = move |_x, #[strong(self.v)] v| {
                 println!("v: {:?}", v);
             };
             closure(0i8); // to prevent compiler error for unknown `x` type.
@@ -230,35 +230,35 @@ fn test_clone_macro_self_rename() {
 fn test_clone_macro_rename() {
     let v = Rc::new(1);
 
-    let closure = move |#[weak(v or_panic)] y, _x| {
+    let closure = move |_x, #[weak(v or_panic)] y| {
         println!("v: {}", y);
     };
     closure(0i8); // to prevent compiler error for unknown `x` type.
     let _ = move |#[weak(v or_panic)] y| println!("v: {}", y);
 
-    let closure = move |#[strong(v)] y, _x| {
+    let closure = move |_x, #[strong(v)] y| {
         println!("v: {}", y);
     };
     closure(0i8); // to prevent compiler error for unknown `x` type.
     let _ = move |#[strong(v)] y| println!("v: {}", y);
 
-    let closure = move |#[weak(v or_return )] y, _x| {
+    let closure = move |_x, #[weak(v or_return)] y| {
         println!("v: {}", y);
     };
     closure(0i8); // to prevent compiler error for unknown `x` type.
-    let _ = move |#[weak(v or_return )] y| println!("v: {}", y);
+    let _ = move |#[weak(v or_return)] y| println!("v: {}", y);
 
-    let closure = move |#[strong(v)] y, _x| {
+    let closure = move |_x, #[strong(v)] y| {
         println!("v: {}", y);
     };
     closure(0i8); // to prevent compiler error for unknown `x` type.
     let _ = move |#[strong(v)] y| println!("v: {}", y);
 
-    let closure = move |#[weak(v or_return true)] _y, _x| false;
+    let closure = move |_x, #[weak(v or_return true)] _y| false;
     closure(0i8); // to prevent compiler error for unknown `x` type.
     let _ = move |#[weak(v or_return true)] _y| false;
 
-    let closure = move |#[strong(v)] _y, _x| false;
+    let closure = move |_x, #[strong(v)] _y| false;
     closure(0i8); // to prevent compiler error for unknown `x` type.
     let _ = move |#[strong(v)] _y| false;
 }
@@ -269,13 +269,13 @@ fn test_clone_macro_rename() {
 fn test_clone_macro_simple() {
     let v = Rc::new(1);
 
-    let closure = move |#[weak(or_panic)] v, _x| {
+    let closure = move |_x, #[weak(or_panic)] v| {
         println!("v: {}", v);
     };
     closure(0i8); // to prevent compiler error for unknown `x` type.
     let _ = move |#[weak(or_panic)] v| println!("v: {}", v);
 
-    let closure = move |#[strong] v, _x| {
+    let closure = move |_x, #[strong] v| {
         println!("v: {}", v);
     };
     closure(0i8); // to prevent compiler error for unknown `x` type.
@@ -287,17 +287,17 @@ fn test_clone_macro_simple() {
     closure(0i8); // to prevent compiler error for unknown `x` type.
     let _ = move |#[weak] v| println!("v: {}", v.unwrap());
 
-    let closure = move |#[strong] v, _x| {
+    let closure = move |_x, #[strong] v| {
         println!("v: {}", v);
     };
     closure(0i8); // to prevent compiler error for unknown `x` type.
     let _ = move |#[strong] v| println!("v: {}", v);
 
-    let closure = move |#[weak(or_return true)] v, _x| false;
+    let closure = move |_x, #[weak(or_return true)] v| false;
     closure(0i8); // to prevent compiler error for unknown `x` type.
     let _ = move |#[weak(or_return true)] v| false;
 
-    let closure = move |#[strong] v, _x| false;
+    let closure = move |_x, #[strong] v| false;
     closure(0i8); // to prevent compiler error for unknown `x` type.
     let _ = move |#[strong] v| false;
 }
@@ -325,21 +325,21 @@ fn test_clone_macro_double_simple() {
     move |#[strong] v, #[strong] w| println!("v: {}, w: {}", v, w);
 
     let closure = #[default_return]
-    move |#[weak] v, #[weak] w, _x| {
+    move |_x, #[weak] v, #[weak] w| {
         println!("v: {}, w: {}", v, w);
     };
     closure(0i8); // to prevent compiler error for unknown `x` type.
     let _ = #[default_return]
     move |#[weak] v, #[weak] w| println!("v: {}, w: {}", v, w);
 
-    let closure = move |#[strong] v, #[strong] w, _x| {
+    let closure = move |_x, #[strong] v, #[strong] w| {
         println!("v: {}, w: {}", v, w);
     };
     closure(0i8); // to prevent compiler error for unknown `x` type.
     let _ = move |#[strong] v, #[strong] w| println!("v: {}, w: {}", v, w);
 
     let closure = #[default_return(true)]
-    move |#[weak] v, #[weak] w, _x| false;
+    move |_x, #[weak] v, #[weak] w| false;
     closure(0i8); // to prevent compiler error for unknown `x` type.
     let _ = #[default_return(true)]
     move |#[weak] v, #[weak] w| false;
@@ -360,14 +360,14 @@ fn test_clone_macro_double_rename() {
     let done = Rc::new(RefCell::new(0));
 
     let closure = #[default_panic]
-    move |#[weak(v)] x, #[weak] w, z| z + *x + *w;
+    move |z, #[weak(v)] x, #[weak] w| z + *x + *w;
     assert_eq!(closure(1i8), 4i8);
     let closure = #[default_panic]
     move |#[weak(v)] x, #[weak] w| 1;
     assert_eq!(closure(), 1);
 
     let closure = #[default_panic]
-    move |#[weak] v, #[weak(w)] x, z| z + *v + *x;
+    move |z, #[weak] v, #[weak(w)] x| z + *v + *x;
     assert_eq!(closure(10i8), 13i8);
     let closure = #[default_panic]
     move |#[weak] v, #[weak(w)] x| 2 + *x;
@@ -389,7 +389,7 @@ fn test_clone_macro_double_rename() {
 
     let t_done = done.clone();
     let closure = #[default_return]
-    move |#[weak(v)] x, #[weak] w, z| {
+    move |z, #[weak(v)] x, #[weak] w| {
         *t_done.borrow_mut() = z + *x + *w;
     };
     closure(4i8);
@@ -402,7 +402,7 @@ fn test_clone_macro_double_rename() {
 
     let t_done = done.clone();
     let closure = #[default_return]
-    move |#[weak] v, #[weak(w)] x, z| {
+    move |z, #[weak] v, #[weak(w)] x| {
         *t_done.borrow_mut() = z + *v + *x;
     };
     closure(8i8);
@@ -414,7 +414,7 @@ fn test_clone_macro_double_rename() {
     assert_eq!(*done.borrow(), 2);
 
     let t_done = done.clone();
-    let closure = move |#[strong(v)] x, #[strong] w, z| {
+    let closure = move |z, #[strong(v)] x, #[strong] w| {
         *t_done.borrow_mut() = z + *x + *w;
     };
     closure(9i8);
@@ -425,7 +425,7 @@ fn test_clone_macro_double_rename() {
     assert_eq!(*done.borrow(), -1);
 
     let t_done = done.clone();
-    let closure = move |#[strong] v, #[strong(w)] x, z| {
+    let closure = move |z, #[strong] v, #[strong(w)] x| {
         *t_done.borrow_mut() = *v + *x * z;
     };
     closure(2i8);
@@ -436,14 +436,14 @@ fn test_clone_macro_double_rename() {
     assert_eq!(*done.borrow(), 1);
 
     let closure = #[default_return(true)]
-    move |#[weak(v)] _x, #[weak] w, _| false;
+    move |_, #[weak(v)] _x, #[weak] w| false;
     assert!(!closure(0u8));
     let closure = #[default_return(true)]
     move |#[weak(v)] _x, #[weak] w| false;
     assert!(!closure());
 
     let closure = #[default_return(true)]
-    move |#[weak] v, #[weak(w)] _x, _| false;
+    move |_, #[weak] v, #[weak(w)] _x| false;
     assert!(!closure("a"));
     let closure = #[default_return(true)]
     move |#[weak] v, #[weak(w)] _x| false;

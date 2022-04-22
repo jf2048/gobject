@@ -1,8 +1,7 @@
 use proc_macro2::{LineColumn, Span, TokenStream};
-use quote::{quote, ToTokens, TokenStreamExt};
-use syn::{
-    ext::IdentExt, parse::Parser, parse_quote, spanned::Spanned, visit_mut::VisitMut, Token,
-};
+use quote::{ToTokens, TokenStreamExt};
+use std::{fmt::Write, ops::Range};
+use syn::{ext::IdentExt, parse::Parser, spanned::Spanned, visit::Visit, Token};
 use tokio::io::AsyncWriteExt;
 
 struct StrongCapture {
@@ -11,17 +10,14 @@ struct StrongCapture {
 }
 
 impl StrongCapture {
-    fn to_pat(&self, name: &str) -> syn::Pat {
-        let from = self.from.as_ref().map(|f| quote! { (#f) });
-        let name = quote::format_ident!("{}", name);
-        let attr = parse_quote! { #[#name #from] };
-        syn::Pat::Ident(syn::PatIdent {
-            attrs: vec![attr],
-            by_ref: None,
-            mutability: None,
-            ident: self.ident.clone(),
-            subpat: None,
-        })
+    fn to_string(&self, name: &str, source: &Source<'_>) -> String {
+        let from = self
+            .from
+            .as_ref()
+            .and_then(|f| source.string_for_spanned(f))
+            .map(|f| format!("({})", f))
+            .unwrap_or_default();
+        format!("#[{}{}] {}", name, from, self.ident)
     }
 }
 
@@ -38,20 +34,21 @@ struct WeakCapture {
 }
 
 impl WeakCapture {
-    fn to_pat(&self, extra: Option<TokenStream>) -> syn::Pat {
-        let from = self
-            .from
-            .as_ref()
-            .map(|f| quote! { (#f #extra) })
-            .or_else(|| extra.as_ref().map(|e| quote! { (#e) }));
-        let attr = parse_quote! { #[weak #from] };
-        syn::Pat::Ident(syn::PatIdent {
-            attrs: vec![attr],
-            by_ref: None,
-            mutability: None,
-            ident: self.ident.clone(),
-            subpat: None,
-        })
+    fn to_string(&self, extra: Option<&str>, source: &Source<'_>) -> String {
+        let mut from = [
+            self.from
+                .as_ref()
+                .and_then(|f| source.string_for_spanned(f)),
+            extra,
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" ");
+        if !from.is_empty() {
+            from = format!("({})", from);
+        }
+        format!("#[weak{}] {}", from, self.ident)
     }
 }
 
@@ -63,50 +60,137 @@ struct Closure {
     body: syn::Expr,
 }
 
-impl ToTokens for Closure {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let mut closure = match &self.body {
-            syn::Expr::Closure(closure) => closure.clone(),
-            syn::Expr::Async(block) => parse_quote! { move || #block },
-            _ => return,
+impl Closure {
+    fn to_string(&self, source: &Source<'_>, local: Option<bool>) -> String {
+        let mut output = String::new();
+        let attrs = match &self.body {
+            syn::Expr::Async(async_) => &async_.attrs,
+            syn::Expr::Closure(closure) => &closure.attrs,
+            _ => return String::new(),
+        };
+        for attr in attrs {
+            if let Some(s) = source.string_for_spanned(attr) {
+                std::write!(&mut output, "{} ", s).unwrap();
+            }
+        }
+        match local {
+            Some(true) if self.watch.is_none() => output.push_str("#[closure(local)] "),
+            Some(false) => output.push_str("#[closure] "),
+            _ => {}
         };
         let default_weaks = self.weak.iter().filter(|w| !w.allow_none).count();
         if default_weaks > 1 {
             match &self.action {
-                Some(DefaultAction::Panic) => {
-                    closure.attrs.push(parse_quote! { #[default_panic] });
-                }
+                Some(DefaultAction::Panic) => output.push_str("#[default_panic] "),
                 Some(DefaultAction::Return(expr)) => {
-                    closure
-                        .attrs
-                        .push(parse_quote! { #[default_return(#expr)] });
+                    if let Some(expr) = source.string_for_spanned(expr) {
+                        std::write!(&mut output, "#[default_return({})] ", expr).unwrap();
+                    }
                 }
-                None => {
-                    closure.attrs.push(parse_quote! { #[default_return] });
-                }
+                None => output.push_str("#[default_return] "),
             }
         }
+        let mut arg_count = match &self.body {
+            syn::Expr::Async(_) => {
+                output.push_str("move |");
+                0
+            }
+            syn::Expr::Closure(closure) => {
+                if let Some(movability) = closure
+                    .movability
+                    .as_ref()
+                    .and_then(|m| source.string_for_spanned(m))
+                {
+                    std::write!(&mut output, "{} ", movability).unwrap();
+                }
+                if let Some(asyncness) = closure
+                    .asyncness
+                    .as_ref()
+                    .and_then(|a| source.string_for_spanned(a))
+                {
+                    std::write!(&mut output, "{} ", asyncness).unwrap();
+                }
+                if let Some(capture) = closure
+                    .capture
+                    .as_ref()
+                    .and_then(|c| source.string_for_spanned(c))
+                {
+                    std::write!(&mut output, "{} ", capture).unwrap();
+                }
+                output.push('|');
+                let arg_count = closure.inputs.len();
+                for (index, pat) in closure.inputs.iter().enumerate() {
+                    if let Some(s) = source.string_for_spanned(pat) {
+                        output.push_str(s);
+                        if index != arg_count - 1 {
+                            output.push_str(", ");
+                        }
+                    }
+                }
+                arg_count
+            }
+            _ => 0,
+        };
+
         if let Some(watch) = &self.watch {
-            closure.inputs.insert(0, watch.to_pat("watch"))
+            if arg_count > 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&watch.to_string("watch", source));
+            arg_count += 1;
         }
         for strong in &self.strong {
-            closure.inputs.insert(0, strong.to_pat("strong"))
+            if arg_count > 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&strong.to_string("strong", source));
+            arg_count += 1;
         }
         for weak in &self.weak {
-            let extra = if weak.allow_none && default_weaks > 1 {
-                Some(quote! { allow_none })
+            let arg = if weak.allow_none && default_weaks > 1 {
+                weak.to_string(Some("allow_none"), source)
             } else if !weak.allow_none && default_weaks == 1 {
-                Some(match &self.action {
-                    Some(DefaultAction::Panic) => quote! { or_panic },
-                    Some(DefaultAction::Return(expr)) => quote! { or_return #expr },
-                    None => quote! { or_return },
-                })
+                match &self.action {
+                    Some(DefaultAction::Panic) => weak.to_string(Some("or_panic"), source),
+                    Some(DefaultAction::Return(expr)) => {
+                        let mut extra = String::from("or_return");
+                        if let Some(s) = source.string_for_spanned(expr) {
+                            extra.push(' ');
+                            extra.push_str(s);
+                        }
+                        weak.to_string(Some(&extra), source)
+                    }
+                    None => weak.to_string(Some("or_return"), source),
+                }
             } else {
-                None
+                weak.to_string(None, source)
             };
-            closure.inputs.insert(0, weak.to_pat(extra));
+            if arg_count > 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&arg);
+            arg_count += 1;
         }
-        closure.to_tokens(tokens);
+        output.push_str("| ");
+        match &self.body {
+            syn::Expr::Async(async_) => {
+                if let Some(s) = source.string_for_spanned(&async_.block) {
+                    output.push_str(s);
+                }
+            }
+            syn::Expr::Closure(closure) => {
+                if let syn::ReturnType::Type(_, ty) = &closure.output {
+                    if let Some(s) = source.string_for_spanned(&*ty) {
+                        std::write!(&mut output, "-> {} ", s).unwrap();
+                    }
+                }
+                if let Some(s) = source.string_for_spanned(&*closure.body) {
+                    output.push_str(s);
+                }
+            }
+            _ => {}
+        }
+        output
     }
 }
 
@@ -168,7 +252,7 @@ fn parse_closure(input: syn::parse::ParseStream<'_>) -> syn::Result<Closure> {
                 if watch.is_none() {
                     watch = Some(StrongCapture { ident, from });
                 } else {
-                    return Err(syn::Error::new_spanned(ident, "Duplicate `watch` c apture"));
+                    return Err(syn::Error::new_spanned(ident, "Duplicate `watch` capture"));
                 }
             }
             Weak => weak.push(WeakCapture {
@@ -220,14 +304,41 @@ fn parse_closure(input: syn::parse::ParseStream<'_>) -> syn::Result<Closure> {
     })
 }
 
-#[derive(Default)]
-struct Visitor {
-    errors: Vec<syn::Error>,
-    converted: bool,
+struct Source<'s> {
+    full: &'s str,
+    lines: Vec<&'s str>,
 }
 
-impl Visitor {
-    fn convert_clone(&mut self, tokens: TokenStream) -> Option<syn::Expr> {
+impl<'s> Source<'s> {
+    fn position(&self, pos: LineColumn) -> Option<usize> {
+        self.lines.get(pos.line - 1).and_then(|l| {
+            let index = l
+                .char_indices()
+                .nth(pos.column)
+                .map(|i| i.0)
+                .unwrap_or_else(|| l.len());
+            Some(l.get(index..index)?.as_ptr() as usize - self.full.as_ptr() as usize)
+        })
+    }
+    fn range_for(&self, span: Span) -> Option<Range<usize>> {
+        Some(self.position(span.start())?..self.position(span.end())?)
+    }
+    fn string_for(&self, span: Span) -> Option<&'s str> {
+        self.full.get(self.range_for(span)?)
+    }
+    fn string_for_spanned(&self, spanned: &impl Spanned) -> Option<&'s str> {
+        self.string_for(spanned.span())
+    }
+}
+
+struct Visitor<'s> {
+    source: Source<'s>,
+    replacements: Vec<(Range<usize>, String)>,
+    errors: Vec<syn::Error>,
+}
+
+impl<'s> Visitor<'s> {
+    fn convert_clone(&mut self, tokens: TokenStream) -> Option<String> {
         let closure = match parse_closure.parse2(tokens) {
             Ok(c) => c,
             Err(e) => {
@@ -242,9 +353,9 @@ impl Visitor {
             ));
             return None;
         }
-        Some(syn::parse2(closure.to_token_stream()).unwrap())
+        Some(closure.to_string(&self.source, None))
     }
-    fn convert_closure(&mut self, tokens: TokenStream, local: bool) -> Option<syn::Expr> {
+    fn convert_closure(&mut self, tokens: TokenStream, local: bool) -> Option<String> {
         let closure = match parse_closure.parse2(tokens) {
             Ok(c) => c,
             Err(e) => {
@@ -259,18 +370,13 @@ impl Visitor {
             ));
             return None;
         }
-        let tokens = closure.to_token_stream();
-        let attr = match local {
-            true => quote! { #[closure(local)] },
-            false => quote! { #[closure] },
-        };
-        Some(parse_quote! { #attr #tokens })
+        Some(closure.to_string(&self.source, Some(local)))
     }
 }
 
-impl VisitMut for Visitor {
-    fn visit_expr_mut(&mut self, expr: &mut syn::Expr) {
-        let new_expr = if let syn::Expr::Macro(mac) = expr {
+impl<'ast, 's> Visit<'ast> for Visitor<'s> {
+    fn visit_expr(&mut self, expr: &'ast syn::Expr) {
+        let output = if let syn::Expr::Macro(mac) = expr {
             let path = mac
                 .mac
                 .path
@@ -289,39 +395,15 @@ impl VisitMut for Visitor {
                 None
             }
         } else {
-            syn::visit_mut::visit_expr_mut(self, expr);
+            syn::visit::visit_expr(self, expr);
             None
         };
-        if let Some(new_expr) = new_expr {
-            self.converted = true;
-            *expr = new_expr;
+        if let Some(output) = output {
+            if let Some(range) = self.source.range_for(expr.span()) {
+                self.replacements.push((range, output));
+            }
         }
     }
-}
-
-#[inline]
-fn item_attrs_mut(item: &mut syn::Item) -> Option<&mut Vec<syn::Attribute>> {
-    use syn::Item::*;
-    use syn::*;
-    Some(match item {
-        Const(ItemConst { attrs, .. }) => attrs,
-        Enum(ItemEnum { attrs, .. }) => attrs,
-        ExternCrate(ItemExternCrate { attrs, .. }) => attrs,
-        Fn(ItemFn { attrs, .. }) => attrs,
-        ForeignMod(ItemForeignMod { attrs, .. }) => attrs,
-        Impl(ItemImpl { attrs, .. }) => attrs,
-        Macro(ItemMacro { attrs, .. }) => attrs,
-        Macro2(ItemMacro2 { attrs, .. }) => attrs,
-        Mod(ItemMod { attrs, .. }) => attrs,
-        Static(ItemStatic { attrs, .. }) => attrs,
-        Struct(ItemStruct { attrs, .. }) => attrs,
-        Trait(ItemTrait { attrs, .. }) => attrs,
-        TraitAlias(ItemTraitAlias { attrs, .. }) => attrs,
-        Type(ItemType { attrs, .. }) => attrs,
-        Union(ItemUnion { attrs, .. }) => attrs,
-        Use(ItemUse { attrs, .. }) => attrs,
-        _ => return None,
-    })
 }
 
 #[derive(thiserror::Error, Debug, Default)]
@@ -349,12 +431,11 @@ struct ParseError {
 }
 
 pub(crate) async fn convert(source: &str) -> anyhow::Result<Option<String>> {
-    let mut visitor = Visitor::default();
-    let mut converted = false;
-    let mut file = match syn::parse_str::<syn::File>(source) {
+    let mut errors = Vec::new();
+    let file = match syn::parse_str::<syn::File>(source) {
         Ok(file) => file,
         Err(e) => {
-            visitor.errors.push(e);
+            errors.push(e);
             syn::File {
                 shebang: None,
                 attrs: Vec::new(),
@@ -363,31 +444,44 @@ pub(crate) async fn convert(source: &str) -> anyhow::Result<Option<String>> {
         }
     };
 
-    for item in &mut file.items {
-        visitor.visit_item_mut(item);
-        if visitor.converted {
-            converted = true;
-            visitor.converted = false;
-            if let Some(attrs) = item_attrs_mut(item) {
-                attrs.push(parse_quote! { #[gobject::clone_block] });
+    let mut visitor = Visitor {
+        source: Source {
+            full: source,
+            lines: source.lines().collect(),
+        },
+        replacements: Vec::new(),
+        errors,
+    };
+    for item in &file.items {
+        let prev_replacements = visitor.replacements.len();
+        visitor.visit_item(item);
+        if prev_replacements < visitor.replacements.len() {
+            if let Some(pos) = visitor.source.position(item.span().start()) {
+                visitor.replacements.insert(
+                    prev_replacements,
+                    (pos..pos, "#[gobject::clone_block]\n".into()),
+                );
             }
         }
     }
 
     if !visitor.errors.is_empty() {
-        let lines = source.lines().collect::<Vec<_>>();
         let mut parse_errors = ParseErrors::default();
         for err in visitor.errors {
             let start = err.span().start();
-            parse_errors
-                .0
-                .push(ParseError::new(err, lines[start.line - 1].to_owned()));
+            parse_errors.0.push(ParseError::new(
+                err,
+                visitor.source.lines[start.line - 1].to_owned(),
+            ));
         }
         return Err(parse_errors.into());
     }
 
-    if converted {
-        let source = file.to_token_stream().to_string();
+    if !visitor.replacements.is_empty() {
+        let mut source = visitor.source.full.to_owned();
+        for (range, replacement) in visitor.replacements.into_iter().rev() {
+            source.replace_range(range, &replacement);
+        }
         let rustfmt = tokio::process::Command::new("rustfmt")
             .args(&["--edition", "2021"])
             .stdin(std::process::Stdio::piped())
