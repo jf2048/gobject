@@ -61,7 +61,12 @@ struct Closure {
 }
 
 impl Closure {
-    fn to_string(&self, source: &Source<'_>, local: Option<bool>) -> String {
+    fn to_string(
+        &self,
+        source: &Source<'_>,
+        local: Option<bool>,
+        preserve_default: bool,
+    ) -> String {
         let mut output = String::new();
         let attrs = match &self.body {
             syn::Expr::Async(async_) => &async_.attrs,
@@ -79,15 +84,25 @@ impl Closure {
             _ => {}
         };
         let default_weaks = self.weak.iter().filter(|w| !w.allow_none).count();
-        if default_weaks > 1 {
+        let mut has_default = false;
+        if preserve_default || default_weaks > 1 {
             match &self.action {
-                Some(DefaultAction::Panic) => output.push_str("#[default_panic] "),
+                Some(DefaultAction::Panic) => {
+                    output.push_str("#[default_panic] ");
+                    has_default = true;
+                }
                 Some(DefaultAction::Return(expr)) => {
                     if let Some(expr) = source.string_for_spanned(expr) {
                         std::write!(&mut output, "#[default_return({})] ", expr).unwrap();
+                        has_default = true;
                     }
                 }
-                None => output.push_str("#[default_return] "),
+                None => {
+                    if !preserve_default {
+                        output.push_str("#[default_return] ");
+                        has_default = true;
+                    }
+                }
             }
         }
         let mut arg_count = match &self.body {
@@ -147,10 +162,9 @@ impl Closure {
             arg_count += 1;
         }
         for weak in &self.weak {
-            let arg = if weak.allow_none && default_weaks > 1 {
-                weak.to_string(Some("allow_none"), source)
-            } else if !weak.allow_none && default_weaks == 1 {
-                match &self.action {
+            let arg = match (weak.allow_none, has_default) {
+                (true, true) => weak.to_string(Some("allow_none"), source),
+                (false, false) => match &self.action {
                     Some(DefaultAction::Panic) => weak.to_string(Some("or_panic"), source),
                     Some(DefaultAction::Return(expr)) => {
                         let mut extra = String::from("or_return");
@@ -161,9 +175,8 @@ impl Closure {
                         weak.to_string(Some(&extra), source)
                     }
                     None => weak.to_string(Some("or_return"), source),
-                }
-            } else {
-                weak.to_string(None, source)
+                },
+                _ => weak.to_string(None, source),
             };
             if arg_count > 0 {
                 output.push_str(", ");
@@ -333,6 +346,7 @@ impl<'s> Source<'s> {
 
 struct Visitor<'s> {
     source: Source<'s>,
+    preserve_default: bool,
     replacements: Vec<(Range<usize>, String)>,
     errors: Vec<syn::Error>,
 }
@@ -353,7 +367,7 @@ impl<'s> Visitor<'s> {
             ));
             return None;
         }
-        Some(closure.to_string(&self.source, None))
+        Some(closure.to_string(&self.source, None, self.preserve_default))
     }
     fn convert_closure(&mut self, tokens: TokenStream, local: bool) -> Option<String> {
         let closure = match parse_closure.parse2(tokens) {
@@ -370,7 +384,7 @@ impl<'s> Visitor<'s> {
             ));
             return None;
         }
-        Some(closure.to_string(&self.source, Some(local)))
+        Some(closure.to_string(&self.source, Some(local), self.preserve_default))
     }
 }
 
@@ -430,7 +444,10 @@ struct ParseError {
     line: String,
 }
 
-pub(crate) async fn convert(source: &str) -> anyhow::Result<Option<String>> {
+pub(crate) async fn convert(
+    source: &str,
+    preserve_default: bool,
+) -> anyhow::Result<Option<String>> {
     let mut errors = Vec::new();
     let file = match syn::parse_str::<syn::File>(source) {
         Ok(file) => file,
@@ -449,6 +466,7 @@ pub(crate) async fn convert(source: &str) -> anyhow::Result<Option<String>> {
             full: source,
             lines: source.lines().collect(),
         },
+        preserve_default,
         replacements: Vec::new(),
         errors,
     };

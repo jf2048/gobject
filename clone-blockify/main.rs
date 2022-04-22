@@ -19,8 +19,25 @@ struct Args {
     /// Backup any modified files.
     #[clap(long)]
     backup: bool,
+    /// Always preserve @default actions.
+    #[clap(long)]
+    preserve_default: bool,
     #[clap(parse(from_os_str))]
     files: Vec<PathBuf>,
+}
+
+struct Options {
+    backup: bool,
+    preserve_default: bool,
+}
+
+impl Options {
+    fn new(args: &Args) -> Self {
+        Self {
+            backup: args.backup,
+            preserve_default: args.preserve_default,
+        }
+    }
 }
 
 #[derive(derive_new::new)]
@@ -47,18 +64,15 @@ fn main() {
 
 #[inline]
 async fn clone_blockify(args: Args) -> Result<(), Vec<anyhow::Error>> {
+    let opts = Options::new(&args);
     if args.files.is_empty() {
-        convert_stdin().await.map_err(|e| vec![e])
+        convert_stdin(&opts).await.map_err(|e| vec![e])
     } else {
-        let results = join_all(
-            args.files
-                .into_iter()
-                .map(|path| convert_path(path, args.backup)),
-        )
-        .await
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
+        let results = join_all(args.files.into_iter().map(|path| convert_path(path, &opts)))
+            .await
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
         match args.emit {
             Emit::Stdout => write_stdout(results),
             Emit::Files => write_files(results).await,
@@ -67,10 +81,10 @@ async fn clone_blockify(args: Args) -> Result<(), Vec<anyhow::Error>> {
 }
 
 #[inline]
-async fn convert_stdin() -> anyhow::Result<()> {
+async fn convert_stdin(opts: &Options) -> anyhow::Result<()> {
     let mut old = String::new();
     tokio::io::stdin().read_to_string(&mut old).await?;
-    let source = convert(&old)
+    let source = convert(&old, opts.preserve_default)
         .await
         .map_err(|e| ConvertError::new(e, "stdin".into()))?;
     if let Some(source) = source {
@@ -135,7 +149,7 @@ pub struct ConvertError {
     path: PathBuf,
 }
 
-async fn convert_path(path: PathBuf, backup: bool) -> Vec<anyhow::Result<Output>> {
+async fn convert_path(path: PathBuf, opts: &Options) -> Vec<anyhow::Result<Output>> {
     let meta = match tokio::fs::metadata(&path).await {
         Ok(m) => m,
         Err(e) => return vec![Err(ConvertError::new(e.into(), path).into())],
@@ -155,19 +169,19 @@ async fn convert_path(path: PathBuf, backup: bool) -> Vec<anyhow::Result<Output>
         .into_iter()
         .map(|entry| async {
             let entry = entry.map_err(anyhow::Error::from)?;
-            convert_file(entry.path(), backup).await
+            convert_file(entry.path(), opts).await
         });
         join_all(tasks).await
     } else {
-        vec![convert_file(&path, backup).await]
+        vec![convert_file(&path, opts).await]
     }
 }
 
-async fn convert_file(path: &Path, backup: bool) -> anyhow::Result<Output> {
+async fn convert_file(path: &Path, opts: &Options) -> anyhow::Result<Output> {
     async {
         let old = tokio::fs::read_to_string(path).await?;
-        if let Some(source) = convert(&old).await? {
-            if backup {
+        if let Some(source) = convert(&old, opts.preserve_default).await? {
+            if opts.backup {
                 let backup_path = path.with_extension("bk");
                 tokio::fs::write(backup_path, old).await?;
             }
