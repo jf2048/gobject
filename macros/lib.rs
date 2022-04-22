@@ -136,6 +136,11 @@ pub fn gtk4_widget(attr: TokenStream, item: TokenStream) -> TokenStream {
             let go = crate_ident();
             let mut class = ClassDefinition::parse(module, opts, go.clone(), &errors);
             class.extends.push(syn::parse_quote! { #go::gtk4::Widget });
+            if class.parent_trait.is_none() {
+                class.parent_trait = Some(syn::parse_quote! {
+                    #go::gtk4::subclass::prelude::WidgetImpl
+                });
+            }
             gtk4_templates::extend_template(&mut class, &errors);
             gtk4_actions::extend_widget_actions(&mut class, &errors);
             class.add_private_items();
