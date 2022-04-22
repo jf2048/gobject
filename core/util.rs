@@ -186,7 +186,7 @@ pub fn arg_reference(arg: &syn::FnArg) -> Option<TokenStream> {
 }
 
 #[inline]
-pub(crate) fn signature_args(sig: &syn::Signature) -> impl Iterator<Item = &syn::Ident> + Clone {
+pub fn signature_args(sig: &syn::Signature) -> impl Iterator<Item = &syn::Ident> + Clone {
     sig.inputs.iter().filter_map(arg_name)
 }
 
@@ -275,7 +275,20 @@ pub fn path_to_string(path: &syn::Path) -> String {
         .join("")
 }
 
-#[derive(Debug, Default)]
+pub fn external_sig(sig: &syn::Signature) -> syn::Signature {
+    let mut sig = sig.clone();
+    for (index, arg) in sig.inputs.iter_mut().enumerate() {
+        if let syn::FnArg::Typed(syn::PatType { pat, .. }) = arg {
+            if !matches!(**pat, syn::Pat::Ident(_)) {
+                let ident = quote::format_ident!("arg{}", index, span = Span::mixed_site());
+                *pat = Box::new(syn::parse_quote! { #ident });
+            }
+        }
+    }
+    sig
+}
+
+#[derive(Debug, Default, Clone)]
 pub struct GenericArgs {
     indices: HashSet<usize>,
 }
@@ -302,7 +315,7 @@ impl GenericArgs {
     pub fn contains(&self, index: usize) -> bool {
         self.indices.contains(&index)
     }
-    pub(crate) fn substitute(&self, sig: &mut syn::Signature, glib: &TokenStream) {
+    pub fn substitute(&self, sig: &mut syn::Signature, glib: &TokenStream) {
         for (index, arg) in sig.inputs.iter_mut().enumerate() {
             if self.indices.contains(&index) {
                 let ref_ = arg_reference(arg);

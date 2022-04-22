@@ -552,8 +552,12 @@ impl ClassDefinition {
                 fn #ident(&self, obj: &<Self as #glib::subclass::types::ObjectSubclass>::Type)
             }
         });
+        let head = self.inner.trait_head(
+            &parse_quote! { #name },
+            quote! { #glib::subclass::object::ObjectImpl },
+        );
         Some(quote! {
-            impl #glib::subclass::object::ObjectImpl for #name {
+            #head {
                 #properties
                 #set_property
                 #property

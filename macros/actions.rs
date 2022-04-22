@@ -813,11 +813,12 @@ impl Action {
         use HandlerType::*;
         use TypeContext::*;
         use TypeMode::*;
-        let (sub_ty, wrapper_ty) = match (
-            def.inner.type_(Subclass, Subclass, External),
-            def.inner.type_(Subclass, Wrapper, External),
-        ) {
-            (Some(sub_ty), Some(wrapper_ty)) => (sub_ty, wrapper_ty),
+        let (sub_ty, wrapper_ty) = match def
+            .inner
+            .type_(Subclass, Subclass, External)
+            .zip(def.inner.type_(Subclass, Wrapper, External))
+        {
+            Some(tys) => tys,
             _ => return,
         };
         self.override_public_method(Activate, &sub_ty, &wrapper_ty, bind_expr, def, errors);
@@ -833,7 +834,7 @@ impl Action {
         if handler.mode == TypeMode::Wrapper
             && !matches!(
                 &public_method.constructor,
-                Some(gobject_core::ConstructorType::Auto(_))
+                Some(gobject_core::ConstructorType::Auto(_, _))
             )
             && public_method.target.is_none()
             && final_

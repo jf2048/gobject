@@ -705,7 +705,7 @@ impl TypeDefinition {
             TypeMode::Subclass,
             TypeContext::External,
         )?;
-        let mut constructors = self
+        let mut statics = self
             .public_methods
             .iter()
             .filter_map(|m| m.definition(&ty, &sub_ty, true, false, final_, &glib))
@@ -715,7 +715,7 @@ impl TypeDefinition {
             .iter()
             .filter_map(|m| m.definition(&ty, &sub_ty, true, true, final_, &glib))
             .peekable();
-        let has_constructors = constructors.peek().is_some() || auto_constructors.peek().is_some();
+        let has_statics = statics.peek().is_some() || auto_constructors.peek().is_some();
         let async_trait = match self.concurrency {
             Concurrency::None => quote! { #[#go::async_trait::async_trait(?Send)] },
             Concurrency::SendSync => quote! { #[#go::async_trait::async_trait] },
@@ -741,23 +741,23 @@ impl TypeDefinition {
                         }
                     }
                 });
-                let constructors = has_constructors.then(|| {
+                let statics = has_statics.then(|| {
                     quote! {
                         impl #impl_generics super::#name #type_generics #where_clause {
-                            #(pub #constructors)*
+                            #(pub #statics)*
                             #(#auto_constructors)*
                         }
                     }
                 });
                 Some(quote! {
                     #items
-                    #constructors
+                    #statics
                 })
             } else {
                 Some(quote! {
                     impl #impl_generics super::#name #type_generics #where_clause {
                         #(pub #items)*
-                        #(pub #constructors)*
+                        #(pub #statics)*
                         #(#auto_constructors)*
                     }
                 })
@@ -776,23 +776,23 @@ impl TypeDefinition {
                     }
                 }
             });
-            let constructors = has_constructors.then(|| {
+            let statics = has_statics.then(|| {
                 quote! {
                     impl super::#name {
-                        #(pub #constructors)*
+                        #(pub #statics)*
                         #(#auto_constructors)*
                     }
                 }
             });
             Some(quote! {
                 #items
-                #constructors
+                #statics
             })
         } else {
             Some(quote! {
                 impl super::#name {
                     #(pub #items)*
-                    #(pub #constructors)*
+                    #(pub #statics)*
                     #(#auto_constructors)*
                 }
             })
