@@ -17,7 +17,7 @@ pub struct PublicMethod {
     pub mode: TypeMode,
     pub constructor: Option<ConstructorType>,
     pub generic_args: util::GenericArgs,
-    pub custom_body: Option<Box<syn::Expr>>,
+    pub custom_body: Option<(String, Box<syn::Expr>)>,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -269,7 +269,7 @@ impl PublicMethod {
         let mut sig = util::external_sig(&self.sig);
         self.generic_args.substitute(&mut sig, glib);
         let cast_args = self.generic_args.cast_args(&sig, &self.sig, glib);
-        if let Some(custom_body) = self.custom_body.as_ref() {
+        if let Some((_, custom_body)) = self.custom_body.as_ref() {
             return Some(quote_spanned! { self.sig.span() =>
                 #sig {
                     #cast_args

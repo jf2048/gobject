@@ -237,6 +237,15 @@ pub(crate) fn extend_widget_actions(def: &mut ClassDefinition, errors: &Errors) 
                         .inner
                         .public_method_mut(handler.mode, &handler.sig.ident)
                     {
+                        if let Some((custom_tag, _)) = pm.custom_body.as_ref() {
+                            errors.push(
+                                pm.sig.span(),
+                                format!(
+                                    "#[action] cannot be used on public method already overriden by {}",
+                                    custom_tag
+                                ),
+                            );
+                        }
                         action.prepare_public_method(handler, pm, def.final_, errors);
                         let self_ident = syn::Ident::new("self", Span::mixed_site());
                         pm.sig.inputs[0] =
@@ -257,14 +266,16 @@ pub(crate) fn extend_widget_actions(def: &mut ClassDefinition, errors: &Errors) 
                             })
                             .unwrap_or_else(|| quote! { ::std::option::Option::None });
                         let name = format!("{}.{}", group_name, action.name);
-                        pm.custom_body =
-                            Some(Box::new(parse_quote_spanned! { handler.sig.span() => {
+                        pm.custom_body = Some((
+                            String::from("#[action]"),
+                            Box::new(parse_quote_spanned! { handler.sig.span() => {
                                 #go::gtk4::prelude::WidgetExt::activate_action(
                                     #go::glib::Cast::upcast_ref::<#wrapper_ty>(#self_ident),
                                     #name,
                                     #param,
                                 ).unwrap();
-                            }}));
+                            }}),
+                        ));
                     }
                 }
                 if let Some(handler) = &action.change_state {

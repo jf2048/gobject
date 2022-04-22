@@ -888,10 +888,13 @@ impl Action {
                 public_method.sig.span(),
                 "#[action] cannot be used on constructor",
             );
-        } else if public_method.custom_body.is_some() {
+        } else if let Some((custom_tag, _)) = public_method.custom_body.as_ref() {
             errors.push(
                 public_method.sig.span(),
-                "#[action] cannot be used on public method already overriden by another attribute",
+                format!(
+                    "#[action] cannot be used on public method already overriden by {}",
+                    custom_tag
+                ),
             );
         }
     }
@@ -913,8 +916,9 @@ impl Action {
             .inner
             .public_method_mut(handler.mode, &handler.sig.ident)?;
         self.prepare_public_method(handler, public_method, def.final_, errors);
-        public_method.custom_body = Some(Box::new(
-            handler.to_public_method_expr(self, sub_ty, wrapper_ty, bind_expr, &go),
+        public_method.custom_body = Some((
+            String::from("#[action]"),
+            Box::new(handler.to_public_method_expr(self, sub_ty, wrapper_ty, bind_expr, &go)),
         ));
         Some(())
     }

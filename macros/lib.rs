@@ -8,6 +8,8 @@ mod actions;
 mod gtk4_actions;
 #[cfg(feature = "gtk4")]
 mod gtk4_templates;
+#[cfg(feature = "gio")]
+mod initable;
 #[cfg(feature = "serde")]
 mod serde;
 #[cfg(feature = "variant")]
@@ -54,6 +56,8 @@ pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
                 .flatten();
             #[cfg(feature = "gio")]
             actions::extend_actions(&mut class, &errors);
+            #[cfg(feature = "gio")]
+            initable::extend_initables(&mut class, &errors);
             #[cfg(feature = "variant")]
             variant::extend_variant(
                 &mut class.inner,
@@ -167,6 +171,8 @@ pub fn gtk4_widget(attr: TokenStream, item: TokenStream) -> TokenStream {
                     #go::gtk4::subclass::prelude::WidgetImpl
                 });
             }
+            #[cfg(feature = "gio")]
+            initable::extend_initables(&mut class, &errors);
             gtk4_templates::extend_template(&mut class, &errors);
             gtk4_actions::extend_widget_actions(&mut class, &errors);
             class.add_private_items();

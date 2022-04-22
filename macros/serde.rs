@@ -3,7 +3,7 @@ use darling::{
     FromAttributes, FromMeta,
 };
 use gobject_core::{
-    util, PropertyOverride, PropertyPermission, PropertyStorage, TypeBase, TypeDefinition,
+    util, PropertyOverride, PropertyPermission, PropertyStorage, TypeBase, TypeDefinition, TypeMode,
 };
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
@@ -358,16 +358,14 @@ pub(crate) fn extend_serde(
         }).unwrap_or_else(|| quote! {
             #go::ParentReader::push_values(&r, &mut args);
         });
+        let construct_obj = construct_obj_call(def, go, errors);
         let try_from_impl = quote! {
             #try_from_head {
                 type Error = #go::glib::BoolError;
                 fn try_from(r: #reader_path) -> ::std::result::Result<Self, Self::Error> {
                     let mut args = ::std::vec::Vec::new();
                     #push_current
-                    let obj = #go::glib::Object::with_values(
-                        <Self as #go::glib::StaticType>::static_type(),
-                        &args,
-                    )?;
+                    let obj = #construct_obj?;
                     #go::glib::Cast::downcast(obj)
                         .map_err(|_| #go::glib::bool_error!("Failed to downcast object"))
                 }
@@ -471,6 +469,34 @@ pub(crate) fn extend_serde(
 
     let (_, items) = def.module.content.get_or_insert_with(Default::default);
     items.push(syn::Item::Verbatim(quote! { #ser #de }));
+}
+
+#[inline]
+fn construct_obj_call(def: &TypeDefinition, go: &syn::Ident, errors: &util::Errors) -> TokenStream {
+    #[cfg(feature = "gio")]
+    {
+        if def.has_method(TypeMode::Subclass, "init") {
+            return quote! {
+                #go::gio::Initable::with_values(
+                    <Self as #go::glib::StaticType>::static_type(),
+                    &args,
+                )
+            };
+        }
+        if let Some(method) = def.find_method(TypeMode::Subclass, "init_future") {
+            errors.push_spanned(
+                method,
+                "AsyncInitable objects without Initable cannot be deserialized, implement a blocking constructor with `init`"
+            );
+        }
+    }
+
+    quote! {
+        #go::glib::Object::with_values(
+            <Self as #go::glib::StaticType>::static_type(),
+            &args,
+        )
+    }
 }
 
 #[inline]
