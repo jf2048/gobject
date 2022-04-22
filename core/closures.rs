@@ -3,7 +3,12 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned, ToTokens};
 use std::collections::HashSet;
 use std::rc::Rc;
-use syn::{parse::Parser, parse_quote, parse_quote_spanned, spanned::Spanned, visit_mut::VisitMut};
+use syn::{
+    parse::{ParseStream, Parser},
+    parse_quote, parse_quote_spanned,
+    spanned::Spanned,
+    visit_mut::VisitMut,
+};
 
 enum Capture {
     Strong {
@@ -272,7 +277,7 @@ struct ClosureAttrs {
     or: Option<(Span, UpgradeFailAction)>,
 }
 
-fn parse_clone(input: syn::parse::ParseStream<'_>) -> syn::Result<CloneAttrs> {
+fn parse_clone(input: syn::parse::ParseStream<'_>, errors: &Errors) -> syn::Result<CloneAttrs> {
     let mut or = None;
     let mut captures = Vec::new();
     if !input.is_empty() {
@@ -291,7 +296,7 @@ fn parse_clone(input: syn::parse::ParseStream<'_>) -> syn::Result<CloneAttrs> {
             {
                 if or.is_some() {
                     let span = content.parse::<syn::Ident>()?.span();
-                    return Err(syn::Error::new(span, "Duplicate default action specified"));
+                    errors.push(span, "Duplicate default action specified");
                 }
                 or = Some(parse_default_action(&content)?);
             } else {
@@ -386,7 +391,7 @@ fn parse_capture(input: syn::parse::ParseStream<'_>, mode: Mode) -> syn::Result<
     }
 }
 
-fn parse_closure(input: syn::parse::ParseStream<'_>) -> syn::Result<ClosureAttrs> {
+fn parse_closure(input: syn::parse::ParseStream<'_>, errors: &Errors) -> syn::Result<ClosureAttrs> {
     let mut or = None;
     let mut captures = Vec::new();
     let mut local = false;
@@ -409,7 +414,7 @@ fn parse_closure(input: syn::parse::ParseStream<'_>) -> syn::Result<ClosureAttrs
             {
                 if or.is_some() {
                     let span = content.parse::<syn::Ident>()?.span();
-                    return Err(syn::Error::new(span, "Duplicate default action specified"));
+                    errors.push(span, "Duplicate default action specified");
                 }
                 or = Some(parse_default_action(&content)?);
             } else {
@@ -575,12 +580,12 @@ impl<'v> Visitor<'v> {
         let mut action = None;
         if let Some(attrs) = util::extract_attrs(&mut attrs, "closure") {
             for attr in attrs {
-                let attrs = parse_closure
-                    .parse2(attr.tokens)
-                    .map_err(|e| {
-                        self.errors.push_syn(e);
-                    })
-                    .unwrap_or_default();
+                let attrs = syn::parse::Parser::parse2(
+                    |stream: ParseStream<'_>| parse_closure(stream, self.errors),
+                    attr.tokens,
+                )
+                .map_err(|e| self.errors.push_syn(e))
+                .unwrap_or_default();
                 captures.extend(attrs.captures);
                 if let Some((span, or)) = attrs.or {
                     if action.is_some() {
@@ -600,9 +605,7 @@ impl<'v> Visitor<'v> {
         if let Some(caps) = self.get_captures(&mut inputs, mode) {
             captures.extend(caps);
         }
-        if action.is_none() {
-            action = self.get_default_fail_action(&mut attrs);
-        }
+        self.extract_default_fail_action(&mut attrs, &mut action);
         if let Some(action) = action {
             let action = Rc::new(action);
             for capture in &mut captures {
@@ -759,12 +762,12 @@ impl<'v> Visitor<'v> {
         let mut action = None;
         if let Some(attrs) = util::extract_attrs(&mut attrs, "clone") {
             for attr in attrs {
-                let attrs = parse_clone
-                    .parse2(attr.tokens)
-                    .map_err(|e| {
-                        self.errors.push_syn(e);
-                    })
-                    .unwrap_or_default();
+                let attrs = syn::parse::Parser::parse2(
+                    |stream: ParseStream<'_>| parse_clone(stream, self.errors),
+                    attr.tokens,
+                )
+                .map_err(|e| self.errors.push_syn(e))
+                .unwrap_or_default();
                 captures.extend(attrs.captures);
                 if let Some((span, or)) = attrs.or {
                     if action.is_some() {
@@ -785,9 +788,7 @@ impl<'v> Visitor<'v> {
                 "Closure must be `move` to use #[strong] or #[weak]",
             );
         }
-        if action.is_none() {
-            action = self.get_default_fail_action(&mut attrs);
-        }
+        self.extract_default_fail_action(&mut attrs, &mut action);
         if let Some(action) = action {
             let action = Rc::new(action);
             for capture in &mut captures {
@@ -870,12 +871,12 @@ impl<'v> Visitor<'v> {
         let mut attrs = async_.attrs.clone();
         if let Some(attrs) = util::extract_attrs(&mut attrs, "clone") {
             for attr in attrs {
-                let attrs = parse_clone
-                    .parse2(attr.tokens)
-                    .map_err(|e| {
-                        self.errors.push_syn(e);
-                    })
-                    .unwrap_or_default();
+                let attrs = syn::parse::Parser::parse2(
+                    |stream: ParseStream<'_>| parse_clone(stream, self.errors),
+                    attr.tokens,
+                )
+                .map_err(|e| self.errors.push_syn(e))
+                .unwrap_or_default();
                 captures.extend(attrs.captures);
                 if let Some((span, or)) = attrs.or {
                     if action.is_some() {
@@ -890,9 +891,7 @@ impl<'v> Visitor<'v> {
             self.errors
                 .push_spanned(async_, "Async block must be `move` to use #[clone]");
         }
-        if action.is_none() {
-            action = self.get_default_fail_action(&mut attrs);
-        }
+        self.extract_default_fail_action(&mut attrs, &mut action);
         if let Some(action) = action {
             let action = Rc::new(action);
             for capture in &mut captures {
@@ -1075,41 +1074,57 @@ impl<'v> Visitor<'v> {
         }
     }
 
-    fn get_default_fail_action(
+    fn extract_default_fail_action(
         &mut self,
         attrs: &mut Vec<syn::Attribute>,
-    ) -> Option<UpgradeFailAction> {
-        if let Some(attr) = util::extract_attr(attrs, "default_panic") {
-            if let Err(e) = syn::parse2::<syn::parse::Nothing>(attr.tokens) {
-                self.errors.push_syn(e);
-            }
-            return Some(UpgradeFailAction::Panic);
-        }
-        if let Some(attr) = util::extract_attr(attrs, "default_allow_none") {
-            if let Err(e) = syn::parse2::<syn::parse::Nothing>(attr.tokens) {
-                self.errors.push_syn(e);
-            }
-            return Some(UpgradeFailAction::AllowNone);
-        }
-        if let Some(attr) = util::extract_attr(attrs, "default_return") {
-            let ret = (|input: syn::parse::ParseStream<'_>| {
-                if input.is_empty() {
-                    return Ok(None);
+        action_out: &mut Option<UpgradeFailAction>,
+    ) {
+        loop {
+            let action = if let Some(attr) = util::extract_attr(attrs, "default_panic") {
+                let span = attr.span();
+                if let Err(e) = syn::parse2::<syn::parse::Nothing>(attr.tokens) {
+                    self.errors.push_syn(e);
                 }
-                let content;
-                syn::parenthesized!(content in input);
-                let expr = content.parse::<syn::Expr>()?;
-                content.parse::<syn::parse::Nothing>()?;
-                input.parse::<syn::parse::Nothing>()?;
-                Ok(Some(expr))
-            })
-            .parse2(attr.tokens);
-            match ret {
-                Ok(expr) => return Some(UpgradeFailAction::Return(expr)),
-                Err(e) => self.errors.push_syn(e),
+                Some((span, UpgradeFailAction::Panic))
+            } else if let Some(attr) = util::extract_attr(attrs, "default_allow_none") {
+                let span = attr.span();
+                if let Err(e) = syn::parse2::<syn::parse::Nothing>(attr.tokens) {
+                    self.errors.push_syn(e);
+                }
+                Some((span, UpgradeFailAction::AllowNone))
+            } else if let Some(attr) = util::extract_attr(attrs, "default_return") {
+                let span = attr.span();
+                let ret = (|input: syn::parse::ParseStream<'_>| {
+                    if input.is_empty() {
+                        return Ok(None);
+                    }
+                    let content;
+                    syn::parenthesized!(content in input);
+                    let expr = content.parse::<syn::Expr>()?;
+                    content.parse::<syn::parse::Nothing>()?;
+                    input.parse::<syn::parse::Nothing>()?;
+                    Ok(Some(expr))
+                })
+                .parse2(attr.tokens);
+                match ret {
+                    Ok(expr) => Some((span, UpgradeFailAction::Return(expr))),
+                    Err(e) => {
+                        self.errors.push_syn(e);
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            if let Some((span, action)) = action {
+                if action_out.is_some() {
+                    self.errors.push(span, "Duplicate default action specified");
+                }
+                *action_out = Some(action);
+            } else {
+                break;
             }
         }
-        None
     }
 
     fn visit_one(&mut self, expr: &mut syn::Expr) {
