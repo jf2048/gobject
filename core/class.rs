@@ -246,7 +246,7 @@ impl ClassDefinition {
         } else {
             let parent_type = self.parent_type_alias()?;
             quote! {
-                <<super::#parent_type as #glib::object::ObjectSubclassIs>::Subclass as #glib::subclass::types::ObjectSubclass>::Class
+                <super::#parent_type as #glib::object::ObjectType>::GlibClassType
             }
         };
         let class_name = parse_quote! { #class_name };
