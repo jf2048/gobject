@@ -198,6 +198,20 @@ pub fn extract_attr(attrs: &mut Vec<syn::Attribute>, name: &str) -> Option<syn::
     attr_index.map(|attr_index| attrs.remove(attr_index))
 }
 
+#[inline]
+pub fn extract_attrs(attrs: &mut Vec<syn::Attribute>, name: &str) -> Option<Vec<syn::Attribute>> {
+    let mut found = Vec::new();
+    let mut index = 0;
+    while index < attrs.len() {
+        if let Some(index) = attrs.iter().position(|a| a.path.is_ident(name)) {
+            found.push(attrs.remove(index));
+        } else {
+            index += 1;
+        }
+    }
+    (!found.is_empty()).then(|| found)
+}
+
 #[derive(Debug, Default)]
 pub struct GenericArgs {
     indices: HashSet<usize>,

@@ -10,14 +10,18 @@ struct StrongCapture {
 }
 
 impl StrongCapture {
-    fn to_string(&self, name: &str, source: &Source<'_>) -> String {
+    fn to_string(&self, name: &str, source: &Source<'_>, inner: bool) -> String {
         let from = self
             .from
             .as_ref()
             .and_then(|f| source.string_for_spanned(f))
             .map(|f| format!("({})", f))
             .unwrap_or_default();
-        format!("#[{}{}] {}", name, from, self.ident)
+        if inner {
+            format!("{}{} {}", name, from, self.ident)
+        } else {
+            format!("#[{}{}] {}", name, from, self.ident)
+        }
     }
 }
 
@@ -34,7 +38,7 @@ struct WeakCapture {
 }
 
 impl WeakCapture {
-    fn to_string(&self, extra: Option<&str>, source: &Source<'_>) -> String {
+    fn to_string(&self, extra: Option<&str>, source: &Source<'_>, inner: bool) -> String {
         let mut from = [
             self.from
                 .as_ref()
@@ -48,7 +52,11 @@ impl WeakCapture {
         if !from.is_empty() {
             from = format!("({})", from);
         }
-        format!("#[weak{}] {}", from, self.ident)
+        if inner {
+            format!("weak{} {}", from, self.ident)
+        } else {
+            format!("#[weak{}] {}", from, self.ident)
+        }
     }
 }
 
@@ -60,11 +68,16 @@ struct Closure {
     body: syn::Expr,
 }
 
+enum GClosureMode {
+    Local,
+    Sync,
+}
+
 impl Closure {
     fn to_string(
         &self,
         source: &Source<'_>,
-        local: Option<bool>,
+        gclosure: Option<GClosureMode>,
         preserve_default: bool,
     ) -> String {
         let mut output = String::new();
@@ -78,9 +91,11 @@ impl Closure {
                 std::write!(&mut output, "{} ", s).unwrap();
             }
         }
-        match local {
-            Some(true) if self.watch.is_none() => output.push_str("#[closure(local)] "),
-            Some(false) => output.push_str("#[closure] "),
+        match gclosure {
+            Some(GClosureMode::Local) if self.watch.is_none() => {
+                output.push_str("#[closure(local)] ")
+            }
+            Some(GClosureMode::Sync) => output.push_str("#[closure] "),
             _ => {}
         };
         let default_weaks = self.weak.iter().filter(|w| !w.allow_none).count();
@@ -105,9 +120,15 @@ impl Closure {
                 }
             }
         }
+
+        let is_async_clone = gclosure.is_none() && matches!(&self.body, syn::Expr::Async(_));
         let mut arg_count = match &self.body {
             syn::Expr::Async(_) => {
-                output.push_str("move |");
+                if is_async_clone {
+                    output.push_str("#[clone(");
+                } else {
+                    output.push_str("move |");
+                }
                 0
             }
             syn::Expr::Closure(closure) => {
@@ -151,32 +172,34 @@ impl Closure {
             if arg_count > 0 {
                 output.push_str(", ");
             }
-            output.push_str(&watch.to_string("watch", source));
+            output.push_str(&watch.to_string("watch", source, is_async_clone));
             arg_count += 1;
         }
         for strong in &self.strong {
             if arg_count > 0 {
                 output.push_str(", ");
             }
-            output.push_str(&strong.to_string("strong", source));
+            output.push_str(&strong.to_string("strong", source, is_async_clone));
             arg_count += 1;
         }
         for weak in &self.weak {
             let arg = match (weak.allow_none, has_default) {
-                (true, true) => weak.to_string(Some("allow_none"), source),
+                (true, true) => weak.to_string(Some("allow_none"), source, is_async_clone),
                 (false, false) => match &self.action {
-                    Some(DefaultAction::Panic) => weak.to_string(Some("or_panic"), source),
+                    Some(DefaultAction::Panic) => {
+                        weak.to_string(Some("or_panic"), source, is_async_clone)
+                    }
                     Some(DefaultAction::Return(expr)) => {
                         let mut extra = String::from("or_return");
                         if let Some(s) = source.string_for_spanned(expr) {
                             extra.push(' ');
                             extra.push_str(s);
                         }
-                        weak.to_string(Some(&extra), source)
+                        weak.to_string(Some(&extra), source, is_async_clone)
                     }
-                    None => weak.to_string(Some("or_return"), source),
+                    None => weak.to_string(Some("or_return"), source, is_async_clone),
                 },
-                _ => weak.to_string(None, source),
+                _ => weak.to_string(None, source, is_async_clone),
             };
             if arg_count > 0 {
                 output.push_str(", ");
@@ -184,9 +207,23 @@ impl Closure {
             output.push_str(&arg);
             arg_count += 1;
         }
-        output.push_str("| ");
+        if is_async_clone {
+            output.push_str(")] ");
+        } else {
+            output.push_str("| ");
+        }
         match &self.body {
             syn::Expr::Async(async_) => {
+                if let Some(async_token) = source.string_for_spanned(&async_.async_token) {
+                    std::write!(&mut output, "{} ", async_token).unwrap();
+                }
+                if let Some(capture) = async_
+                    .capture
+                    .as_ref()
+                    .and_then(|c| source.string_for_spanned(c))
+                {
+                    std::write!(&mut output, "{} ", capture).unwrap();
+                }
                 if let Some(s) = source.string_for_spanned(&async_.block) {
                     output.push_str(s);
                 }
@@ -369,7 +406,7 @@ impl<'s> Visitor<'s> {
         }
         Some(closure.to_string(&self.source, None, self.preserve_default))
     }
-    fn convert_closure(&mut self, tokens: TokenStream, local: bool) -> Option<String> {
+    fn convert_closure(&mut self, tokens: TokenStream, mode: GClosureMode) -> Option<String> {
         let closure = match parse_closure.parse2(tokens) {
             Ok(c) => c,
             Err(e) => {
@@ -384,7 +421,7 @@ impl<'s> Visitor<'s> {
             ));
             return None;
         }
-        Some(closure.to_string(&self.source, Some(local), self.preserve_default))
+        Some(closure.to_string(&self.source, Some(mode), self.preserve_default))
     }
 }
 
@@ -402,9 +439,9 @@ impl<'ast, 's> Visit<'ast> for Visitor<'s> {
             if path == "clone" || path == "glib::clone" {
                 self.convert_clone(mac.mac.tokens.clone())
             } else if path == "closure" || path == "glib::closure" {
-                self.convert_closure(mac.mac.tokens.clone(), false)
+                self.convert_closure(mac.mac.tokens.clone(), GClosureMode::Sync)
             } else if path == "closure_local" || path == "glib::closure_local" {
-                self.convert_closure(mac.mac.tokens.clone(), true)
+                self.convert_closure(mac.mac.tokens.clone(), GClosureMode::Local)
             } else {
                 None
             }

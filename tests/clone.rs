@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::panic;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -692,4 +692,26 @@ fn test_clone_macro_async_kinds() {
     };
     block_on(closure());
     assert_eq!(*v.borrow(), 2);
+    block_on(
+        #[clone(weak(or_return) v)]
+        async move {
+            *v.borrow_mut() += 1;
+        },
+    );
+    assert_eq!(*v.borrow(), 3);
+}
+
+#[test]
+#[clone_block]
+fn test_clone_attr() {
+    let func = {
+        let a = Rc::new(Cell::new(1));
+        let b = Rc::new(Cell::new(2));
+        let c = Rc::new(Cell::new(3));
+        let func = #[clone(strong a, weak b, weak(c or_return 2) d, default_return(1))]
+        move |x| a.get() + b.get() + d.get() + x;
+        assert_eq!(func(4), 10);
+        func
+    };
+    assert_eq!(func(500), 1);
 }
