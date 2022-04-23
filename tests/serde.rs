@@ -87,3 +87,25 @@ fn final2_json() {
     assert_eq!(other2.my_prop(), 128);
     assert_eq!(other2.date().map(|d| d.year()), Some(1980));
 }
+
+#[gobject::class]
+mod obj_derivable {
+    #[derive(Default)]
+    #[properties]
+    #[gobject_serde(serialize, deserialize, child_types(super::ObjFinal3))]
+    pub struct ObjDerivable {
+        #[property(get, set)]
+        my_prop3: std::cell::Cell<u64>,
+    }
+}
+
+#[gobject::class(final, extends(ObjDerivable))]
+mod obj_final3 {
+    #[derive(Default)]
+    #[gobject_serde(serialize, deserialize)]
+    pub struct ObjFinal3 {
+        #[property(get, set)]
+        str_prop3: std::cell::RefCell<String>,
+    }
+    impl super::ObjDerivableImpl for ObjFinal3 {}
+}

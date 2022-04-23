@@ -29,17 +29,21 @@ pub(crate) fn extend_serde(
 ) {
     let attr = def
         .properties_item_mut()
-        .and_then(|item| {
-            util::extract_attrs(&mut item.attrs, "gobject_serde").map(|attrs| {
-                let attr = util::parse_attributes::<SerdeAttrs>(&attrs, errors);
-                if attr.serialize.is_none() && attr.deserialize.is_none() {
-                    errors.push(
-                        attrs.first().unwrap().span(),
-                        "Must have at least one of these attributes: `serialize`, `deserialize`",
-                    );
-                }
-                attr
-            })
+        .and_then(|item| util::extract_attrs(&mut item.attrs, "gobject_serde"))
+        .map(|attrs| {
+            let span = attrs
+                .iter()
+                .map(|a| a.span())
+                .reduce(|a, b| a.join(b).unwrap_or(a))
+                .unwrap_or_else(Span::call_site);
+            let attrs = util::parse_attributes::<SerdeAttrs>(&attrs, errors);
+            if attrs.serialize.is_none() && attrs.deserialize.is_none() {
+                errors.push(
+                    span,
+                    "Must have at least one of these attributes: `serialize`, `deserialize`",
+                );
+            }
+            attrs
         })
         .unwrap_or_default();
     let ser = attr.serialize.is_some();
@@ -220,10 +224,29 @@ pub(crate) fn extend_serde(
         } else {
             let ser = if !child_types.is_empty() {
                 let ser_head = def.trait_head(&wrapper_ty, quote! { #go::serde::Serialize });
+                let fallback_writer = (def.base == TypeBase::Class && !abstract_).then(|| {
+                    let writer = syn::Ident::new("____Writer", Span::mixed_site());
+                    let mut generics = def.generics.clone().unwrap_or_default();
+                    generics.params.push(parse_quote! { '____writer });
+                    let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
+                    let def = quote! {
+                        struct #writer #type_generics #where_clause(&'____writer #wrapper_ty);
+
+                        impl #impl_generics #go::serde::Serialize for #writer #type_generics #where_clause {
+                            fn serialize<S>(&self, serializer: S) -> ::std::result::Result<S::Ok, S::Error>
+                            where
+                                S: #go::serde::Serializer
+                            {
+                                <#wrapper_ty as #go::SerializeParent>::SerializeParentType::serialize(self.0, serializer)
+                            }
+                        }
+                    };
+                    (writer, def)
+                });
                 let casts = serialize_child_types(
                     &*child_types,
                     &wrapper_ty,
-                    def.base == TypeBase::Class && !abstract_,
+                    fallback_writer,
                     go,
                 );
                 Some(quote! {
@@ -495,7 +518,7 @@ fn has_name(attr: &syn::Attribute, name: &str, is_named: &mut bool) -> bool {
 fn serialize_child_types(
     child_types: &[syn::Path],
     wrapper_ty: &syn::Path,
-    fallback: bool,
+    fallback_writer: Option<(syn::Ident, TokenStream)>,
     go: &syn::Ident,
 ) -> TokenStream {
     let child_casts = child_types.iter().enumerate().map(|(index, child_ty)| {
@@ -511,14 +534,28 @@ fn serialize_child_types(
             }
         }
     });
-    let fallback = fallback.then(|| quote! {
-        <#wrapper_ty as #go::SerializeParent>::SerializeParentType::serialize(obj, serializer)
-    }).unwrap_or_else(|| quote! {
-        Err(#go::serde::ser::Error::custom(::std::format!(
-            "Unsupported type `{}`",
-            #go::glib::prelude::ObjectExt::type_(obj).name(),
-        )))
-    });
+    let fallback = fallback_writer
+        .map(|(writer_ident, writer_def)| {
+            let index = u32::try_from(child_types.len()).unwrap();
+            quote! {
+                #writer_def
+
+                serializer.serialize_newtype_variant(
+                    <#wrapper_ty as #go::glib::StaticType>::static_type().name(),
+                    #index,
+                    <#wrapper_ty as #go::glib::StaticType>::static_type().name(),
+                    &#writer_ident(obj),
+                )
+            }
+        })
+        .unwrap_or_else(|| {
+            quote! {
+                Err(#go::serde::ser::Error::custom(::std::format!(
+                    "Unsupported type `{}`",
+                    #go::glib::prelude::ObjectExt::type_(obj).name(),
+                )))
+            }
+        });
     quote! {
         #(#child_casts)*
         #fallback
@@ -675,7 +712,23 @@ pub(crate) fn downcast_enum(
         );
     }
     let ser = attrs.serialize.is_some().then(|| {
-        let casts = serialize_child_types(&*attrs.child_types, ty, attrs.fallback.is_some(), go);
+        let fallback_writer = attrs.fallback.map(|_| {
+            let writer = syn::Ident::new("____Writer", Span::mixed_site());
+            let def = quote! {
+                struct #writer<'w>(&'w #ty);
+
+                impl<'w> #go::serde::Serialize for #writer<'w> {
+                    fn serialize<S>(&self, serializer: S) -> ::std::result::Result<S::Ok, S::Error>
+                    where
+                        S: #go::serde::Serializer
+                    {
+                        <#ty as #go::SerializeParent>::SerializeParentType::serialize(self.0, serializer)
+                    }
+                }
+            };
+            (writer, def)
+        });
+        let casts = serialize_child_types(&*attrs.child_types, ty, fallback_writer, go);
         quote! {
             fn serialize<S>(obj: &#ty, serializer: S) -> ::std::result::Result<S::Ok, S::Error>
             where
