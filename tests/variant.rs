@@ -1,3 +1,5 @@
+#![cfg(feature = "variant")]
+
 use glib::Cast;
 use glib::StaticVariantType;
 use glib::ToVariant;

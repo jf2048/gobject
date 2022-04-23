@@ -4,9 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
+default = ["variant"]
 use_gio = ["gio", "gobject-macros/gio"]
 use_gtk4 = ["gtk4", "gobject-macros/gtk4"]
 use_serde = ["serde", "gobject-macros/serde"]
+variant = ["gobject-macros/variant"]
 
 [dependencies]
 async-trait = "0.1.53"

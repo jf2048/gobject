@@ -11,6 +11,7 @@ proc-macro = true
 gio = []
 gtk4 = ["quick-xml"]
 serde = []
+variant = []
 
 [dependencies]
 darling = "0.13.1"
