@@ -93,14 +93,6 @@ impl<O: IsA<glib::Object> + Serialize> ListModelOptional<O> {
             .serialize(s)
     }
 }
-/*
-            pub fn deserialize<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<$ty>, D::Error> {
-                #[derive(serde::Deserialize)]
-                #[serde(transparent)]
-                struct Reader(#[serde(with = "super")] $ty);
-                <Option::<Reader> as serde::Deserialize>::deserialize(d).map(|o| o.map(|o| o.0))
-            }
-*/
 
 pub struct ListStore<O>(PhantomData<O>);
 

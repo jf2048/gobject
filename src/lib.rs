@@ -148,6 +148,8 @@ pub use store::*;
 mod serde_traits;
 #[cfg(feature = "use_serde")]
 pub use serde_traits::*;
+#[cfg(feature = "variant")]
+pub mod variant;
 
 pub use glib::once_cell::race::{OnceBool, OnceBox};
 pub use glib::once_cell::sync::OnceCell as SyncOnceCell;
