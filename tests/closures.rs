@@ -177,7 +177,7 @@ mod send {
         value: std::sync::atomic::AtomicU64,
     }
     impl super::SendObject {
-        #[constructor]
+        #[constructor(infallible)]
         pub fn new() -> Self {}
     }
 }

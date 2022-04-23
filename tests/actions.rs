@@ -226,7 +226,7 @@ mod app {
                 .downcast::<super::MyApp>()
                 .unwrap()
         }
-        #[constructor]
+        #[constructor(infallible)]
         pub fn new(application_id: &str) -> Self {}
         pub fn take_log(&self) -> Vec<String> {
             self.imp().log.take()

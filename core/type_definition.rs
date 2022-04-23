@@ -676,7 +676,7 @@ impl TypeDefinition {
             )?;
             self.public_methods
                 .iter()
-                .filter_map(move |m| m.definition(&ty, &sub_ty, false, false, final_, &glib))
+                .filter_map(move |m| m.definition(&ty, &sub_ty, false, final_, &glib))
         };
         let virtual_methods = {
             let glib = self.glib();
@@ -708,14 +708,20 @@ impl TypeDefinition {
         let mut statics = self
             .public_methods
             .iter()
-            .filter_map(|m| m.definition(&ty, &sub_ty, true, false, final_, &glib))
+            .filter_map(|m| m.definition(&ty, &sub_ty, true, final_, &glib))
             .peekable();
-        let mut auto_constructors = self
+        let mut generated_subclass = self
             .public_methods
             .iter()
-            .filter_map(|m| m.definition(&ty, &sub_ty, true, true, final_, &glib))
+            .filter_map(|m| m.generated_definition(TypeMode::Subclass, &ty, &glib))
             .peekable();
-        let has_statics = statics.peek().is_some() || auto_constructors.peek().is_some();
+        let mut generated_wrapper = self
+            .public_methods
+            .iter()
+            .filter_map(|m| m.generated_definition(TypeMode::Wrapper, &ty, &glib))
+            .peekable();
+        let has_wrapper_statics = statics.peek().is_some() || generated_wrapper.peek().is_some();
+        let has_subclass_statics = generated_subclass.peek().is_some();
         let async_trait = match self.concurrency {
             Concurrency::None => quote! { #[#go::async_trait::async_trait(?Send)] },
             Concurrency::SendSync => quote! { #[#go::async_trait::async_trait] },
@@ -741,24 +747,35 @@ impl TypeDefinition {
                         }
                     }
                 });
-                let statics = has_statics.then(|| {
+                let wrapper_statics = has_wrapper_statics.then(|| {
                     quote! {
                         impl #impl_generics super::#name #type_generics #where_clause {
                             #(pub #statics)*
-                            #(#auto_constructors)*
+                            #(#generated_wrapper)*
+                        }
+                    }
+                });
+                let subclass_statics = has_subclass_statics.then(|| {
+                    quote! {
+                        impl #impl_generics #name #type_generics #where_clause {
+                            #(#generated_subclass)*
                         }
                     }
                 });
                 Some(quote! {
                     #items
-                    #statics
+                    #wrapper_statics
+                    #subclass_statics
                 })
             } else {
                 Some(quote! {
                     impl #impl_generics super::#name #type_generics #where_clause {
                         #(pub #items)*
                         #(pub #statics)*
-                        #(#auto_constructors)*
+                        #(#generated_wrapper)*
+                    }
+                    impl #impl_generics #name #type_generics #where_clause {
+                        #(#generated_subclass)*
                     }
                 })
             }
@@ -776,24 +793,35 @@ impl TypeDefinition {
                     }
                 }
             });
-            let statics = has_statics.then(|| {
+            let wrapper_statics = has_wrapper_statics.then(|| {
                 quote! {
                     impl super::#name {
                         #(pub #statics)*
-                        #(#auto_constructors)*
+                        #(#generated_wrapper)*
+                    }
+                }
+            });
+            let subclass_statics = has_subclass_statics.then(|| {
+                quote! {
+                    impl #name {
+                        #(#generated_subclass)*
                     }
                 }
             });
             Some(quote! {
                 #items
-                #statics
+                #wrapper_statics
+                #subclass_statics
             })
         } else {
             Some(quote! {
                 impl super::#name {
                     #(pub #items)*
                     #(pub #statics)*
-                    #(#auto_constructors)*
+                    #(#generated_wrapper)*
+                }
+                impl #name {
+                    #(#generated_subclass)*
                 }
             })
         }

@@ -30,9 +30,9 @@ mod obj_derivable {
         fn abc(&self) {}
     }
     impl super::ObjDerivable {
-        #[constructor]
+        #[constructor(infallible)]
         pub fn new(my_prop: u64) -> Self {}
-        #[constructor]
+        #[constructor(infallible)]
         pub fn with_prop_plus_one(my_prop: u64) -> Self {
             Self::new(my_prop + 1)
         }
@@ -244,9 +244,9 @@ mod public_methods {
         pub fn get_string2(obj: &Self) -> String {
             obj.imp().string.borrow().clone()
         }
-        #[constructor]
+        #[constructor(infallible)]
         fn new(number: u64, string: &str) -> Self {}
-        #[constructor]
+        #[constructor(infallible)]
         pub fn default() -> Self {
             Self::new(100, "100")
         }
@@ -293,9 +293,9 @@ mod public_methods_final {
         pub fn get_string4(obj: &Self) -> String {
             super::PublicMethods::get_string2(obj.upcast_ref())
         }
-        #[constructor]
+        #[constructor(infallible)]
         fn new(number: u64, string: &str) -> Self {}
-        #[constructor]
+        #[constructor(infallible)]
         pub fn default() -> Self {
             Self::new(100, "100")
         }

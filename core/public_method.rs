@@ -1,12 +1,14 @@
+use std::{borrow::Cow, collections::HashMap};
+
 use crate::{
     util::{self, Errors},
     TypeBase, TypeMode,
 };
-use darling::FromAttributes;
+use darling::{util::Flag, FromAttributes};
 use heck::ToKebabCase;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
-use syn::spanned::Spanned;
+use syn::{parse::ParseStream, spanned::Spanned};
 
 #[derive(Debug, Clone)]
 pub struct PublicMethod {
@@ -20,14 +22,37 @@ pub struct PublicMethod {
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum ConstructorType {
-    Auto(syn::Visibility, Box<syn::Signature>),
-    Custom,
+    Auto {
+        vis: syn::Visibility,
+        sig: Box<syn::Signature>,
+        renames: HashMap<usize, String>,
+        fallible: bool,
+    },
+    Custom {
+        fallible: bool,
+    },
+}
+
+impl ConstructorType {
+    pub fn fallible(&self) -> bool {
+        match self {
+            Self::Auto { fallible, .. } => *fallible,
+            Self::Custom { fallible, .. } => *fallible,
+        }
+    }
 }
 
 #[derive(Default, FromAttributes)]
-#[darling(default, attributes(public, constructor))]
+#[darling(default, attributes(public))]
 struct PublicMethodAttrs {
     name: Option<syn::Ident>,
+}
+
+#[derive(Default, FromAttributes)]
+#[darling(default, attributes(constructor))]
+struct ConstructorAttrs {
+    name: Option<syn::Ident>,
+    infallible: Flag,
 }
 
 impl PublicMethod {
@@ -46,7 +71,7 @@ impl PublicMethod {
                 if let Some(public_method) = public_method {
                     if matches!(
                         &public_method.constructor,
-                        Some(ConstructorType::Auto(_, _))
+                        Some(ConstructorType::Auto { .. })
                     ) {
                         to_remove.push(index);
                     }
@@ -72,8 +97,9 @@ impl PublicMethod {
         let mut constructor = None;
         if base == TypeBase::Class {
             if let Some(attrs) = util::extract_attrs(&mut method.attrs, "constructor") {
-                let attrs = util::parse_attributes::<PublicMethodAttrs>(&attrs, errors);
+                let attrs = util::parse_attributes::<ConstructorAttrs>(&attrs, errors);
                 name = attrs.name;
+                let fallible = attrs.infallible.is_none();
                 if let Some(recv) = method.sig.receiver() {
                     errors.push_spanned(recv, "`self` not allowed on constructor");
                 }
@@ -81,8 +107,25 @@ impl PublicMethod {
                     errors.push_spanned(&method.sig, "Constructor must have a return type");
                 }
                 if method.block.stmts.is_empty() {
-                    for arg in &method.sig.inputs {
-                        if let syn::FnArg::Typed(syn::PatType { pat, .. }) = arg {
+                    let mut renames = HashMap::new();
+                    let mut sig = method.sig.clone();
+                    for (index, arg) in sig.inputs.iter_mut().enumerate() {
+                        if let syn::FnArg::Typed(syn::PatType { pat, attrs, .. }) = arg {
+                            if let Some(attr) = util::extract_attr(attrs, "property") {
+                                syn::parse::Parser::parse2(
+                                    |stream: ParseStream<'_>| {
+                                        let input;
+                                        syn::parenthesized!(input in stream);
+                                        let name = input.parse::<syn::LitStr>()?.value();
+                                        renames.insert(index, name);
+                                        input.parse::<syn::parse::Nothing>()?;
+                                        stream.parse::<syn::parse::Nothing>()
+                                    },
+                                    attr.tokens,
+                                )
+                                .map_err(|e| errors.push_syn(e))
+                                .ok();
+                            }
                             match pat.as_ref() {
                                 syn::Pat::Ident(_) => {}
                                 p => errors
@@ -90,12 +133,14 @@ impl PublicMethod {
                             }
                         }
                     }
-                    constructor = Some(ConstructorType::Auto(
-                        method.vis.clone(),
-                        Box::new(method.sig.clone()),
-                    ));
+                    constructor = Some(ConstructorType::Auto {
+                        vis: method.vis.clone(),
+                        sig: Box::new(sig),
+                        renames,
+                        fallible,
+                    });
                 } else {
-                    constructor = Some(ConstructorType::Custom);
+                    constructor = Some(ConstructorType::Custom { fallible });
                 }
             }
         }
@@ -156,43 +201,67 @@ impl PublicMethod {
         self.generic_args.substitute(&mut sig, glib);
         Some(quote! { #sig })
     }
+    pub(crate) fn generated_definition(
+        &self,
+        mode: TypeMode,
+        wrapper_ty: &TokenStream,
+        glib: &TokenStream,
+    ) -> Option<TokenStream> {
+        if self.mode != mode {
+            return None;
+        }
+        if let Some(ConstructorType::Auto {
+            vis,
+            sig: orig_sig,
+            renames,
+            fallible,
+        }) = self.constructor.as_ref()
+        {
+            let mut sig = util::external_sig(orig_sig);
+            self.generic_args.substitute(&mut sig, glib);
+            let cast_args = self.generic_args.cast_args(&sig, orig_sig, glib);
+            let args = sig.inputs.iter().enumerate().filter_map(|(index, arg)| {
+                let ident = util::arg_name(arg)?;
+                let span = match arg {
+                    syn::FnArg::Receiver(r) => r.span(),
+                    syn::FnArg::Typed(t) => t.ty.span(),
+                };
+                let name = renames
+                    .get(&index)
+                    .map(Cow::Borrowed)
+                    .unwrap_or_else(|| Cow::Owned(ident.to_string().to_kebab_case()));
+                Some(quote_spanned! { span => (#name, &#ident) })
+            });
+            let expect = (!fallible).then(|| {
+                quote! { .unwrap_or_else(|e| {
+                    ::std::panic!(
+                        "Failed to construct {}: {:?}",
+                        <#wrapper_ty as #glib::StaticType>::static_type().name(),
+                        e,
+                    );
+                }) }
+            });
+            Some(quote_spanned! { orig_sig.span() =>
+                #vis #sig {
+                    #![inline]
+                    #cast_args
+                    #glib::Object::new::<#wrapper_ty>(&[#(#args),*]) #expect
+                }
+            })
+        } else {
+            None
+        }
+    }
     pub(crate) fn definition(
         &self,
         wrapper_ty: &TokenStream,
         sub_ty: &TokenStream,
         select_statics: bool,
-        select_auto: bool,
         final_: bool,
         glib: &TokenStream,
     ) -> Option<TokenStream> {
         if select_statics != self.is_static() {
             return None;
-        }
-        if select_auto {
-            if let Some(ConstructorType::Auto(vis, orig_sig)) = self.constructor.as_ref() {
-                let mut sig = util::external_sig(orig_sig);
-                self.generic_args.substitute(&mut sig, glib);
-                let cast_args = self.generic_args.cast_args(&sig, orig_sig, glib);
-                let args = sig.inputs.iter().filter_map(|arg| {
-                    let ident = util::arg_name(arg)?;
-                    let span = match arg {
-                        syn::FnArg::Receiver(r) => r.span(),
-                        syn::FnArg::Typed(t) => t.ty.span(),
-                    };
-                    let name = ident.to_string().to_kebab_case();
-                    Some(quote_spanned! { span => (#name, &#ident) })
-                });
-                return Some(quote_spanned! { orig_sig.span() =>
-                    #vis #sig {
-                        #![inline]
-                        #cast_args
-                        #glib::Object::new::<#wrapper_ty>(&[#(#args),*])
-                            .expect("Failed to construct object")
-                    }
-                });
-            } else {
-                return None;
-            }
         }
         if self.mode == TypeMode::Wrapper && self.target.is_none() && (final_ || select_statics) {
             return None;
