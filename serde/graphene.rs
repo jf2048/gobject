@@ -38,7 +38,14 @@ pub mod frustum {
     use super::*;
     #[derive(Serialize, Deserialize)]
     #[serde(rename = "graphene::Frustum")]
-    struct Frustum([((f32, f32, f32), f32); 6]);
+    struct Frustum(
+        ((f32, f32, f32), f32),
+        ((f32, f32, f32), f32),
+        ((f32, f32, f32), f32),
+        ((f32, f32, f32), f32),
+        ((f32, f32, f32), f32),
+        ((f32, f32, f32), f32),
+    );
     pub fn serialize<S: Serializer>(f: &graphene::Frustum, s: S) -> Result<S::Ok, S::Error> {
         let p = f.planes();
         #[inline]
@@ -46,28 +53,28 @@ pub mod frustum {
             let n = p.normal();
             ((n.x(), n.y(), n.z()), p.constant())
         }
-        let p = [
+        Frustum(
             to_tuple(&p[0]),
             to_tuple(&p[1]),
             to_tuple(&p[2]),
             to_tuple(&p[3]),
             to_tuple(&p[4]),
             to_tuple(&p[5]),
-        ];
-        Frustum(p).serialize(s)
+        )
+        .serialize(s)
     }
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<graphene::Frustum, D::Error> {
-        let Frustum(p) = Frustum::deserialize(d)?;
+        let Frustum(p0, p1, p2, p3, p4, p5) = Frustum::deserialize(d)?;
         #[inline]
         fn to_plane(((x, y, z), c): ((f32, f32, f32), f32)) -> graphene::Plane {
             graphene::Plane::new(Some(&graphene::Vec3::new(x, y, z)), c)
         }
-        let p0 = to_plane(p[0]);
-        let p1 = to_plane(p[1]);
-        let p2 = to_plane(p[2]);
-        let p3 = to_plane(p[3]);
-        let p4 = to_plane(p[4]);
-        let p5 = to_plane(p[5]);
+        let p0 = to_plane(p0);
+        let p1 = to_plane(p1);
+        let p2 = to_plane(p2);
+        let p3 = to_plane(p3);
+        let p4 = to_plane(p4);
+        let p5 = to_plane(p5);
         Ok(graphene::Frustum::new(&p0, &p1, &p2, &p3, &p4, &p5))
     }
     declare_optional!(graphene::Frustum);
@@ -77,14 +84,28 @@ pub mod matrix {
     use super::*;
     #[derive(Serialize, Deserialize)]
     #[serde(rename = "graphene::Matrix")]
-    struct Matrix([[f32; 4]; 4]);
+    struct Matrix(
+        (f32, f32, f32, f32),
+        (f32, f32, f32, f32),
+        (f32, f32, f32, f32),
+        (f32, f32, f32, f32),
+    );
     pub fn serialize<S: Serializer>(m: &graphene::Matrix, s: S) -> Result<S::Ok, S::Error> {
-        Matrix(m.values().to_owned()).serialize(s)
+        let [[ax, ay, az, aw], [bx, by, bz, bw], [cx, cy, cz, cw], [dx, dy, dz, dw]] = m.values();
+        Matrix(
+            (*ax, *ay, *az, *aw),
+            (*bx, *by, *bz, *bw),
+            (*cx, *cy, *cz, *cw),
+            (*dx, *dy, *dz, *dw),
+        )
+        .serialize(s)
     }
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<graphene::Matrix, D::Error> {
-        let Matrix(v) = Matrix::deserialize(d)?;
-        let v = unsafe { std::mem::transmute(v) };
-        Ok(graphene::Matrix::from_float(v))
+        let Matrix((ax, ay, az, aw), (bx, by, bz, bw), (cx, cy, cz, cw), (dx, dy, dz, dw)) =
+            Matrix::deserialize(d)?;
+        Ok(graphene::Matrix::from_float([
+            ax, ay, az, aw, bx, by, bz, bw, cx, cy, cz, cw, dx, dy, dz, dw,
+        ]))
     }
     declare_optional!(graphene::Matrix);
 }
