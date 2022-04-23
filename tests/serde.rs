@@ -1,4 +1,4 @@
-#![cfg(feature = "serde_macros")]
+#![cfg(feature = "use_serde")]
 
 use glib::Cast;
 

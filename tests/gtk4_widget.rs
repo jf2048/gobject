@@ -1,4 +1,4 @@
-#![cfg(feature = "gtk4_macros")]
+#![cfg(feature = "use_gtk4")]
 
 #[gobject::gtk4_widget(final)]
 mod my_widget {

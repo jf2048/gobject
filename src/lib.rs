@@ -115,28 +115,28 @@
 #[doc(hidden)]
 pub use async_trait;
 #[doc(hidden)]
-#[cfg(feature = "gio_macros")]
+#[cfg(feature = "use_gio")]
 pub use gio;
 #[doc(hidden)]
 pub use glib;
 #[doc(hidden)]
-#[cfg(feature = "gtk4_macros")]
+#[cfg(feature = "use_gtk4")]
 pub use gtk4;
 #[doc(hidden)]
-#[cfg(feature = "serde_macros")]
+#[cfg(feature = "use_serde")]
 pub use serde;
 
-#[cfg(feature = "gio_macros")]
+#[cfg(feature = "use_gio")]
 pub use gobject_macros::actions;
-#[cfg(feature = "gtk4_macros")]
+#[cfg(feature = "use_gtk4")]
 pub use gobject_macros::gtk4_widget;
-#[cfg(feature = "serde_macros")]
+#[cfg(feature = "use_serde")]
 pub use gobject_macros::serde_cast;
 pub use gobject_macros::{class, clone_block, interface, variant_cast, Properties};
 
-#[cfg(feature = "gio_macros")]
+#[cfg(feature = "use_gio")]
 mod action;
-#[cfg(feature = "gio_macros")]
+#[cfg(feature = "use_gio")]
 pub use action::*;
 mod buildable;
 pub use buildable::*;
@@ -144,9 +144,9 @@ mod cells;
 pub use cells::*;
 mod store;
 pub use store::*;
-#[cfg(feature = "serde_macros")]
+#[cfg(feature = "use_serde")]
 mod serde_traits;
-#[cfg(feature = "serde_macros")]
+#[cfg(feature = "use_serde")]
 pub use serde_traits::*;
 
 pub use glib::once_cell::race::{OnceBool, OnceBox};

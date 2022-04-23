@@ -1,4 +1,4 @@
-#![cfg(feature = "gio_macros")]
+#![cfg(feature = "use_gio")]
 
 #[gobject::class(
     extends(gio::Application),
