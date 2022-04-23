@@ -132,7 +132,7 @@ pub use gobject_macros::actions;
 pub use gobject_macros::gtk4_widget;
 #[cfg(feature = "serde_macros")]
 pub use gobject_macros::serde_cast;
-pub use gobject_macros::{class, clone_block, interface, Properties};
+pub use gobject_macros::{class, clone_block, interface, variant_cast, Properties};
 
 #[cfg(feature = "gio_macros")]
 mod action;
@@ -152,3 +152,19 @@ pub use serde_traits::*;
 pub use glib::once_cell::race::{OnceBool, OnceBox};
 pub use glib::once_cell::sync::OnceCell as SyncOnceCell;
 pub use glib::once_cell::unsync::OnceCell;
+
+#[doc(hidden)]
+pub trait ParentStaticVariantType {
+    fn parent_static_variant_type() -> std::borrow::Cow<'static, glib::VariantTy>;
+}
+
+#[doc(hidden)]
+pub trait ToParentVariant {
+    fn to_parent_variant(&self) -> glib::Variant;
+}
+
+#[doc(hidden)]
+pub trait FromParentVariant: Sized {
+    fn from_parent_variant(variant: &glib::Variant) -> Option<Self>;
+    fn push_parent_values(variant: &glib::Variant, args: &mut Vec<(&'static str, glib::Value)>);
+}

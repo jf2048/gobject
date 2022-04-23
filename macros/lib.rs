@@ -10,6 +10,7 @@ mod gtk4_actions;
 mod gtk4_templates;
 #[cfg(feature = "serde")]
 mod serde;
+mod variant;
 
 #[proc_macro_attribute]
 #[proc_macro_error::proc_macro_error]
@@ -46,24 +47,32 @@ pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut class = ClassDefinition::parse(module, opts, go, &errors);
             #[cfg(feature = "gio")]
             actions::extend_actions(&mut class, &errors);
+
+            let parent_type = (!class.extends.is_empty())
+                .then(|| {
+                    let ident = class.parent_type_alias()?;
+                    Some(syn::parse_quote! { super::#ident })
+                })
+                .flatten();
+            variant::extend_variant(
+                &mut class.inner,
+                class.final_,
+                class.abstract_,
+                parent_type.as_ref(),
+                class.ext_trait.as_ref(),
+                &errors,
+            );
             #[cfg(feature = "serde")]
-            {
-                let parent_type = (!class.extends.is_empty())
-                    .then(|| {
-                        let ident = class.parent_type_alias()?;
-                        Some(syn::parse_quote! { super::#ident })
-                    })
-                    .flatten();
-                serde::extend_serde(
-                    &mut class.inner,
-                    class.final_,
-                    class.abstract_,
-                    parent_type.as_ref(),
-                    class.ext_trait.as_ref(),
-                    class.ns.as_ref(),
-                    &errors,
-                );
-            }
+            serde::extend_serde(
+                &mut class.inner,
+                class.final_,
+                class.abstract_,
+                parent_type.as_ref(),
+                class.ext_trait.as_ref(),
+                class.ns.as_ref(),
+                &errors,
+            );
+
             class.add_private_items();
             class.to_token_stream()
         })
@@ -82,23 +91,37 @@ pub fn interface(attr: TokenStream, item: TokenStream) -> TokenStream {
         .map(|module| {
             let go = crate_ident();
             let mut iface = InterfaceDefinition::parse(module, opts, go, &errors);
+            variant::extend_variant(
+                &mut iface.inner,
+                false,
+                true,
+                None,
+                iface.ext_trait.as_ref(),
+                &errors,
+            );
             #[cfg(feature = "serde")]
-            {
-                serde::extend_serde(
-                    &mut iface.inner,
-                    false,
-                    true,
-                    None,
-                    iface.ext_trait.as_ref(),
-                    iface.ns.as_ref(),
-                    &errors,
-                );
-            }
+            serde::extend_serde(
+                &mut iface.inner,
+                false,
+                true,
+                None,
+                iface.ext_trait.as_ref(),
+                iface.ns.as_ref(),
+                &errors,
+            );
             iface.add_private_items(&errors);
             iface.to_token_stream()
         })
         .unwrap_or_default();
     append_errors(tokens, errors)
+}
+
+#[proc_macro]
+pub fn variant_cast(input: TokenStream) -> TokenStream {
+    let errors = Errors::new();
+    let go = crate_ident();
+    let output = variant::downcast_enum(input.into(), &go, &errors);
+    append_errors(output, errors)
 }
 
 #[cfg(feature = "serde")]

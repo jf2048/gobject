@@ -3,7 +3,7 @@ use darling::util::{Flag, SpannedValue};
 use proc_macro2::Span;
 
 #[inline]
-pub fn check_spanned<T>(value: &Option<SpannedValue<T>>) -> Option<Span> {
+pub fn check_spanned<T: syn::spanned::Spanned>(value: &Option<T>) -> Option<Span> {
     value.as_ref().map(|v| v.span())
 }
 
