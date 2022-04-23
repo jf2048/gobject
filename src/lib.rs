@@ -140,12 +140,10 @@ mod action;
 pub use action::*;
 mod buildable;
 pub use buildable::*;
-mod construct_cell;
-pub use construct_cell::*;
+mod cells;
+pub use cells::*;
 mod store;
 pub use store::*;
-mod weak_cell;
-pub use weak_cell::*;
 #[cfg(feature = "serde_macros")]
 mod serde_traits;
 #[cfg(feature = "serde_macros")]
