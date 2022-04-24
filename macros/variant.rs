@@ -4,7 +4,7 @@ use darling::{
 };
 use gobject_core::{
     util, validations, PropertyOverride, PropertyPermission, PropertyStorage, TypeBase,
-    TypeDefinition, TypeMode,
+    TypeDefinition,
 };
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
@@ -550,11 +550,16 @@ pub(crate) fn extend_variant(
 }
 
 #[inline]
-fn construct_obj_call(def: &TypeDefinition, go: &syn::Ident, errors: &util::Errors) -> TokenStream {
+fn construct_obj_call(
+    _def: &TypeDefinition,
+    go: &syn::Ident,
+    _errors: &util::Errors,
+) -> TokenStream {
     let args_ident = syn::Ident::new("args", Span::mixed_site());
     #[cfg(feature = "gio")]
     {
-        if def.has_method(TypeMode::Subclass, "init") {
+        use gobject_core::TypeMode;
+        if _def.has_method(TypeMode::Subclass, "init") {
             return quote! {
                 #go::gio::Initable::with_values(
                     <Self as #go::glib::StaticType>::static_type(),
@@ -562,8 +567,8 @@ fn construct_obj_call(def: &TypeDefinition, go: &syn::Ident, errors: &util::Erro
                 )
             };
         }
-        if let Some(method) = def.find_method(TypeMode::Subclass, "init_future") {
-            errors.push_spanned(
+        if let Some(method) = _def.find_method(TypeMode::Subclass, "init_future") {
+            _errors.push_spanned(
                 method,
                 "AsyncInitable objects without Initable cannot be converted from variant, implement a blocking constructor with `init`"
             );

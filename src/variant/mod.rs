@@ -43,8 +43,9 @@ use ::glib::ffi;
 
 struct VariantBuilder(ffi::GVariantBuilder);
 
+#[allow(dead_code)]
 impl VariantBuilder {
-    pub fn new(ty: &::glib::VariantTy) -> Self {
+    fn new(ty: &::glib::VariantTy) -> Self {
         use ::glib::translate::ToGlibPtr;
         let mut builder: std::mem::MaybeUninit<ffi::GVariantBuilder> =
             std::mem::MaybeUninit::uninit();
@@ -53,7 +54,7 @@ impl VariantBuilder {
             builder.assume_init()
         })
     }
-    pub fn end(self) -> ::glib::Variant {
+    fn end(self) -> ::glib::Variant {
         let v = unsafe { self.end_unsafe() };
         std::mem::forget(self);
         v
