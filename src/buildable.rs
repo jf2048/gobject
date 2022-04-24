@@ -148,3 +148,15 @@ impl<T> ParamSpecBuildable for std::sync::atomic::AtomicPtr<T> {
 impl ParamSpecBuildable for OnceBool {
     type ParamSpec = <bool as ParamSpecBuildable>::ParamSpec;
 }
+impl<T: ParamSpecBuildable + glib::ObjectType> ParamSpecBuildable for glib::WeakRef<T> {
+    type ParamSpec = T::ParamSpec;
+}
+#[cfg(feature = "use_gtk4")]
+impl<T> ParamSpecBuildable for gtk4::TemplateChild<T>
+where
+    T: ParamSpecBuildable
+        + glib::ObjectType
+        + glib::translate::FromGlibPtrNone<*mut <T as glib::ObjectType>::GlibType>,
+{
+    type ParamSpec = T::ParamSpec;
+}

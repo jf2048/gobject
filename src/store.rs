@@ -845,3 +845,53 @@ where
         false
     }
 }
+
+#[cfg(feature = "use_gtk4")]
+impl<T> ParamStore for gtk4::TemplateChild<T>
+where
+    T: glib::ObjectType + glib::translate::FromGlibPtrNone<*mut <T as glib::ObjectType>::GlibType>,
+{
+    type Type = T;
+}
+#[cfg(feature = "use_gtk4")]
+impl<T> ParamStoreRead for gtk4::TemplateChild<T>
+where
+    T: glib::ObjectType + glib::translate::FromGlibPtrNone<*mut <T as glib::ObjectType>::GlibType>,
+{
+    fn get_owned(&self) -> <Self as ParamStore>::Type {
+        gtk4::TemplateChild::get(self)
+    }
+}
+#[cfg(feature = "use_gtk4")]
+impl<T> ParamStoreReadValue for gtk4::TemplateChild<T>
+where
+    T: glib::ObjectType + glib::translate::FromGlibPtrNone<*mut <T as glib::ObjectType>::GlibType>,
+{
+    fn get_value(&self) -> glib::Value {
+        self.get_owned().to_value()
+    }
+}
+#[cfg(feature = "use_gtk4")]
+impl<T> ParamStoreReadOptional for gtk4::TemplateChild<T>
+where
+    T: glib::ObjectType + glib::translate::FromGlibPtrNone<*mut <T as glib::ObjectType>::GlibType>,
+{
+    type OptionalType = T;
+
+    fn get_owned_optional(&self) -> Option<Self::OptionalType> {
+        gtk4::TemplateChild::try_get(self)
+    }
+}
+#[cfg(feature = "use_gtk4")]
+impl<'a, T> ParamStoreBorrow<'a> for gtk4::TemplateChild<T>
+where
+    T: glib::ObjectType
+        + glib::translate::FromGlibPtrNone<*mut <T as glib::ObjectType>::GlibType>
+        + 'a,
+{
+    type BorrowType = &'a T;
+
+    fn borrow(&'a self) -> Self::BorrowType {
+        &*self
+    }
+}
