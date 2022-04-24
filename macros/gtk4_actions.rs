@@ -38,7 +38,7 @@ struct PropertyAction {
 
 impl PropertyAction {
     #[inline]
-    fn to_token_stream(&self, this_ident: &syn::Ident, go: &syn::Ident) -> TokenStream {
+    fn to_token_stream(&self, this_ident: &syn::Ident, go: &syn::Path) -> TokenStream {
         let name = &self.name;
         let property = &self.property;
         quote! {
@@ -63,7 +63,7 @@ impl WidgetActionGroup {
         &self,
         name: &str,
         this_ident: &syn::Ident,
-        go: &syn::Ident,
+        go: &syn::Path,
     ) -> Option<TokenStream> {
         if self.is_empty() {
             return None;
@@ -217,7 +217,7 @@ pub(crate) fn extend_widget_actions(def: &mut ClassDefinition, errors: &Errors) 
     if groups.values().all(|g| g.is_empty()) {
         return;
     }
-    let go = def.inner.crate_ident.clone();
+    let go = def.inner.crate_path.clone();
     for (group_name, group) in &groups {
         if group.is_empty() {
             if let Some(bind) = &group.bind {
@@ -253,7 +253,7 @@ pub(crate) fn extend_widget_actions(def: &mut ClassDefinition, errors: &Errors) 
                         let param = handler
                             .parameter_index
                             .map(|(_, span)| {
-                                let glib = quote! { #go::glib };
+                                let glib: syn::Path = parse_quote! { #go::glib };
                                 let param_ident = syn::Ident::new("param", Span::mixed_site());
                                 let param = handler
                                     .parameter_to(action, &glib)

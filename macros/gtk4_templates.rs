@@ -82,7 +82,7 @@ impl TemplateChild {
             ty,
         });
     }
-    fn bind_tokens(&self, class_ident: &syn::Ident, go: &syn::Ident) -> TokenStream {
+    fn bind_tokens(&self, class_ident: &syn::Ident, go: &syn::Path) -> TokenStream {
         let id = &self.id;
         let internal = &self.internal;
         let field = &self.field;
@@ -95,7 +95,7 @@ impl TemplateChild {
             );
         }
     }
-    fn check_tokens(&self, this_ident: &syn::Ident, go: &syn::Ident) -> TokenStream {
+    fn check_tokens(&self, this_ident: &syn::Ident, go: &syn::Path) -> TokenStream {
         let id = &self.id;
         let ty = &self.ty;
         let field = &self.field;
@@ -212,12 +212,7 @@ impl TemplateCallback {
             function: attrs.function.unwrap_or(functions),
         });
     }
-    fn to_tokens(
-        &self,
-        wrapper_ty: &syn::Type,
-        sub_ty: &syn::Type,
-        go: &syn::Ident,
-    ) -> TokenStream {
+    fn to_tokens(&self, wrapper_ty: &syn::Type, sub_ty: &syn::Type, go: &syn::Path) -> TokenStream {
         let name = &self.name;
         let start = if self.function { 1 } else { 0 };
         let values_ident = syn::Ident::new("values", Span::mixed_site());
@@ -322,7 +317,7 @@ impl TemplateCallback {
 }
 
 impl TemplateSource {
-    fn to_tokens(&self, go: &syn::Ident) -> TokenStream {
+    fn to_tokens(&self, go: &syn::Path) -> TokenStream {
         let class_ident = syn::Ident::new("class", Span::mixed_site());
         match self {
             Self::File(file) => quote_spanned! { file.span() =>
@@ -457,7 +452,7 @@ pub(crate) fn extend_template(def: &mut ClassDefinition, errors: &Errors) {
     let class_ident = syn::Ident::new("class", Span::mixed_site());
     let this_ident = syn::Ident::new("obj", Span::mixed_site());
     let widget_ident = syn::Ident::new("_widget", Span::mixed_site());
-    let go = def.inner.crate_ident.clone();
+    let go = def.inner.crate_path.clone();
     let go = &go;
     let gtk4 = quote::quote! { #go::gtk4 };
     let bind_template = source.to_tokens(go);

@@ -33,7 +33,7 @@ fn extend_initable(def: &mut gobject_core::ClassDefinition, errors: &Errors) {
             _ => return,
         }
     };
-    let go = &def.inner.crate_ident;
+    let go = &def.inner.crate_path;
     def.implements
         .push(syn::parse_quote! { #go::gio::Initable });
     let head = def.inner.trait_head(
@@ -68,7 +68,7 @@ fn extend_initable(def: &mut gobject_core::ClassDefinition, errors: &Errors) {
             }
         }));
 
-    let glib = quote! { #go::glib };
+    let glib: syn::Path = parse_quote! { #go::glib };
     for pm in &mut def.inner.public_methods {
         if let Some(constructor) = pm.constructor.as_ref() {
             if let Some((custom_tag, _)) = pm.custom_body.as_ref() {
@@ -165,7 +165,7 @@ fn extend_async_initable(def: &mut gobject_core::ClassDefinition, errors: &Error
             _ => return,
         }
     };
-    let go = &def.inner.crate_ident;
+    let go = &def.inner.crate_path;
     def.implements
         .push(syn::parse_quote! { #go::gio::AsyncInitable });
     let head = def.inner.trait_head(
@@ -204,7 +204,7 @@ fn extend_async_initable(def: &mut gobject_core::ClassDefinition, errors: &Error
         .inner
         .find_method(TypeMode::Subclass, "init")
         .map(|m| m.sig.inputs.len());
-    let glib = quote! { #go::glib };
+    let glib: syn::Path = parse_quote! { #go::glib };
     let mut new_async_constructors = Vec::new();
     for pm in &mut def.inner.public_methods {
         if let Some(constructor) = pm.constructor.clone() {

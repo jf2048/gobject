@@ -94,16 +94,16 @@ impl VirtualMethod {
         }
         sig
     }
-    fn public_sig(&self, glib: &TokenStream) -> syn::Signature {
+    fn public_sig(&self, glib: &syn::Path) -> syn::Signature {
         let mut sig = self.external_sig();
         self.generic_args.substitute(&mut sig, glib);
         sig
     }
-    pub(crate) fn prototype(&self, glib: &TokenStream) -> TokenStream {
+    pub(crate) fn prototype(&self, glib: &syn::Path) -> TokenStream {
         let sig = self.public_sig(glib);
         quote_spanned! { self.sig.span() => #sig }
     }
-    pub(crate) fn definition(&self, wrapper_ty: &TokenStream, glib: &TokenStream) -> TokenStream {
+    pub(crate) fn definition(&self, wrapper_ty: &TokenStream, glib: &syn::Path) -> TokenStream {
         let ident = &self.sig.ident;
         let sig = self.public_sig(glib);
         let args = util::signature_args(&sig);
@@ -137,7 +137,7 @@ impl VirtualMethod {
             }
         }
     }
-    fn parent_sig(&self, ident: &syn::Ident, glib: &TokenStream) -> syn::Signature {
+    fn parent_sig(&self, ident: &syn::Ident, glib: &syn::Path) -> syn::Signature {
         let mut sig = self.external_sig();
         sig.ident = format_ident!("parent_{}", self.sig.ident);
         if !sig.inputs.is_empty() {
@@ -153,7 +153,7 @@ impl VirtualMethod {
     pub(crate) fn default_definition(
         &self,
         ext_trait: &syn::Ident,
-        glib: &TokenStream,
+        glib: &syn::Path,
     ) -> TokenStream {
         let this_ident = syn::Ident::new("____this", Span::mixed_site());
         let mut sig = self.parent_sig(&this_ident, glib);
@@ -167,7 +167,7 @@ impl VirtualMethod {
             }
         }
     }
-    pub(crate) fn parent_prototype(&self, glib: &TokenStream) -> TokenStream {
+    pub(crate) fn parent_prototype(&self, glib: &syn::Path) -> TokenStream {
         let mut name = String::from("obj");
         while util::signature_args(&self.sig).any(|i| *i == name) {
             name.insert(0, '_');
@@ -176,7 +176,7 @@ impl VirtualMethod {
         let sig = self.parent_sig(&this_ident, glib);
         quote_spanned! { self.sig.span() => #sig }
     }
-    pub(crate) fn parent_definition(&self, ty: &syn::Type, glib: &TokenStream) -> TokenStream {
+    pub(crate) fn parent_definition(&self, ty: &syn::Type, glib: &syn::Path) -> TokenStream {
         let this_ident = syn::Ident::new("____this", Span::mixed_site());
         let sig = self.parent_sig(&this_ident, glib);
         let ident = &self.sig.ident;
@@ -243,7 +243,7 @@ impl VirtualMethod {
         type_name: &syn::Ident,
         ty: &syn::Type,
         class_ident: &TokenStream,
-        glib: &TokenStream,
+        glib: &syn::Path,
     ) -> TokenStream {
         let ident = &self.sig.ident;
         let this_ident = syn::Ident::new("____this", Span::mixed_site());
@@ -278,7 +278,7 @@ impl VirtualMethod {
         trait_name: &syn::Ident,
         type_ident: &syn::Ident,
         class_ident: &syn::Ident,
-        glib: &TokenStream,
+        glib: &syn::Path,
     ) -> TokenStream {
         let ident = &self.sig.ident;
         let this_ident = syn::Ident::new("____this", Span::mixed_site());

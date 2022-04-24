@@ -27,7 +27,7 @@ pub(crate) fn extend_actions(def: &mut gobject_core::ClassDefinition, errors: &E
     for action in &actions {
         action.override_public_methods(None, def, errors);
     }
-    let go = &def.inner.crate_ident;
+    let go = &def.inner.crate_path;
     let this_ident = syn::Ident::new("obj", Span::mixed_site());
     let actions = actions.iter().map(|action| {
         let action = action.to_token_stream(&this_ident, true, go);
@@ -48,7 +48,7 @@ pub(crate) fn extend_actions(def: &mut gobject_core::ClassDefinition, errors: &E
 pub fn impl_actions(
     mut impl_: syn::ItemImpl,
     attrs: TokenStream,
-    go: &syn::Ident,
+    go: &syn::Path,
     errors: &Errors,
 ) -> TokenStream {
     #[derive(Default, FromMeta)]
@@ -86,7 +86,7 @@ pub fn impl_actions(
 }
 
 pub(crate) fn validate_actions(actions: &[Action], errors: &Errors) {
-    let go = syn::Ident::new("go", Span::call_site());
+    let go = parse_quote! { gobject };
     for action in actions {
         if let Some(change_state) = action.change_state.as_ref() {
             if action.state_type(&go).is_none() {
@@ -265,7 +265,7 @@ impl ActionHandler {
             }
         })
     }
-    fn state_type(&self, go: &syn::Ident) -> Option<Cow<syn::Type>> {
+    fn state_type(&self, go: &syn::Path) -> Option<Cow<syn::Type>> {
         if self.ty == HandlerType::ChangeState {
             self.parameter_index.and_then(|(index, _)| {
                 let param = self.sig.inputs.iter().nth(index);
@@ -297,7 +297,7 @@ impl ActionHandler {
     pub(crate) fn parameter_from<'a>(
         &'a self,
         action: &'a Action,
-        glib: &TokenStream,
+        glib: &syn::Path,
     ) -> Option<Cow<'a, syn::Path>> {
         match self.ty {
             HandlerType::Activate => {
@@ -323,7 +323,7 @@ impl ActionHandler {
     pub(crate) fn parameter_to<'a>(
         &'a self,
         action: &'a Action,
-        glib: &TokenStream,
+        glib: &syn::Path,
     ) -> Option<Cow<'a, syn::Path>> {
         match self.ty {
             HandlerType::Activate => {
@@ -349,9 +349,9 @@ impl ActionHandler {
         action: &Action,
         this_ident: &syn::Ident,
         is_object: bool,
-        go: &syn::Ident,
+        go: &syn::Path,
     ) -> TokenStream {
-        let glib = quote! { #go::glib };
+        let glib: syn::Path = parse_quote! { #go::glib };
         let self_ty = match (self.mode, is_object) {
             (TypeMode::Wrapper, true) => quote! {
                 <Self as #go::glib::subclass::types::ObjectSubclass>::Type
@@ -524,9 +524,9 @@ impl ActionHandler {
         action: &Action,
         wrapper_ty: &TokenStream,
         bind_expr: Option<&syn::Expr>,
-        go: &syn::Ident,
+        go: &syn::Path,
     ) -> syn::Expr {
-        let glib = quote! { #go::glib };
+        let glib: syn::Path = parse_quote! { #go::glib };
         let name = &action.name;
         let self_ident = syn::Ident::new("self", Span::mixed_site());
         let action_group = bind_expr
@@ -592,13 +592,13 @@ impl ActionHandler {
         sub_ty: &TokenStream,
         wrapper_ty: &TokenStream,
         bind_expr: Option<&syn::Expr>,
-        go: &syn::Ident,
+        go: &syn::Path,
     ) -> syn::Expr {
         let recv = match self.sig.receiver() {
             Some(recv) => recv,
             None => return self.to_public_method_noninline_expr(action, wrapper_ty, bind_expr, go),
         };
-        let glib = quote! { #go::glib };
+        let glib: syn::Path = parse_quote! { #go::glib };
         let ident = &self.sig.ident;
         let name = &action.name;
         let self_ident = syn::Ident::new("self", Span::mixed_site());
@@ -759,7 +759,7 @@ impl ParameterType {
     fn needs_convert(&self) -> bool {
         matches!(self, Self::Inferred | Self::Path(_))
     }
-    fn type_expr(&self, action: &Action, glib: &TokenStream) -> Option<syn::Expr> {
+    fn type_expr(&self, action: &Action, glib: &syn::Path) -> Option<syn::Expr> {
         match self {
             Self::Empty => None,
             Self::Inferred => action.parameter_convert_type().map(|ty| {
@@ -1052,13 +1052,13 @@ impl Action {
         }
         self.activate.as_ref().and_then(|h| h.parameter_type())
     }
-    fn state_type(&self, go: &syn::Ident) -> Option<Cow<'_, syn::Type>> {
+    fn state_type(&self, go: &syn::Path) -> Option<Cow<'_, syn::Type>> {
         self.activate
             .as_ref()
             .and_then(|h| h.state_type(go))
             .or_else(|| self.change_state.as_ref().and_then(|h| h.state_type(go)))
     }
-    pub(crate) fn state_from(&self, glib: &TokenStream) -> Option<Cow<syn::Path>> {
+    pub(crate) fn state_from(&self, glib: &syn::Path) -> Option<Cow<syn::Path>> {
         (!self.state_variant).then(|| {
             if let Some(from) = &self.state_from {
                 Cow::Borrowed(from)
@@ -1067,7 +1067,7 @@ impl Action {
             }
         })
     }
-    pub(crate) fn state_to(&self, glib: &TokenStream) -> Option<Cow<syn::Path>> {
+    pub(crate) fn state_to(&self, glib: &syn::Path) -> Option<Cow<syn::Path>> {
         (!self.state_variant).then(|| {
             if let Some(to) = &self.state_to {
                 Cow::Borrowed(to)
@@ -1184,7 +1184,7 @@ impl Action {
             HandlerType::Activate => self.activate.as_ref()?,
             HandlerType::ChangeState => self.change_state.as_ref()?,
         };
-        let go = def.inner.crate_ident.clone();
+        let go = def.inner.crate_path.clone();
         let public_method = def
             .inner
             .public_method_mut(handler.mode, &handler.sig.ident)?;
@@ -1199,10 +1199,10 @@ impl Action {
         &self,
         this_ident: &syn::Ident,
         is_object: bool,
-        go: &syn::Ident,
+        go: &syn::Path,
     ) -> TokenStream {
-        let glib = quote! { #go::glib };
-        let gio = quote! { #go::gio };
+        let glib: syn::Path = parse_quote! { #go::glib };
+        let gio: syn::Path = parse_quote! { #go::gio };
         let action_ident = syn::Ident::new("action", Span::mixed_site());
         let name = &self.name;
         let parameter_type = self.parameter_type.type_expr(self, &glib);

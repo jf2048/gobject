@@ -80,7 +80,7 @@ pub(crate) fn extend_serde(
         }
     }
 
-    let go = &def.crate_ident;
+    let go = &def.crate_path;
     let sub_ty = match &def.name {
         Some(name) => name,
         None => return,
@@ -144,7 +144,7 @@ pub(crate) fn extend_serde(
                 .cloned()
                 .collect::<Vec<_>>();
             let name = prop.getter_name();
-            let inner_ty = prop.inner_type(&def.crate_ident);
+            let inner_ty = prop.inner_type(&def.crate_path);
             if !attrs.iter().any(|a| has_meta(a, "getter")) {
                 let getter = match &prop.get {
                     PropertyPermission::Allow | PropertyPermission::AllowCustomDefault => {
@@ -313,7 +313,7 @@ pub(crate) fn extend_serde(
                 .iter()
                 .filter(|a| a.path.is_ident("serde"));
             let name = prop.getter_name();
-            let ty = prop.inner_type(&def.crate_ident);
+            let ty = prop.inner_type(&def.crate_path);
             Some(quote! { #(#attrs)* #name: #ty })
         });
         let reader_struct = quote! {
@@ -472,7 +472,7 @@ pub(crate) fn extend_serde(
 }
 
 #[inline]
-fn construct_obj_call(def: &TypeDefinition, go: &syn::Ident, errors: &util::Errors) -> TokenStream {
+fn construct_obj_call(def: &TypeDefinition, go: &syn::Path, errors: &util::Errors) -> TokenStream {
     #[cfg(feature = "gio")]
     {
         if def.has_method(TypeMode::Subclass, "init") {
@@ -545,7 +545,7 @@ fn serialize_child_types(
     child_types: &[syn::Path],
     wrapper_ty: &syn::Path,
     fallback_writer: Option<(syn::Ident, TokenStream)>,
-    go: &syn::Ident,
+    go: &syn::Path,
 ) -> TokenStream {
     let child_casts = child_types.iter().enumerate().map(|(index, child_ty)| {
         let index = u32::try_from(index).unwrap();
@@ -593,7 +593,7 @@ fn deserialize_child_types(
     child_types: &[syn::Path],
     wrapper_ty: &syn::Path,
     fallback: bool,
-    go: &syn::Ident,
+    go: &syn::Path,
 ) -> TokenStream {
     let fallback_ty = fallback.then(|| wrapper_ty);
     let variant_count = child_types.len() + fallback.then(|| 1).unwrap_or(0);
@@ -719,7 +719,7 @@ struct EnumAttrs {
 
 pub(crate) fn downcast_enum(
     args: TokenStream,
-    go: &syn::Ident,
+    go: &syn::Path,
     errors: &gobject_core::util::Errors,
 ) -> TokenStream {
     let span = args.span();

@@ -202,7 +202,7 @@ impl PublicMethod {
     pub fn is_static(&self) -> bool {
         self.constructor.is_some() || self.sig.receiver().is_none()
     }
-    pub(crate) fn prototype(&self, glib: &TokenStream) -> Option<TokenStream> {
+    pub(crate) fn prototype(&self, glib: &syn::Path) -> Option<TokenStream> {
         if self.is_static() {
             return None;
         }
@@ -214,7 +214,7 @@ impl PublicMethod {
         &self,
         mode: TypeMode,
         wrapper_ty: &TokenStream,
-        glib: &TokenStream,
+        glib: &syn::Path,
     ) -> Option<TokenStream> {
         if self.mode != mode {
             return None;
@@ -267,7 +267,7 @@ impl PublicMethod {
         sub_ty: &TokenStream,
         select_statics: bool,
         final_: bool,
-        glib: &TokenStream,
+        glib: &syn::Path,
     ) -> Option<TokenStream> {
         if select_statics != self.is_static() {
             return None;

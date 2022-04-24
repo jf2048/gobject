@@ -23,7 +23,7 @@ bitflags::bitflags! {
 }
 
 impl SignalFlags {
-    fn tokens(&self, glib: &TokenStream) -> TokenStream {
+    fn tokens(&self, glib: &syn::Path) -> TokenStream {
         const COUNT: u32 =
             SignalFlags::empty().bits().leading_zeros() - SignalFlags::all().bits().leading_zeros();
         let mut flags = vec![];
@@ -260,7 +260,7 @@ impl Signal {
         &'a self,
         args_ident: &'a syn::Ident,
         self_ty: &'a TokenStream,
-        glib: &'a TokenStream,
+        glib: &'a syn::Path,
     ) -> impl Iterator<Item = TokenStream> + 'a {
         let recv = self.sig.as_ref().and_then(|s| s.receiver()).map(|recv| {
             let arg_name = syn::Ident::new("arg0", Span::mixed_site());
@@ -341,7 +341,7 @@ impl Signal {
     pub(crate) fn signal_id_cell_definition(
         &self,
         wrapper_ty: &TokenStream,
-        glib: &TokenStream,
+        glib: &syn::Path,
     ) -> TokenStream {
         let name = &self.name;
         let ident = self.signal_id_cell_ident();
@@ -365,7 +365,7 @@ impl Signal {
         &self,
         wrapper_ty: &TokenStream,
         sub_ty: &TokenStream,
-        glib: &TokenStream,
+        glib: &syn::Path,
     ) -> Option<TokenStream> {
         if self.override_ {
             return None;
@@ -485,7 +485,7 @@ impl Signal {
         wrapper_ty: &TokenStream,
         sub_ty: &TokenStream,
         class_ident: &TokenStream,
-        glib: &TokenStream,
+        glib: &syn::Path,
     ) -> Option<TokenStream> {
         if !self.override_ {
             return None;
@@ -524,11 +524,7 @@ impl Signal {
             );
         }})
     }
-    pub(crate) fn chain_definition(
-        &self,
-        mode: TypeMode,
-        glib: &TokenStream,
-    ) -> Option<TokenStream> {
+    pub(crate) fn chain_definition(&self, mode: TypeMode, glib: &syn::Path) -> Option<TokenStream> {
         if !self.override_ {
             return None;
         }
@@ -610,7 +606,7 @@ impl Signal {
             }
         })
     }
-    fn emit_prototype(&self, glib: &TokenStream) -> Option<TokenStream> {
+    fn emit_prototype(&self, glib: &syn::Path) -> Option<TokenStream> {
         if self.override_ {
             return None;
         }
@@ -632,7 +628,7 @@ impl Signal {
             fn #method_name(&#self_ident, #details_arg #(#arg_types),*) #output
         })
     }
-    fn emit_definition(&self, glib: &TokenStream) -> Option<TokenStream> {
+    fn emit_definition(&self, glib: &syn::Path) -> Option<TokenStream> {
         let proto = self.emit_prototype(glib)?;
         let sig = self.sig.as_ref()?;
         let arg_types = self.arg_types();
@@ -680,7 +676,7 @@ impl Signal {
         &self,
         concurrency: Concurrency,
         local: bool,
-        glib: &TokenStream,
+        glib: &syn::Path,
     ) -> Option<TokenStream> {
         if !self.connect || self.override_ {
             return None;
@@ -722,7 +718,7 @@ impl Signal {
         &self,
         concurrency: Concurrency,
         local: bool,
-        glib: &TokenStream,
+        glib: &syn::Path,
     ) -> Option<TokenStream> {
         let proto = self.connect_prototype(concurrency, local, glib)?;
         let sig = self.sig.as_ref()?;
@@ -775,7 +771,7 @@ impl Signal {
     pub(crate) fn method_prototypes(
         &self,
         concurrency: Concurrency,
-        glib: &TokenStream,
+        glib: &syn::Path,
     ) -> Vec<TokenStream> {
         [
             self.emit_prototype(glib),
@@ -791,7 +787,7 @@ impl Signal {
     pub(crate) fn method_definitions(
         &self,
         concurrency: Concurrency,
-        glib: &TokenStream,
+        glib: &syn::Path,
     ) -> Vec<TokenStream> {
         [
             self.emit_definition(glib),

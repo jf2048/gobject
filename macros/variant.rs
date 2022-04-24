@@ -114,8 +114,8 @@ pub(crate) fn extend_variant(
         }
     }
 
-    let go = &def.crate_ident;
-    let glib = quote! { #go::glib };
+    let go = &def.crate_path;
+    let glib: syn::Path = parse_quote! { #go::glib };
     let sub_ty = match &def.name {
         Some(name) => name,
         None => return,
@@ -552,7 +552,7 @@ pub(crate) fn extend_variant(
 #[inline]
 fn construct_obj_call(
     _def: &TypeDefinition,
-    go: &syn::Ident,
+    go: &syn::Path,
     _errors: &util::Errors,
 ) -> TokenStream {
     let args_ident = syn::Ident::new("args", Span::mixed_site());
@@ -616,7 +616,7 @@ fn serialize_child_types(
     child_types: &[syn::Path],
     wrapper_ty: &syn::Path,
     fallback: bool,
-    go: &syn::Ident,
+    go: &syn::Path,
 ) -> TokenStream {
     let self_ident = syn::Ident::new("self", Span::mixed_site());
     let obj_ident = syn::Ident::new("obj", Span::mixed_site());
@@ -658,7 +658,7 @@ fn deserialize_child_types(
     child_types: &[syn::Path],
     wrapper_ty: &syn::Path,
     fallback: bool,
-    go: &syn::Ident,
+    go: &syn::Path,
 ) -> TokenStream {
     let name_ident = syn::Ident::new("name", Span::mixed_site());
     let variant_ident = syn::Ident::new("variant", Span::mixed_site());
@@ -706,7 +706,7 @@ struct EnumAttrs {
 
 pub(crate) fn downcast_enum(
     args: TokenStream,
-    go: &syn::Ident,
+    go: &syn::Path,
     errors: &util::Errors,
 ) -> TokenStream {
     let span = args.span();

@@ -315,7 +315,7 @@ impl GenericArgs {
     pub fn contains(&self, index: usize) -> bool {
         self.indices.contains(&index)
     }
-    pub fn substitute(&self, sig: &mut syn::Signature, glib: &TokenStream) {
+    pub fn substitute(&self, sig: &mut syn::Signature, glib: &syn::Path) {
         for (index, arg) in sig.inputs.iter_mut().enumerate() {
             if self.indices.contains(&index) {
                 let ref_ = arg_reference(arg);
@@ -334,7 +334,7 @@ impl GenericArgs {
         &self,
         sig: &syn::Signature,
         orig: &syn::Signature,
-        glib: &TokenStream,
+        glib: &syn::Path,
     ) -> TokenStream {
         sig.inputs
             .iter()

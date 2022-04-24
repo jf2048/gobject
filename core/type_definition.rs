@@ -21,7 +21,7 @@ pub struct TypeDefinition {
     pub inner_vis: syn::Visibility,
     pub concurrency: Concurrency,
     pub name: Option<syn::Ident>,
-    pub crate_ident: syn::Ident,
+    pub crate_path: syn::Path,
     pub generics: Option<syn::Generics>,
     pub properties_item_index: Option<usize>,
     pub methods_item_indices: BTreeSet<usize>,
@@ -108,11 +108,11 @@ impl TypeDefinition {
         module: syn::ItemMod,
         base: TypeBase,
         name: Option<syn::Ident>,
-        crate_ident: syn::Ident,
+        crate_path: syn::Path,
         errors: &Errors,
     ) -> Self {
         let mut item = syn::Item::Mod(module);
-        super::closures(&mut item, &crate_ident, errors);
+        super::closures(&mut item, &crate_path, errors);
         let module = match item {
             syn::Item::Mod(m) => m,
             _ => unreachable!(),
@@ -124,7 +124,7 @@ impl TypeDefinition {
             inner_vis: parse_quote! { pub(super) },
             concurrency: Concurrency::None,
             name,
-            crate_ident,
+            crate_path,
             generics: None,
             properties_item_index: None,
             methods_item_indices: BTreeSet::new(),
@@ -341,9 +341,9 @@ impl TypeDefinition {
         def.methods_item_indices = impls.into_iter().collect();
         def
     }
-    pub fn glib(&self) -> TokenStream {
-        let go = &self.crate_ident;
-        quote! { #go::glib }
+    pub fn glib(&self) -> syn::Path {
+        let go = &self.crate_path;
+        parse_quote! { #go::glib }
     }
     pub fn type_(&self, from: TypeMode, to: TypeMode, ctx: TypeContext) -> Option<TokenStream> {
         use TypeBase::*;
@@ -542,7 +542,7 @@ impl TypeDefinition {
         if self.properties.is_empty() && !has_method && custom.is_none() {
             return None;
         }
-        let go = &self.crate_ident;
+        let go = &self.crate_path;
         let glib = self.glib();
         let sub_ty = self.type_(
             TypeMode::Subclass,
@@ -615,7 +615,7 @@ impl TypeDefinition {
         })
     }
     fn public_method_prototypes(&self) -> Vec<TokenStream> {
-        let go = &self.crate_ident;
+        let go = &self.crate_path;
         let glib = self.glib();
         self.properties
             .iter()
@@ -653,7 +653,7 @@ impl TypeDefinition {
         let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
 
         let properties = {
-            let go = self.crate_ident.clone();
+            let go = self.crate_path.clone();
             let ty = ty.clone();
             let properties_path = self.method_path("properties", TypeMode::Subclass)?;
             self.properties.iter().enumerate().flat_map(move |(i, p)| {
@@ -692,7 +692,7 @@ impl TypeDefinition {
         )
     }
     pub(crate) fn public_methods(&self, trait_name: Option<&syn::Ident>) -> Option<TokenStream> {
-        let go = &self.crate_ident;
+        let go = &self.crate_path;
         let glib = self.glib();
         let final_ = trait_name.is_none();
         let mut items = self.public_method_definitions(final_)?.peekable();

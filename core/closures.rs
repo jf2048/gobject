@@ -75,7 +75,7 @@ impl Capture {
             }
         }
     }
-    fn outer_tokens(&self, index: usize, go: &syn::Ident) -> Option<TokenStream> {
+    fn outer_tokens(&self, index: usize, go: &syn::Path) -> Option<TokenStream> {
         Some(match self {
             Self::Strong { ident, from, .. } => {
                 let target = format_ident!("____strong{}", index, span = Span::mixed_site());
@@ -123,7 +123,7 @@ impl Capture {
             _ => return None,
         })
     }
-    fn inner_tokens(&self, index: usize, mode: Mode, go: &syn::Ident) -> Option<TokenStream> {
+    fn inner_tokens(&self, index: usize, mode: Mode, go: &syn::Path) -> Option<TokenStream> {
         Some(match self {
             Self::Strong { .. } => return None,
             Self::Weak { ident, or, .. } => {
@@ -195,7 +195,7 @@ impl Capture {
             }
         })
     }
-    fn after_tokens(&self, go: &syn::Ident) -> Option<TokenStream> {
+    fn after_tokens(&self, go: &syn::Path) -> Option<TokenStream> {
         Some(match self {
             Self::Watch { ident, from, .. } if ident.is_some() || from.is_some() => {
                 let closure_ident = syn::Ident::new("____closure", Span::mixed_site());
@@ -526,7 +526,7 @@ fn has_captures<'p>(mut inputs: impl Iterator<Item = &'p syn::Pat>) -> bool {
 }
 
 struct Visitor<'v> {
-    crate_ident: &'v syn::Ident,
+    crate_path: &'v syn::Path,
     errors: &'v Errors,
 }
 
@@ -606,7 +606,7 @@ impl<'v> Visitor<'v> {
             }
         }
 
-        let go = self.crate_ident;
+        let go = self.crate_path;
         let closure_ident = syn::Ident::new("____closure", Span::mixed_site());
         let values_ident = syn::Ident::new("____values", Span::mixed_site());
         let constructor = if local {
@@ -758,7 +758,7 @@ impl<'v> Visitor<'v> {
                 capture.set_default_fail(&action);
             }
         }
-        let go = self.crate_ident;
+        let go = self.crate_path;
         let outer = captures
             .iter()
             .enumerate()
@@ -861,7 +861,7 @@ impl<'v> Visitor<'v> {
                 capture.set_default_fail(&action);
             }
         }
-        let go = self.crate_ident;
+        let go = self.crate_path;
         let outer = captures
             .iter()
             .enumerate()
@@ -1120,18 +1120,12 @@ impl<'v> VisitMut for Visitor<'v> {
     }
 }
 
-pub fn closures(item: &mut syn::Item, crate_ident: &syn::Ident, errors: &Errors) {
-    let mut visitor = Visitor {
-        crate_ident,
-        errors,
-    };
+pub fn closures(item: &mut syn::Item, crate_path: &syn::Path, errors: &Errors) {
+    let mut visitor = Visitor { crate_path, errors };
     visitor.visit_item_mut(item);
 }
 
-pub fn closure_expr(expr: &mut syn::Expr, crate_ident: &syn::Ident, errors: &Errors) {
-    let mut visitor = Visitor {
-        crate_ident,
-        errors,
-    };
+pub fn closure_expr(expr: &mut syn::Expr, crate_path: &syn::Path, errors: &Errors) {
+    let mut visitor = Visitor { crate_path, errors };
     visitor.visit_one(expr);
 }

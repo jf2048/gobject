@@ -20,7 +20,7 @@ mod variant;
 pub fn clone_block(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut item = syn::parse_macro_input!(item as syn::Item);
     let errors = Errors::new();
-    let go = crate_ident();
+    let go = crate_path();
     gobject_core::closures(&mut item, &go, &errors);
     append_errors(item.to_token_stream(), errors)
 }
@@ -30,7 +30,7 @@ pub fn derive_properties(item: TokenStream) -> TokenStream {
     let errors = Errors::new();
     let tokens = util::parse::<syn::DeriveInput>(item.into(), &errors)
         .map(|input| {
-            let go = crate_ident();
+            let go = crate_path();
             gobject_core::derived_class_properties(&input, &go, &errors)
         })
         .unwrap_or_default();
@@ -46,7 +46,7 @@ pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
     let module = util::parse::<syn::ItemMod>(item.into(), &errors);
     let tokens = module
         .map(|module| {
-            let go = crate_ident();
+            let go = crate_path();
             let mut class = ClassDefinition::parse(module, opts, go, &errors);
             let _parent_type = (!class.extends.is_empty())
                 .then(|| {
@@ -94,7 +94,7 @@ pub fn interface(attr: TokenStream, item: TokenStream) -> TokenStream {
     let module = util::parse::<syn::ItemMod>(item.into(), &errors);
     let tokens = module
         .map(|module| {
-            let go = crate_ident();
+            let go = crate_path();
             let mut iface = InterfaceDefinition::parse(module, opts, go, &errors);
             #[cfg(feature = "variant")]
             variant::extend_variant(
@@ -126,7 +126,7 @@ pub fn interface(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn variant_cast(input: TokenStream) -> TokenStream {
     let errors = Errors::new();
-    let go = crate_ident();
+    let go = crate_path();
     let output = variant::downcast_enum(input.into(), &go, &errors);
     append_errors(output, errors)
 }
@@ -135,7 +135,7 @@ pub fn variant_cast(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn serde_cast(input: TokenStream) -> TokenStream {
     let errors = Errors::new();
-    let go = crate_ident();
+    let go = crate_path();
     let output = serde::downcast_enum(input.into(), &go, &errors);
     append_errors(output, errors)
 }
@@ -146,7 +146,7 @@ pub fn actions(attr: TokenStream, item: TokenStream) -> TokenStream {
     let errors = Errors::new();
     let tokens = util::parse::<syn::ItemImpl>(item.into(), &errors)
         .map(|impl_| {
-            let go = crate_ident();
+            let go = crate_path();
             actions::impl_actions(impl_, attr.into(), &go, &errors)
         })
         .unwrap_or_default();
@@ -163,7 +163,7 @@ pub fn gtk4_widget(attr: TokenStream, item: TokenStream) -> TokenStream {
     let module = util::parse::<syn::ItemMod>(item.into(), &errors);
     let tokens = module
         .map(|module| {
-            let go = crate_ident();
+            let go = crate_path();
             let mut class = ClassDefinition::parse(module, opts, go.clone(), &errors);
             class.extends.push(syn::parse_quote! { #go::gtk4::Widget });
             if class.parent_trait.is_none() {
@@ -191,7 +191,7 @@ fn append_errors(mut tokens: proc_macro2::TokenStream, errors: Errors) -> TokenS
 }
 
 #[inline]
-fn crate_ident() -> syn::Ident {
+fn crate_path() -> syn::Path {
     use proc_macro_crate::FoundCrate;
 
     let crate_name = match proc_macro_crate::crate_name("gobject") {
@@ -203,5 +203,6 @@ fn crate_ident() -> syn::Ident {
         }
     };
 
-    syn::Ident::new(&crate_name, proc_macro2::Span::call_site())
+    let ident = syn::Ident::new(&crate_name, proc_macro2::Span::call_site());
+    syn::parse_quote! { #ident }
 }

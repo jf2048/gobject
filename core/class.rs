@@ -71,14 +71,14 @@ impl ClassDefinition {
     pub fn parse(
         module: syn::ItemMod,
         opts: ClassOptions,
-        crate_ident: syn::Ident,
+        crate_path: syn::Path,
         errors: &Errors,
     ) -> Self {
         let attrs = opts.0;
         attrs.validate(errors);
 
         let mut inner =
-            TypeDefinition::parse(module, TypeBase::Class, attrs.name, crate_ident, errors);
+            TypeDefinition::parse(module, TypeBase::Class, attrs.name, crate_path, errors);
 
         if attrs.sync.is_some() {
             inner.concurrency = Concurrency::SendSync;
@@ -393,7 +393,7 @@ impl ClassDefinition {
             })
     }
     #[inline]
-    fn unimplemented_property(glib: &TokenStream) -> TokenStream {
+    fn unimplemented_property(glib: &syn::Path) -> TokenStream {
         quote_spanned! { Span::mixed_site() =>
             ::std::unimplemented!(
                 "invalid property id {} for \"{}\" of type '{}' in '{}'",
@@ -434,7 +434,7 @@ impl ClassDefinition {
         if self.inner.properties.is_empty() {
             return None;
         }
-        let go = &self.inner.crate_ident;
+        let go = &self.inner.crate_path;
         let glib = self.inner.glib();
         let adjust_index = self.adjust_property_index();
         let extra = self.inner.custom_stmts_for("set_property");
@@ -487,7 +487,7 @@ impl ClassDefinition {
         if self.inner.properties.is_empty() {
             return None;
         }
-        let go = &self.inner.crate_ident;
+        let go = &self.inner.crate_path;
         let glib = self.inner.glib();
         let adjust_index = self.adjust_property_index();
         let extra = self.inner.custom_stmts_for("property");
@@ -660,7 +660,7 @@ impl ToTokens for ClassDefinition {
 
 pub fn derived_class_properties(
     input: &syn::DeriveInput,
-    go: &syn::Ident,
+    go: &syn::Path,
     errors: &Errors,
 ) -> TokenStream {
     let Properties {
@@ -669,7 +669,7 @@ pub fn derived_class_properties(
         properties,
         ..
     } = Properties::from_derive_input(input, None, errors);
-    let glib = quote! { #go::glib };
+    let glib: syn::Path = parse_quote! { #go::glib };
     let name = &input.ident;
     let generics = &input.generics;
 

@@ -46,13 +46,13 @@ impl InterfaceDefinition {
     pub fn parse(
         module: syn::ItemMod,
         opts: InterfaceOptions,
-        crate_ident: syn::Ident,
+        crate_path: syn::Path,
         errors: &Errors,
     ) -> Self {
         let attrs = opts.0;
 
         let inner =
-            TypeDefinition::parse(module, TypeBase::Interface, attrs.name, crate_ident, errors);
+            TypeDefinition::parse(module, TypeBase::Interface, attrs.name, crate_path, errors);
 
         let name = inner.name.clone();
         let iface = Self {
