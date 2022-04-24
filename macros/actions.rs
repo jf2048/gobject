@@ -12,12 +12,11 @@ use quote::{quote, quote_spanned};
 use std::borrow::Cow;
 use syn::{parse_quote, parse_quote_spanned, spanned::Spanned};
 
-#[cfg(feature = "gio")]
 pub(crate) fn extend_actions(def: &mut gobject_core::ClassDefinition, errors: &Errors) {
     let mut actions = Vec::new();
     for impl_ in def.inner.methods_items_mut() {
         if let Some(mode) = TypeMode::for_item_type(&*impl_.self_ty) {
-            Action::many_from_items(&mut impl_.items, &mut actions, mode, errors);
+            Action::many_from_items(&mut impl_.items, &mut actions, mode, "action", errors);
         }
     }
     if actions.is_empty() {
@@ -44,7 +43,6 @@ pub(crate) fn extend_actions(def: &mut gobject_core::ClassDefinition, errors: &E
     );
 }
 
-#[cfg(feature = "gio")]
 pub fn impl_actions(
     mut impl_: syn::ItemImpl,
     attrs: TokenStream,
@@ -59,7 +57,13 @@ pub fn impl_actions(
 
     let attrs = util::parse_list::<ActionsAttrs>(attrs, errors);
     let mut actions = Vec::new();
-    Action::many_from_items(&mut impl_.items, &mut actions, TypeMode::Wrapper, errors);
+    Action::many_from_items(
+        &mut impl_.items,
+        &mut actions,
+        TypeMode::Wrapper,
+        "action",
+        errors,
+    );
     validate_actions(&actions, errors);
     let ty = &impl_.self_ty;
     let (impl_generics, _, where_clause) = impl_.generics.split_for_impl();
@@ -100,7 +104,7 @@ pub(crate) fn validate_actions(actions: &[Action], errors: &Errors) {
 }
 
 #[derive(Default, FromAttributes)]
-#[darling(default, attributes(action))]
+#[darling(default, attributes(action, widget_action))]
 struct ActionAttrs {
     name: Option<syn::LitStr>,
     parameter_type: Option<SpannedValue<ParameterType>>,
@@ -819,11 +823,12 @@ impl Action {
         items: &mut [syn::ImplItem],
         actions: &mut Vec<Self>,
         mode: TypeMode,
+        attr_name: &str,
         errors: &Errors,
     ) {
         for item in items {
             if let syn::ImplItem::Method(method) = item {
-                if let Some(attrs) = util::extract_attrs(&mut method.attrs, "action") {
+                if let Some(attrs) = util::extract_attrs(&mut method.attrs, attr_name) {
                     let attr = util::parse_attributes::<ActionAttrs>(&attrs, errors);
                     attr.validate(errors);
                     Self::from_method(method, attr, mode, actions, errors);

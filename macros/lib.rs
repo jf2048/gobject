@@ -8,7 +8,7 @@ mod actions;
 mod gtk4_actions;
 #[cfg(feature = "gtk4")]
 mod gtk4_templates;
-#[cfg(feature = "gio")]
+#[cfg(any(feature = "gtk4", feature = "gio"))]
 mod initable;
 #[cfg(feature = "serde")]
 mod serde;
@@ -52,9 +52,9 @@ pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let ident = class.parent_type_alias();
                 syn::parse_quote! { super::#ident }
             });
-            #[cfg(feature = "gio")]
+            #[cfg(any(feature = "gtk4", feature = "gio"))]
             actions::extend_actions(&mut class, &errors);
-            #[cfg(feature = "gio")]
+            #[cfg(any(feature = "gtk4", feature = "gio"))]
             initable::extend_initables(&mut class, &errors);
             #[cfg(feature = "variant")]
             variant::extend_variant(
@@ -138,7 +138,7 @@ pub fn serde_cast(input: TokenStream) -> TokenStream {
     append_errors(output, errors)
 }
 
-#[cfg(feature = "gio")]
+#[cfg(any(feature = "gtk4", feature = "gio"))]
 #[proc_macro_attribute]
 pub fn actions(attr: TokenStream, item: TokenStream) -> TokenStream {
     let errors = Errors::new();
@@ -178,7 +178,7 @@ pub fn gtk4_widget(attr: TokenStream, item: TokenStream) -> TokenStream {
                     #go::gtk4::subclass::prelude::WidgetImpl
                 });
             }
-            #[cfg(feature = "gio")]
+            actions::extend_actions(&mut class, &errors);
             initable::extend_initables(&mut class, &errors);
             gtk4_templates::extend_template(&mut class, &errors);
             gtk4_actions::extend_widget_actions(&mut class, &errors);

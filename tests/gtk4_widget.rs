@@ -66,7 +66,7 @@ mod my_widget {
             self.button.emit_clicked();
             self.button.label()
         }
-        #[action]
+        #[widget_action]
         fn set_label(&self, value: String) {
             self.label.set_label(&value);
         }
@@ -82,7 +82,7 @@ mod my_widget {
     }
     #[widget_actions(group = "pad")]
     impl MyWidget {
-        #[action]
+        #[widget_action]
         fn pad_button(&self) {
             self.label.set_label("Pad button");
         }
@@ -90,7 +90,7 @@ mod my_widget {
     impl super::MyWidget {
         #[constructor(infallible)]
         pub fn new(my_string: &str) -> Self {}
-        #[action(name = "static-action")]
+        #[widget_action(name = "static-action")]
         #[public(name = "static_action")]
         fn _static_action() {
             super::MY_FLAG.store(true, std::sync::atomic::Ordering::Release);

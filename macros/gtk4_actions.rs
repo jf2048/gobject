@@ -132,7 +132,13 @@ pub(crate) fn extend_widget_actions(def: &mut ClassDefinition, errors: &Errors) 
                 }
                 group.bind = Some(bind);
             }
-            Action::many_from_items(&mut impl_.items, &mut group.actions, mode, errors);
+            Action::many_from_items(
+                &mut impl_.items,
+                &mut group.actions,
+                mode,
+                "widget_action",
+                errors,
+            );
         }
     }
     let properties = def
