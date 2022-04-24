@@ -13,6 +13,7 @@ pub mod rectangle {
         let (x, y, w, h) = variant.get()?;
         Some(gdk4::Rectangle::new(x, y, w, h))
     }
+    declare_optional!(gdk4::Rectangle);
 }
 
 pub mod rgba {
@@ -33,4 +34,5 @@ pub mod rgba {
         let (r, g, b, a) = variant.get::<(f64, f64, f64, f64)>()?;
         Some(gdk4::RGBA::new(r as f32, g as f32, b as f32, a as f32))
     }
+    declare_optional!(gdk4::RGBA);
 }

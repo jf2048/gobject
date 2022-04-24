@@ -14,6 +14,7 @@ pub mod rectangle {
         let (x, y, w, h) = variant.get()?;
         Some(cairo::Rectangle::new(x, y, w, h))
     }
+    declare_optional!(cairo::Rectangle);
 }
 
 pub mod rectangle_int {
@@ -28,6 +29,7 @@ pub mod rectangle_int {
         let (x, y, w, h) = variant.get()?;
         Some(cairo::RectangleInt::new(x, y, w, h))
     }
+    declare_optional!(cairo::RectangleInt);
 }
 
 pub mod matrix {
@@ -42,6 +44,7 @@ pub mod matrix {
         let (xx, yx, xy, yy, x0, y0) = variant.get()?;
         Some(cairo::Matrix::new(xx, yx, xy, yy, x0, y0))
     }
+    declare_optional!(cairo::Matrix);
 }
 
 pub mod region {
@@ -68,6 +71,7 @@ pub mod region {
             .collect::<Vec<_>>();
         Some(cairo::Region::create_rectangles(&rects))
     }
+    declare_optional!(cairo::Region);
 }
 
 pub mod path {
@@ -104,6 +108,7 @@ pub mod path {
         }
         cr.copy_path().ok()
     }
+    declare_optional!(cairo::Path);
 }
 
 pub mod path_segment {
@@ -142,6 +147,7 @@ pub mod path_segment {
             _ => return None,
         })
     }
+    declare_optional!(cairo::PathSegment);
 }
 
 pub mod pattern {
@@ -201,6 +207,7 @@ pub mod pattern {
             _ => None,
         }
     }
+    declare_optional!(cairo::Pattern);
 }
 
 pub mod solid_pattern {
@@ -215,6 +222,7 @@ pub mod solid_pattern {
         let (r, g, b, a) = variant.get()?;
         Some(cairo::SolidPattern::from_rgba(r, g, b, a))
     }
+    declare_optional!(cairo::SolidPattern);
 }
 
 pub mod gradient {
@@ -258,6 +266,7 @@ pub mod gradient {
             _ => None,
         }
     }
+    declare_optional!(cairo::Gradient);
 }
 
 pub mod linear_gradient {
@@ -313,6 +322,7 @@ pub mod linear_gradient {
         }
         Some(g)
     }
+    declare_optional!(cairo::LinearGradient);
 }
 
 pub mod radial_gradient {
@@ -368,6 +378,7 @@ pub mod radial_gradient {
         }
         Some(g)
     }
+    declare_optional!(cairo::RadialGradient);
 }
 
 pub mod mesh {
@@ -453,4 +464,5 @@ pub mod mesh {
         }
         Some(m)
     }
+    declare_optional!(cairo::Mesh);
 }

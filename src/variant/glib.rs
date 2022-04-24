@@ -126,6 +126,7 @@ pub mod gstring {
         }
         Some(glib::GString::from(variant.str()?))
     }
+    declare_optional!(glib::GString);
 }
 
 pub mod bytes {
@@ -139,6 +140,7 @@ pub mod bytes {
     pub fn from_variant(variant: &Variant) -> Option<glib::Bytes> {
         Some(glib::Bytes::from(variant.fixed_array().ok()?))
     }
+    declare_optional!(glib::Bytes);
 }
 
 pub mod date {
@@ -152,6 +154,7 @@ pub mod date {
     pub fn from_variant(variant: &Variant) -> Option<glib::Date> {
         glib::Date::from_julian(variant.get()?).ok()
     }
+    declare_optional!(glib::Date);
 }
 
 pub mod time_zone {
@@ -168,6 +171,7 @@ pub mod time_zone {
         }
         glib::TimeZone::from_identifier(Some(variant.str()?))
     }
+    declare_optional!(glib::TimeZone);
 }
 
 pub mod date_time {
@@ -186,6 +190,7 @@ pub mod date_time {
         }
         glib::DateTime::from_iso8601(variant.str()?, None).ok()
     }
+    declare_optional!(glib::DateTime);
 }
 
 pub mod time_span {
@@ -199,6 +204,7 @@ pub mod time_span {
     pub fn from_variant(variant: &Variant) -> Option<glib::TimeSpan> {
         Some(glib::TimeSpan(variant.get()?))
     }
+    declare_optional!(glib::TimeSpan);
 }
 
 pub mod key_file {
@@ -218,6 +224,7 @@ pub mod key_file {
         glib::KeyFile::load_from_data(&kf, d, glib::KeyFileFlags::NONE).ok()?;
         Some(kf)
     }
+    declare_optional!(glib::KeyFile);
 }
 
 pub mod uri {
@@ -235,4 +242,5 @@ pub mod uri {
         let u = variant.str()?;
         glib::Uri::parse(u, glib::UriFlags::PARSE_RELAXED).ok()
     }
+    declare_optional!(glib::Uri);
 }

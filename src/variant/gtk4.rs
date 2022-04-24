@@ -23,6 +23,7 @@ pub mod adjustment {
         let (v, l, u, si, pi, ps) = variant.get()?;
         Some(gtk4::Adjustment::new(v, l, u, si, pi, ps))
     }
+    declare_optional!(gtk4::Adjustment);
 }
 
 pub mod border {
@@ -44,6 +45,7 @@ pub mod border {
                 .build(),
         )
     }
+    declare_optional!(gtk4::Border);
 }
 
 pub mod paper_size {
@@ -65,6 +67,7 @@ pub mod paper_size {
         glib::KeyFile::load_from_data(&kf, d, glib::KeyFileFlags::NONE).ok()?;
         gtk4::PaperSize::from_key_file(&kf, Some("paper_size")).ok()
     }
+    declare_optional!(gtk4::PaperSize);
 }
 
 pub mod string_object {
@@ -81,6 +84,7 @@ pub mod string_object {
         }
         Some(gtk4::StringObject::new(variant.str()?))
     }
+    declare_optional!(gtk4::StringObject);
 }
 
 pub mod string_list {
@@ -112,4 +116,5 @@ pub mod string_list {
         }
         Some(sl)
     }
+    declare_optional!(gtk4::StringList);
 }

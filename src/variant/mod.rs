@@ -1,3 +1,32 @@
+macro_rules! declare_optional {
+    ($ty:ty) => {
+        pub mod optional {
+            pub fn static_variant_type() -> std::borrow::Cow<'static, $crate::glib::VariantTy> {
+                let mut builder = $crate::glib::GStringBuilder::new("m");
+                builder.append(super::static_variant_type().as_str());
+                std::borrow::Cow::Owned(
+                    $crate::glib::VariantType::from_string(builder.into_string()).unwrap(),
+                )
+            }
+            pub fn to_variant(value: &Option<$ty>) -> $crate::glib::Variant {
+                match value.as_ref() {
+                    Some(value) => $crate::glib::Variant::from_some(&super::to_variant(value)),
+                    None => $crate::glib::Variant::from_none(&*super::static_variant_type()),
+                }
+            }
+            pub fn from_variant(variant: &$crate::glib::Variant) -> Option<Option<$ty>> {
+                if !variant.is_type(&*static_variant_type()) {
+                    return None;
+                }
+                match variant.as_maybe() {
+                    Some(variant) => Some(Some(super::from_variant(&variant)?)),
+                    None => Some(None),
+                }
+            }
+        }
+    };
+}
+
 #[cfg(feature = "use_cairo")]
 pub mod cairo;
 #[cfg(feature = "use_gdk4")]

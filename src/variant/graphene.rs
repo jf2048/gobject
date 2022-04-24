@@ -21,6 +21,7 @@ pub mod box_ {
         let b = graphene::Point3D::new(bx as f32, by as f32, bz as f32);
         Some(graphene::Box::new(Some(&a), Some(&b)))
     }
+    declare_optional!(graphene::Box);
 }
 
 pub mod euler {
@@ -35,6 +36,7 @@ pub mod euler {
         let (x, y, z) = variant.get::<(f64, f64, f64)>()?;
         Some(graphene::Euler::new(x as f32, y as f32, z as f32))
     }
+    declare_optional!(graphene::Euler);
 }
 
 pub mod frustum {
@@ -81,6 +83,7 @@ pub mod frustum {
         let p5 = to_plane(p5);
         Some(graphene::Frustum::new(&p0, &p1, &p2, &p3, &p4, &p5))
     }
+    declare_optional!(graphene::Frustum);
 }
 
 pub mod matrix {
@@ -111,6 +114,7 @@ pub mod matrix {
             cx as f32, cy as f32, cz as f32, cw as f32, dx as f32, dy as f32, dz as f32, dw as f32,
         ]))
     }
+    declare_optional!(graphene::Matrix);
 }
 
 pub mod plane {
@@ -131,6 +135,7 @@ pub mod plane {
         let n = graphene::Vec3::new(x as f32, y as f32, z as f32);
         Some(graphene::Plane::new(Some(&n), c as f32))
     }
+    declare_optional!(graphene::Plane);
 }
 
 pub mod point {
@@ -145,6 +150,7 @@ pub mod point {
         let (x, y) = variant.get::<(f64, f64)>()?;
         Some(graphene::Point::new(x as f32, y as f32))
     }
+    declare_optional!(graphene::Point);
 }
 
 pub mod point3d {
@@ -159,6 +165,7 @@ pub mod point3d {
         let (x, y, z) = variant.get::<(f64, f64, f64)>()?;
         Some(graphene::Point3D::new(x as f32, y as f32, z as f32))
     }
+    declare_optional!(graphene::Point3D);
 }
 
 pub mod quad {
@@ -185,6 +192,7 @@ pub mod quad {
         let p4 = graphene::Point::new(x4 as f32, y4 as f32);
         Some(graphene::Quad::new(&p1, &p2, &p3, &p4))
     }
+    declare_optional!(graphene::Quad);
 }
 
 pub mod quaternion {
@@ -201,6 +209,7 @@ pub mod quaternion {
             x as f32, y as f32, z as f32, w as f32,
         ))
     }
+    declare_optional!(graphene::Quaternion);
 }
 
 pub mod ray {
@@ -223,6 +232,7 @@ pub mod ray {
         let d = graphene::Vec3::new(dx as f32, dy as f32, dz as f32);
         Some(graphene::Ray::new(Some(&o), Some(&d)))
     }
+    declare_optional!(graphene::Ray);
 }
 
 pub mod rect {
@@ -243,6 +253,7 @@ pub mod rect {
         let (x, y, w, h) = variant.get::<(f64, f64, f64, f64)>()?;
         Some(graphene::Rect::new(x as f32, y as f32, w as f32, h as f32))
     }
+    declare_optional!(graphene::Rect);
 }
 
 pub mod size {
@@ -257,6 +268,7 @@ pub mod size {
         let (w, h) = variant.get::<(f64, f64)>()?;
         Some(graphene::Size::new(w as f32, h as f32))
     }
+    declare_optional!(graphene::Size);
 }
 
 pub mod sphere {
@@ -277,6 +289,7 @@ pub mod sphere {
         let n = graphene::Point3D::new(x as f32, y as f32, z as f32);
         Some(graphene::Sphere::new(Some(&n), r as f32))
     }
+    declare_optional!(graphene::Sphere);
 }
 
 pub mod triangle {
@@ -302,6 +315,7 @@ pub mod triangle {
             [cx as f32, cy as f32, cz as f32],
         ))
     }
+    declare_optional!(graphene::Triangle);
 }
 
 pub mod vec2 {
@@ -316,6 +330,7 @@ pub mod vec2 {
         let (x, y) = variant.get::<(f64, f64)>()?;
         Some(graphene::Vec2::new(x as f32, y as f32))
     }
+    declare_optional!(graphene::Vec2);
 }
 
 pub mod vec3 {
@@ -330,6 +345,7 @@ pub mod vec3 {
         let (x, y, z) = variant.get::<(f64, f64, f64)>()?;
         Some(graphene::Vec3::new(x as f32, y as f32, z as f32))
     }
+    declare_optional!(graphene::Vec3);
 }
 
 pub mod vec4 {
@@ -344,4 +360,5 @@ pub mod vec4 {
         let (x, y, z, w) = variant.get::<(f64, f64, f64, f64)>()?;
         Some(graphene::Vec4::new(x as f32, y as f32, z as f32, w as f32))
     }
+    declare_optional!(graphene::Vec4);
 }

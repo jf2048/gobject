@@ -17,6 +17,7 @@ pub mod file {
         }
         Some(gio::File::for_uri(variant.str()?))
     }
+    declare_optional!(gio::File);
 }
 
 pub mod icon {
@@ -35,6 +36,7 @@ pub mod icon {
         }
         gio::Icon::for_string(variant.str()?).ok()
     }
+    declare_optional!(gio::Icon);
 }
 
 pub struct ListModel<O>(PhantomData<O>);
@@ -63,6 +65,29 @@ impl<O: IsA<glib::Object>> ListModel<O> {
             }
         }
         builder.end()
+    }
+}
+
+pub struct ListModelOptional<O>(PhantomData<O>);
+
+impl<O: IsA<glib::Object>> ListModelOptional<O> {
+    pub fn static_variant_type() -> Cow<'static, VariantTy>
+    where
+        O: glib::StaticVariantType,
+    {
+        let mut builder = glib::GStringBuilder::new("ma");
+        builder.append(O::static_variant_type().as_str());
+        Cow::Owned(VariantType::from_string(builder.into_string()).unwrap())
+    }
+    pub fn to_variant<M>(m: &Option<M>) -> Variant
+    where
+        M: IsA<gio::ListModel>,
+        O: glib::StaticVariantType + ToVariant,
+    {
+        match m.as_ref() {
+            Some(value) => Variant::from_some(&ListModel::<O>::to_variant(value)),
+            None => Variant::from_none(&*Self::static_variant_type()),
+        }
     }
 }
 
@@ -98,5 +123,34 @@ impl<O: IsA<glib::Object>> ListStore<O> {
             }
         }
         Some(store)
+    }
+}
+
+pub struct ListStoreOptional<O>(PhantomData<O>);
+
+impl<O: IsA<glib::Object>> ListStoreOptional<O> {
+    pub fn static_variant_type() -> Cow<'static, VariantTy>
+    where
+        O: glib::StaticVariantType,
+    {
+        ListModelOptional::<O>::static_variant_type()
+    }
+    pub fn to_variant(ls: &Option<gio::ListStore>) -> Variant
+    where
+        O: glib::StaticVariantType + ToVariant,
+    {
+        ListModelOptional::<O>::to_variant(ls)
+    }
+    pub fn from_variant(variant: &Variant) -> Option<Option<gio::ListStore>>
+    where
+        O: glib::FromVariant,
+    {
+        if !variant.is_type(&*Self::static_variant_type()) {
+            return None;
+        }
+        match variant.as_maybe() {
+            Some(variant) => Some(Some(ListStore::<O>::from_variant(&variant)?)),
+            None => Some(None),
+        }
     }
 }
