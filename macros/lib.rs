@@ -48,12 +48,10 @@ pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
         .map(|module| {
             let go = crate_path();
             let mut class = ClassDefinition::parse(module, opts, go, &errors);
-            let _parent_type = (!class.extends.is_empty())
-                .then(|| {
-                    let ident = class.parent_type_alias()?;
-                    Some::<syn::Path>(syn::parse_quote! { super::#ident })
-                })
-                .flatten();
+            let _parent_type: Option<syn::Path> = (!class.extends.is_empty()).then(|| {
+                let ident = class.parent_type_alias();
+                syn::parse_quote! { super::#ident }
+            });
             #[cfg(feature = "gio")]
             actions::extend_actions(&mut class, &errors);
             #[cfg(feature = "gio")]
@@ -102,7 +100,7 @@ pub fn interface(attr: TokenStream, item: TokenStream) -> TokenStream {
                 false,
                 true,
                 None,
-                iface.ext_trait.as_ref(),
+                Some(&iface.ext_trait),
                 &errors,
             );
             #[cfg(feature = "serde")]
@@ -111,7 +109,7 @@ pub fn interface(attr: TokenStream, item: TokenStream) -> TokenStream {
                 false,
                 true,
                 None,
-                iface.ext_trait.as_ref(),
+                Some(&iface.ext_trait),
                 iface.ns.as_ref(),
                 &errors,
             );

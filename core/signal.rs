@@ -259,7 +259,7 @@ impl Signal {
     fn args_unwrap<'a>(
         &'a self,
         args_ident: &'a syn::Ident,
-        self_ty: &'a TokenStream,
+        self_ty: &'a syn::Type,
         glib: &'a syn::Path,
     ) -> impl Iterator<Item = TokenStream> + 'a {
         let recv = self.sig.as_ref().and_then(|s| s.receiver()).map(|recv| {
@@ -340,7 +340,7 @@ impl Signal {
     }
     pub(crate) fn signal_id_cell_definition(
         &self,
-        wrapper_ty: &TokenStream,
+        wrapper_ty: &syn::Type,
         glib: &syn::Path,
     ) -> TokenStream {
         let name = &self.name;
@@ -363,8 +363,8 @@ impl Signal {
     }
     pub(crate) fn definition(
         &self,
-        wrapper_ty: &TokenStream,
-        sub_ty: &TokenStream,
+        wrapper_ty: &syn::Type,
+        sub_ty: &syn::Type,
         glib: &syn::Path,
     ) -> Option<TokenStream> {
         if self.override_ {
@@ -482,9 +482,9 @@ impl Signal {
     }
     pub(crate) fn class_init_override(
         &self,
-        wrapper_ty: &TokenStream,
-        sub_ty: &TokenStream,
-        class_ident: &TokenStream,
+        wrapper_ty: &syn::Type,
+        sub_ty: &syn::Type,
+        class_ident: &syn::Ident,
         glib: &syn::Path,
     ) -> Option<TokenStream> {
         if !self.override_ {
@@ -723,7 +723,7 @@ impl Signal {
         let proto = self.connect_prototype(concurrency, local, glib)?;
         let sig = self.sig.as_ref()?;
         let arg_names = self.arg_names().skip(1);
-        let self_ty = quote! { Self };
+        let self_ty = parse_quote! { Self };
 
         let self_ident = syn::Ident::new("self", Span::mixed_site());
         let func_ident = syn::Ident::new("func", Span::mixed_site());

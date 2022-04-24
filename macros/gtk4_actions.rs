@@ -109,17 +109,10 @@ impl WidgetActionGroup {
 
 pub(crate) fn extend_widget_actions(def: &mut ClassDefinition, errors: &Errors) {
     let mut groups = HashMap::<String, WidgetActionGroup>::new();
-    let default_group = match def.inner.name.as_ref() {
-        Some(n) => n.to_string().to_kebab_case(),
-        None => return,
-    };
+    let default_group = def.inner.name.to_string().to_kebab_case();
     let wrapper_ty = def
         .inner
         .type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External);
-    let wrapper_ty = match wrapper_ty {
-        Some(ty) => ty,
-        None => return,
-    };
     for impl_ in def.inner.methods_items_mut() {
         if let Some(mode) = TypeMode::for_item_type(&*impl_.self_ty) {
             let attrs = util::extract_attrs(&mut impl_.attrs, "widget_actions")

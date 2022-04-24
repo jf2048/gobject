@@ -17,22 +17,15 @@ fn extend_initable(def: &mut gobject_core::ClassDefinition, errors: &Errors) {
         Some(method) => (method.sig.inputs.len(), method.span()),
         None => return,
     };
-    let name = match &def.inner.name {
-        Some(name) => name,
-        None => return,
-    };
-    let (sub_ty, wrapper_ty) = {
-        use TypeContext::*;
-        use TypeMode::*;
-        match def
-            .inner
-            .type_(Subclass, Subclass, External)
-            .zip(def.inner.type_(Subclass, Wrapper, External))
-        {
-            Some(tys) => tys,
-            _ => return,
-        }
-    };
+    let name = &def.inner.name;
+    let sub_ty = def.inner.type_(
+        TypeMode::Subclass,
+        TypeMode::Subclass,
+        TypeContext::External,
+    );
+    let wrapper_ty = def
+        .inner
+        .type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External);
     let go = &def.inner.crate_path;
     def.implements
         .push(syn::parse_quote! { #go::gio::Initable });
@@ -149,22 +142,15 @@ fn extend_async_initable(def: &mut gobject_core::ClassDefinition, errors: &Error
         Some(method) => (method.sig.inputs.len(), method.span()),
         None => return,
     };
-    let name = match &def.inner.name {
-        Some(name) => name,
-        None => return,
-    };
-    let (sub_ty, wrapper_ty) = {
-        use TypeContext::*;
-        use TypeMode::*;
-        match def
-            .inner
-            .type_(Subclass, Subclass, External)
-            .zip(def.inner.type_(Subclass, Wrapper, External))
-        {
-            Some(tys) => tys,
-            _ => return,
-        }
-    };
+    let name = &def.inner.name;
+    let sub_ty = def.inner.type_(
+        TypeMode::Subclass,
+        TypeMode::Subclass,
+        TypeContext::External,
+    );
+    let wrapper_ty = def
+        .inner
+        .type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External);
     let go = &def.inner.crate_path;
     def.implements
         .push(syn::parse_quote! { #go::gio::AsyncInitable });

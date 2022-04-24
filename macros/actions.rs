@@ -522,7 +522,7 @@ impl ActionHandler {
     fn to_public_method_noninline_expr(
         &self,
         action: &Action,
-        wrapper_ty: &TokenStream,
+        wrapper_ty: &syn::Type,
         bind_expr: Option<&syn::Expr>,
         go: &syn::Path,
     ) -> syn::Expr {
@@ -589,8 +589,8 @@ impl ActionHandler {
     fn to_public_method_expr(
         &self,
         action: &Action,
-        sub_ty: &TokenStream,
-        wrapper_ty: &TokenStream,
+        sub_ty: &syn::Type,
+        wrapper_ty: &syn::Type,
         bind_expr: Option<&syn::Expr>,
         go: &syn::Path,
     ) -> syn::Expr {
@@ -1085,14 +1085,8 @@ impl Action {
         use HandlerType::*;
         use TypeContext::*;
         use TypeMode::*;
-        let (sub_ty, wrapper_ty) = match def
-            .inner
-            .type_(Subclass, Subclass, External)
-            .zip(def.inner.type_(Subclass, Wrapper, External))
-        {
-            Some(tys) => tys,
-            _ => return,
-        };
+        let sub_ty = def.inner.type_(Subclass, Subclass, External);
+        let wrapper_ty = def.inner.type_(Subclass, Wrapper, External);
         self.override_public_method(Activate, &sub_ty, &wrapper_ty, bind_expr, def, errors);
         self.override_public_method(ChangeState, &sub_ty, &wrapper_ty, bind_expr, def, errors);
     }
@@ -1174,8 +1168,8 @@ impl Action {
     fn override_public_method(
         &self,
         handler_type: HandlerType,
-        sub_ty: &TokenStream,
-        wrapper_ty: &TokenStream,
+        sub_ty: &syn::Type,
+        wrapper_ty: &syn::Type,
         bind_expr: Option<&syn::Expr>,
         def: &mut gobject_core::ClassDefinition,
         errors: &Errors,

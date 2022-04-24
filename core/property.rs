@@ -13,7 +13,7 @@ use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
 };
-use syn::{parse_quote, spanned::Spanned};
+use syn::{parse_quote, parse_quote_spanned, spanned::Spanned};
 
 #[derive(FromDeriveInput)]
 #[darling(default, attributes(properties))]
@@ -492,7 +492,7 @@ impl PropertyType {
         &self,
         name: &str,
         extra: &[syn::Expr],
-        ty: &TokenStream,
+        ty: &syn::Type,
         go: &syn::Path,
     ) -> TokenStream {
         let glib: syn::Path = parse_quote! { #go::glib };
@@ -778,11 +778,11 @@ impl Property {
             .build()
         }
     }
-    pub fn inner_type(&self, go: &syn::Path) -> TokenStream {
+    pub fn inner_type(&self, go: &syn::Path) -> syn::Type {
         let ty = &self.field.ty;
-        quote_spanned! { ty.span() => <#ty as #go::ParamStore>::Type }
+        parse_quote_spanned! { ty.span() => <#ty as #go::ParamStore>::Type }
     }
-    fn field_storage(&self, object_type: Option<&TokenStream>, go: &syn::Path) -> TokenStream {
+    fn field_storage(&self, object_type: Option<&syn::Type>, go: &syn::Path) -> TokenStream {
         let self_ident = syn::Ident::new("self", Span::mixed_site());
         let recv = if let Some(object_type) = object_type {
             quote_spanned! { self.span() =>
@@ -816,7 +816,7 @@ impl Property {
         let index = index + 1;
         quote_spanned! { Span::mixed_site() => id == #index }
     }
-    pub fn custom_method_path(&self, set: bool) -> Option<Cow<'_, syn::Ident>> {
+    pub fn custom_method_path(&self, set: bool) -> Option<Cow<syn::Ident>> {
         let perm = match set {
             true => &self.set,
             false => &self.get,
@@ -839,7 +839,7 @@ impl Property {
     #[inline]
     fn custom_call(
         &self,
-        set_ty: Option<&TokenStream>,
+        set_ty: Option<&syn::Type>,
         method: Option<(TypeMode, TypeMode)>,
         glib: &syn::Path,
     ) -> Option<TokenStream> {
@@ -927,7 +927,7 @@ impl Property {
             quote_spanned! { Span::mixed_site() => fn #method_name(&self) -> #ty }
         })
     }
-    fn getter_definition(&self, object_type: &TokenStream, go: &syn::Path) -> Option<TokenStream> {
+    fn getter_definition(&self, object_type: &syn::Type, go: &syn::Path) -> Option<TokenStream> {
         self.getter_prototype(go).map(|proto| {
             let body = if self.is_abstract() {
                 let name = self.name.to_string();
@@ -955,7 +955,8 @@ impl Property {
         self.borrow.then(|| {
             let method_name = self.borrow_name();
             let ty = if self.is_abstract() {
-                self.inner_type(go)
+                let ty = self.inner_type(go);
+                quote! { #ty }
             } else {
                 let ty = &self.field.ty;
                 quote_spanned! { ty.span() => <#ty as #go::ParamStoreBorrow<'_>>::BorrowType }
@@ -963,7 +964,7 @@ impl Property {
             quote_spanned! { Span::mixed_site() => fn #method_name(&self) -> #ty }
         })
     }
-    fn borrow_definition(&self, object_type: &TokenStream, go: &syn::Path) -> Option<TokenStream> {
+    fn borrow_definition(&self, object_type: &syn::Type, go: &syn::Path) -> Option<TokenStream> {
         self.borrow_prototype(go).map(|proto| {
             let field = self.field_storage(Some(object_type), go);
             quote_spanned! { self.span() =>
@@ -984,7 +985,7 @@ impl Property {
     #[inline]
     fn inline_set_impl<N>(
         &self,
-        object_type: Option<&TokenStream>,
+        object_type: Option<&syn::Type>,
         notify: Option<N>,
         go: &syn::Path,
     ) -> TokenStream
@@ -1072,8 +1073,8 @@ impl Property {
     fn setter_definition(
         &self,
         index: usize,
-        object_type: &TokenStream,
-        properties_path: &TokenStream,
+        object_type: &syn::Type,
+        properties_path: &syn::ExprPath,
         go: &syn::Path,
     ) -> Option<TokenStream> {
         self.setter_prototype(go).map(|proto| {
@@ -1120,7 +1121,7 @@ impl Property {
     fn notify_definition(
         &self,
         index: usize,
-        properties_path: &TokenStream,
+        properties_path: &syn::ExprPath,
         glib: &syn::Path,
     ) -> Option<TokenStream> {
         self.notify_prototype().map(|proto| {
@@ -1205,9 +1206,9 @@ impl Property {
     pub(crate) fn method_definitions(
         &self,
         index: usize,
-        ty: &TokenStream,
+        ty: &syn::Type,
         concurrency: Concurrency,
-        properties_path: &TokenStream,
+        properties_path: &syn::ExprPath,
         go: &syn::Path,
     ) -> Vec<TokenStream> {
         let glib: syn::Path = parse_quote! { #go::glib };

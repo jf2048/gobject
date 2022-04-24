@@ -54,7 +54,7 @@ impl ClassOptions {
 pub struct ClassDefinition {
     pub inner: TypeDefinition,
     pub ns: Option<syn::Ident>,
-    pub class: Option<syn::Ident>,
+    pub class: syn::Ident,
     pub ext_trait: Option<syn::Ident>,
     pub impl_trait: Option<syn::Ident>,
     pub impl_ext_trait: Option<syn::Ident>,
@@ -85,51 +85,36 @@ impl ClassDefinition {
         }
 
         let name = inner.name.clone();
+        let final_ = attrs.final_.is_some();
         let class = Self {
             inner,
             ns: attrs.ns,
             class: attrs
                 .class
-                .or_else(|| name.as_ref().map(|n| format_ident!("{}Class", n))),
-            ext_trait: attrs.final_.map_or_else(
-                || {
-                    attrs
-                        .ext_trait
-                        .or_else(|| name.as_ref().map(|n| format_ident!("{}Ext", n)))
-                },
-                |_| None,
-            ),
-            impl_trait: attrs.final_.map_or_else(
-                || {
-                    attrs
-                        .impl_trait
-                        .or_else(|| name.as_ref().map(|n| format_ident!("{}Impl", n)))
-                },
-                |_| None,
-            ),
-            impl_ext_trait: attrs.final_.map_or_else(
-                || {
-                    attrs
-                        .impl_ext_trait
-                        .or_else(|| name.as_ref().map(|n| format_ident!("{}ImplExt", n)))
-                },
-                |_| None,
-            ),
+                .unwrap_or_else(|| format_ident!("{}Class", name)),
+            ext_trait: (!final_).then(|| {
+                attrs
+                    .ext_trait
+                    .unwrap_or_else(|| format_ident!("{}Ext", name))
+            }),
+            impl_trait: (!final_).then(|| {
+                attrs
+                    .impl_trait
+                    .unwrap_or_else(|| format_ident!("{}Impl", name))
+            }),
+            impl_ext_trait: (!final_).then(|| {
+                attrs
+                    .impl_ext_trait
+                    .unwrap_or_else(|| format_ident!("{}ImplExt", name))
+            }),
             parent_trait: attrs.parent_trait,
             wrapper: attrs.wrapper.unwrap_or(true),
             abstract_: attrs.abstract_.is_some(),
-            final_: attrs.final_.is_some(),
+            final_,
             extends: (*attrs.extends).clone(),
             implements: (*attrs.implements).clone(),
             inherits: (*attrs.inherits).clone(),
         };
-
-        if class.inner.name.is_none() {
-            errors.push(
-                class.inner.span(),
-                "Class must have a `name = \"...\"` parameter, a struct, or an impl",
-            );
-        }
 
         if class.final_ {
             for virtual_method in &class.inner.virtual_methods {
@@ -160,8 +145,8 @@ impl ClassDefinition {
             .chain(
                 [
                     self.properties_base_index_definition(),
-                    self.object_subclass_impl(),
-                    self.object_impl_impl(),
+                    Some(self.object_subclass_impl()),
+                    Some(self.object_impl_impl()),
                     self.class_struct_definition(),
                     self.inner.public_methods(self.ext_trait.as_ref()),
                 ]
@@ -202,9 +187,9 @@ impl ClassDefinition {
             params.push(quote! { @implements #(#inherits),* });
         }
         let mod_name = &self.inner.module.ident;
-        let name = self.inner.name.as_ref()?;
+        let name = &self.inner.name;
         let glib = self.inner.glib();
-        let generics = self.inner.generics.as_ref();
+        let generics = &self.inner.generics;
         let vis = &self.inner.vis;
         Some(quote! {
             #glib::wrapper! {
@@ -215,7 +200,7 @@ impl ClassDefinition {
     fn class_init_method(&self) -> Option<TokenStream> {
         let glib = self.inner.glib();
         let class_ident = syn::Ident::new("class", Span::mixed_site());
-        let body = self.inner.type_init_body(&quote! { #class_ident });
+        let body = self.inner.type_init_body(&class_ident);
         let custom = self
             .inner
             .has_method(TypeMode::Subclass, "class_init")
@@ -237,14 +222,14 @@ impl ClassDefinition {
         if fields.is_empty() {
             return None;
         }
-        let name = self.inner.name.as_ref()?;
-        let generics = self.inner.generics.as_ref()?;
-        let class_name = self.class.as_ref()?;
+        let name = &self.inner.name;
+        let generics = &self.inner.generics;
+        let class_name = &self.class;
         let glib = self.inner.glib();
         let parent_class = if self.extends.is_empty() {
             quote! { #glib::gobject_ffi::GObjectClass }
         } else {
-            let parent_type = self.parent_type_alias()?;
+            let parent_type = self.parent_type_alias();
             quote! {
                 <super::#parent_type as #glib::object::ObjectType>::GlibClassType
             }
@@ -298,16 +283,16 @@ impl ClassDefinition {
             }
         })
     }
-    pub fn parent_type_alias(&self) -> Option<syn::Ident> {
-        Some(format_ident!("_{}ParentType", self.inner.name.as_ref()?))
+    pub fn parent_type_alias(&self) -> syn::Ident {
+        format_ident!("_{}ParentType", self.inner.name)
     }
-    pub fn interfaces_alias(&self) -> Option<syn::Ident> {
-        Some(format_ident!("_{}Interfaces", self.inner.name.as_ref()?))
+    pub fn interfaces_alias(&self) -> syn::Ident {
+        format_ident!("_{}Interfaces", self.inner.name)
     }
     #[inline]
-    fn object_subclass_impl(&self) -> Option<TokenStream> {
+    fn object_subclass_impl(&self) -> TokenStream {
         let glib = self.inner.glib();
-        let name = self.inner.name.as_ref()?;
+        let name = &self.inner.name;
         let head = self.inner.trait_head(
             &parse_quote! { #name },
             quote! {
@@ -323,7 +308,7 @@ impl ClassDefinition {
         let abstract_ = self.abstract_;
         let parent_type = self.parent_type_alias();
         let interfaces = self.interfaces_alias();
-        let class_name = self.class.as_ref()?;
+        let class_name = &self.class;
         let class_struct_type = (!self.inner.virtual_methods.is_empty()).then(|| {
             quote! { type Class = #class_name; }
         });
@@ -348,7 +333,7 @@ impl ClassDefinition {
                 fn #ident(klass: &<Self as #glib::subclass::types::ObjectSubclass>::Class) -> Self
             }
         });
-        Some(quote! {
+        quote! {
             const _: () = {
                 #[allow(unused_imports)]
                 use #glib;
@@ -367,7 +352,7 @@ impl ClassDefinition {
                     #with_class
                 }
             };
-        })
+        }
     }
     pub(crate) fn properties_base_index_definition(&self) -> Option<TokenStream> {
         if self.inner.properties.is_empty()
@@ -535,9 +520,9 @@ impl ClassDefinition {
         })
     }
     #[inline]
-    fn object_impl_impl(&self) -> Option<TokenStream> {
+    fn object_impl_impl(&self) -> TokenStream {
         let glib = self.inner.glib();
-        let name = self.inner.name.as_ref()?;
+        let name = &self.inner.name;
         let properties = self.inner.properties_method();
         let signals = self.inner.signals_method();
         let set_property = self.set_property_method();
@@ -556,7 +541,7 @@ impl ClassDefinition {
             &parse_quote! { #name },
             quote! { #glib::subclass::object::ObjectImpl },
         );
-        Some(quote! {
+        quote! {
             #head {
                 #properties
                 #set_property
@@ -565,7 +550,7 @@ impl ClassDefinition {
                 #constructed
                 #dispose
             }
-        })
+        }
     }
     #[inline]
     fn is_subclassable_impl(&self) -> Option<TokenStream> {
@@ -573,7 +558,7 @@ impl ClassDefinition {
             return None;
         }
         let glib = self.inner.glib();
-        let name = self.inner.name.as_ref()?;
+        let name = &self.inner.name;
         let trait_name = self.impl_trait.as_ref()?;
         let type_ident = syn::Ident::new("____Object", Span::mixed_site());
         let head = self.inner.trait_head_with_params(
@@ -613,7 +598,7 @@ impl ToTokens for ClassDefinition {
         let use_trait = self.ext_trait.as_ref().and_then(|ext| {
             self.inner
                 .public_method_definitions(self.final_)
-                .and_then(|mut i| i.next())
+                .next()
                 .is_some()
                 .then(|| {
                     let mod_name = &module.ident;
@@ -630,20 +615,10 @@ impl ToTokens for ClassDefinition {
             self.impl_ext_trait.as_ref(),
             parent_trait,
         );
-        let parent_type = self.parent_type_alias().map(|ident| {
-            let parent_type = self.parent_type();
-            Some(quote! {
-                #[doc(hidden)]
-                type #ident = #parent_type;
-            })
-        });
-        let interfaces = self.interfaces_alias().map(|ident| {
-            let interfaces = &self.implements;
-            quote! {
-                #[doc(hidden)]
-                type #ident = (#(#interfaces,)*);
-            }
-        });
+        let parent_type_ident = self.parent_type_alias();
+        let parent_type = self.parent_type();
+        let interfaces_ident = self.interfaces_alias();
+        let interfaces = &self.implements;
 
         let class = quote! {
             #module
@@ -651,8 +626,10 @@ impl ToTokens for ClassDefinition {
             #is_subclassable
             #use_trait
             #virtual_traits
-            #parent_type
-            #interfaces
+            #[doc(hidden)]
+            type #parent_type_ident = #parent_type;
+            #[doc(hidden)]
+            type #interfaces_ident = (#(#interfaces,)*);
         };
         class.to_tokens(tokens);
     }
@@ -675,8 +652,8 @@ pub fn derived_class_properties(
 
     let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
     let ty = quote! { #name #type_generics };
-    let properties_path = quote! { #ty::derived_properties };
-    let wrapper_ty = quote! { <#ty as #glib::subclass::types::ObjectSubclass>::Type };
+    let properties_path = parse_quote! { #ty::derived_properties };
+    let wrapper_ty = parse_quote! { <#ty as #glib::subclass::types::ObjectSubclass>::Type };
     let trait_name = final_type
         .is_none()
         .then(|| format_ident!("{}PropertiesExt", input.ident));

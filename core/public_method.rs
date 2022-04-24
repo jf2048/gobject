@@ -213,7 +213,7 @@ impl PublicMethod {
     pub(crate) fn generated_definition(
         &self,
         mode: TypeMode,
-        wrapper_ty: &TokenStream,
+        wrapper_ty: &syn::Type,
         glib: &syn::Path,
     ) -> Option<TokenStream> {
         if self.mode != mode {
@@ -263,8 +263,8 @@ impl PublicMethod {
     }
     pub(crate) fn definition(
         &self,
-        wrapper_ty: &TokenStream,
-        sub_ty: &TokenStream,
+        wrapper_ty: &syn::Type,
+        sub_ty: &syn::Type,
         select_statics: bool,
         final_: bool,
         glib: &syn::Path,

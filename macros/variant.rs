@@ -116,10 +116,7 @@ pub(crate) fn extend_variant(
 
     let go = &def.crate_path;
     let glib: syn::Path = parse_quote! { #go::glib };
-    let sub_ty = match &def.name {
-        Some(name) => name,
-        None => return,
-    };
+    let sub_ty = &def.name;
     let wrapper_ty = parse_quote! { super::#sub_ty };
 
     let props = def

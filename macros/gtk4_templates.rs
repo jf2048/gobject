@@ -414,7 +414,7 @@ impl Spanned for TemplateSource {
 
 pub(crate) fn extend_template(def: &mut ClassDefinition, errors: &Errors) {
     let (name, source) = match (|| {
-        let name = def.inner.name.clone()?;
+        let name = def.inner.name.clone();
         let struct_ = def.inner.properties_item_mut()?;
         let attr = util::extract_attr(&mut struct_.attrs, "template")?;
         let source = util::parse_paren_list_optional::<TemplateSource>(attr.tokens, errors)?;

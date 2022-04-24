@@ -103,7 +103,7 @@ impl VirtualMethod {
         let sig = self.public_sig(glib);
         quote_spanned! { self.sig.span() => #sig }
     }
-    pub(crate) fn definition(&self, wrapper_ty: &TokenStream, glib: &syn::Path) -> TokenStream {
+    pub(crate) fn definition(&self, wrapper_ty: &syn::Type, glib: &syn::Path) -> TokenStream {
         let ident = &self.sig.ident;
         let sig = self.public_sig(glib);
         let args = util::signature_args(&sig);
@@ -242,7 +242,7 @@ impl VirtualMethod {
         &self,
         type_name: &syn::Ident,
         ty: &syn::Type,
-        class_ident: &TokenStream,
+        class_ident: &syn::Ident,
         glib: &syn::Path,
     ) -> TokenStream {
         let ident = &self.sig.ident;

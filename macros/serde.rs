@@ -81,10 +81,7 @@ pub(crate) fn extend_serde(
     }
 
     let go = &def.crate_path;
-    let sub_ty = match &def.name {
-        Some(name) => name,
-        None => return,
-    };
+    let sub_ty = &def.name;
     let wrapper_ty = parse_quote! { super::#sub_ty };
 
     if !struct_attrs.iter().any(|a| has_meta(a, "crate")) {
@@ -190,14 +187,9 @@ pub(crate) fn extend_serde(
                 #parent_name: <#sub_ty as #go::glib::subclass::types::ObjectSubclass>::ParentType,
             }
         });
-        let struct_head = def.generics.as_ref().map(|generics| {
-            let (impl_generics, _, where_clause) = generics.split_for_impl();
-            quote! { struct #writer #impl_generics #where_clause }
-        }).unwrap_or_else(|| quote! { struct #writer });
-        let remote = def.generics.as_ref().map(|generics| {
-            let (_, type_generics, _) = generics.split_for_impl();
-            quote! { super::#sub_ty #type_generics }
-        }).unwrap_or_else(|| quote! { super::#sub_ty }).to_string();
+        let (impl_generics, type_generics, where_clause) = def.generics.split_for_impl();
+        let struct_head = quote! { struct #writer #impl_generics #where_clause };
+        let remote = (quote! { super::#sub_ty #type_generics }).to_string();
         let writer_struct = quote! {
             #[derive(#go::serde::Serialize)]
             #[serde(remote = #remote)]
@@ -226,7 +218,7 @@ pub(crate) fn extend_serde(
                 let ser_head = def.trait_head(&wrapper_ty, quote! { #go::serde::Serialize });
                 let fallback_writer = (def.base == TypeBase::Class && !abstract_).then(|| {
                     let writer = syn::Ident::new("____Writer", Span::mixed_site());
-                    let mut generics = def.generics.clone().unwrap_or_default();
+                    let mut generics = def.generics.clone();
                     generics.params.push(parse_quote! { '____writer });
                     let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
                     let def = quote! {
@@ -295,10 +287,8 @@ pub(crate) fn extend_serde(
 
     let de = de.then(|| {
         let reader = format_ident!("____{}Reader", sub_ty, span = Span::mixed_site());
-        let struct_head = def.generics.as_ref().map(|generics| {
-            let (impl_generics, _, where_clause) = generics.split_for_impl();
-            quote! { struct #reader #impl_generics #where_clause }
-        }).unwrap_or_else(|| quote! { struct #reader });
+        let (impl_generics, type_generics, where_clause) = def.generics.split_for_impl();
+        let struct_head = quote! { struct #reader #impl_generics #where_clause };
         let parent_ty = (!skip_parent).then(|| parent_type).flatten();
         let parent_field = parent_ty.map(|ty| quote! {
             #parent_name: <#ty as #go::DeserializeParent>::DeserializeParentType,
@@ -325,10 +315,7 @@ pub(crate) fn extend_serde(
             }
         };
 
-        let reader_path = def.generics.as_ref().map(|generics| {
-            let (_, type_generics, _) = generics.split_for_impl();
-            quote! { #reader #type_generics }
-        }).unwrap_or_else(|| quote! { #reader });
+        let reader_path = quote! { #reader #type_generics };
         let try_from_head = def.trait_head(
             &parse_quote! { #wrapper_ty },
             quote! { ::std::convert::TryFrom<#reader_path> },

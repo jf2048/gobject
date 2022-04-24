@@ -5,6 +5,7 @@ use crate::{
     util::{self, Errors},
     virtual_method::VirtualMethod,
 };
+use heck::ToUpperCamelCase;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned, ToTokens};
 use std::{
@@ -20,9 +21,9 @@ pub struct TypeDefinition {
     pub vis: syn::Visibility,
     pub inner_vis: syn::Visibility,
     pub concurrency: Concurrency,
-    pub name: Option<syn::Ident>,
+    pub name: syn::Ident,
     pub crate_path: syn::Path,
-    pub generics: Option<syn::Generics>,
+    pub generics: syn::Generics,
     pub properties_item_index: Option<usize>,
     pub methods_item_indices: BTreeSet<usize>,
     pub properties: Vec<Property>,
@@ -79,15 +80,6 @@ impl ToTokens for Concurrency {
     }
 }
 
-macro_rules! unwrap_or_return {
-    ($opt:expr, $ret:expr) => {
-        match $opt {
-            Some(val) => val,
-            None => return $ret,
-        }
-    };
-}
-
 #[inline]
 fn type_ident(ty: &syn::Type) -> Option<&syn::Ident> {
     if let syn::Type::Path(syn::TypePath { path, .. }) = ty {
@@ -107,7 +99,7 @@ impl TypeDefinition {
     pub fn parse(
         module: syn::ItemMod,
         base: TypeBase,
-        name: Option<syn::Ident>,
+        mut name: Option<syn::Ident>,
         crate_path: syn::Path,
         errors: &Errors,
     ) -> Self {
@@ -117,15 +109,19 @@ impl TypeDefinition {
             syn::Item::Mod(m) => m,
             _ => unreachable!(),
         };
+        let default_name = syn::Ident::new(
+            &module.ident.to_string().to_upper_camel_case(),
+            module.ident.span(),
+        );
         let mut def = Self {
             module,
             base,
             vis: syn::Visibility::Inherited,
             inner_vis: parse_quote! { pub(super) },
             concurrency: Concurrency::None,
-            name,
+            name: default_name,
             crate_path,
-            generics: None,
+            generics: Default::default(),
             properties_item_index: None,
             methods_item_indices: BTreeSet::new(),
             properties: Vec::new(),
@@ -145,7 +141,8 @@ impl TypeDefinition {
         let (_, items) = def.module.content.as_mut().unwrap();
         let mut struct_ = None;
         let mut impls = Vec::new();
-        if let Some(name) = &def.name {
+        let mut generics = None;
+        if let Some(name) = &name {
             // if a name was provided, only use structs/impls matching the name
             for (index, item) in items.iter_mut().enumerate() {
                 match item {
@@ -187,10 +184,10 @@ impl TypeDefinition {
                     }
                 }
                 if struct_.is_some() {
-                    def.name = struct_name;
+                    name = struct_name;
                 }
             }
-            if def.name.is_none() {
+            if name.is_none() {
                 // if no structs found, search for an impl with a methods attribute
                 // if not found then use the name from the first impl with a suitable type
                 let mut first_impl = None;
@@ -217,10 +214,10 @@ impl TypeDefinition {
                     }
                 }
                 if !impls.is_empty() {
-                    def.name = impl_name;
+                    name = impl_name;
                 }
             }
-            if let Some(name) = def.name.as_ref() {
+            if let Some(name) = &name {
                 // if we got a name, then search for the rest of the impls matching that name
                 // skip the first index that we might have found before
                 let first = impls.first().cloned();
@@ -267,8 +264,8 @@ impl TypeDefinition {
                     def.inner_vis = struct_.vis.clone();
                 }
             };
-            def.generics = Some(struct_.generics.clone());
-            def.name = Some(struct_.ident.clone());
+            generics = Some(struct_.generics.clone());
+            name = Some(struct_.ident.clone());
             let mut input: syn::DeriveInput = struct_.clone().into();
             for attr in attrs.into_iter().rev() {
                 input.attrs.insert(0, attr);
@@ -320,8 +317,8 @@ impl TypeDefinition {
             let mode = TypeMode::for_item_type(&*impl_.self_ty).unwrap_or_else(|| {
                 unreachable!("Invalid type in mode: {}", impl_.self_ty.to_token_stream())
             });
-            if def.generics.is_none() {
-                def.generics = Some(impl_.generics.clone());
+            if generics.is_none() {
+                generics = Some(impl_.generics.clone());
             }
             Signal::many_from_items(&mut impl_.items, base, mode, &mut def.signals, errors);
             def.public_methods.extend(PublicMethod::many_from_items(
@@ -338,6 +335,12 @@ impl TypeDefinition {
             ));
         }
         Signal::validate_many(&def.signals, errors);
+        if let Some(name) = name {
+            def.name = name;
+        }
+        if let Some(generics) = generics {
+            def.generics = generics;
+        }
         def.methods_item_indices = impls.into_iter().collect();
         def
     }
@@ -345,34 +348,34 @@ impl TypeDefinition {
         let go = &self.crate_path;
         parse_quote! { #go::glib }
     }
-    pub fn type_(&self, from: TypeMode, to: TypeMode, ctx: TypeContext) -> Option<TokenStream> {
+    pub fn type_(&self, from: TypeMode, to: TypeMode, ctx: TypeContext) -> syn::Type {
         use TypeBase::*;
         use TypeContext::*;
         use TypeMode::*;
 
-        let name = self.name.as_ref()?;
+        let name = &self.name;
         let glib = self.glib();
-        let generics = self.generics.as_ref();
+        let generics = &self.generics;
 
         let recv = match ctx {
-            Internal => quote! { Self },
-            External => quote! { #name #generics },
+            Internal => parse_quote! { Self },
+            External => parse_quote! { #name #generics },
         };
 
         match (from, to, self.base) {
-            (Subclass, Subclass, _) | (Wrapper, Wrapper, _) => Some(recv),
-            (Subclass, Wrapper, Class) => Some(quote! {
+            (Subclass, Subclass, _) | (Wrapper, Wrapper, _) => recv,
+            (Subclass, Wrapper, Class) => parse_quote! {
                 <#recv as #glib::subclass::types::ObjectSubclass>::Type
-            }),
-            (Subclass, Wrapper, Interface) => Some(quote! {
+            },
+            (Subclass, Wrapper, Interface) => parse_quote! {
                 super::#name #generics
-            }),
-            (Wrapper, Subclass, Class) => Some(quote! {
+            },
+            (Wrapper, Subclass, Class) => parse_quote! {
                 <#recv as #glib::object::ObjectSubclassIs>::Subclass
-            }),
-            (Wrapper, Subclass, Interface) => Some(quote! {
+            },
+            (Wrapper, Subclass, Interface) => parse_quote! {
                 <#recv as #glib::object::ObjectType>::GlibClassType
-            }),
+            },
         }
     }
     pub fn properties_item(&self) -> Option<&syn::ItemStruct> {
@@ -513,22 +516,17 @@ impl TypeDefinition {
         params: Option<impl IntoIterator<Item = syn::GenericParam>>,
     ) -> TokenStream {
         if let Some(params) = params {
-            let type_generics = self.generics.as_ref().map(|g| g.split_for_impl().1);
-            let where_clause = self.generics.as_ref().map(|g| g.split_for_impl().2);
-            let mut generics = self.generics.clone().unwrap_or_default();
+            let (_, type_generics, where_clause) = self.generics.split_for_impl();
+            let mut generics = self.generics.clone();
             generics.params.extend(params);
             let (impl_generics, _, _) = generics.split_for_impl();
             quote! {
                 impl #impl_generics #trait_ for #ty #type_generics #where_clause
             }
-        } else if let Some(generics) = &self.generics {
-            let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
+        } else {
+            let (impl_generics, type_generics, where_clause) = self.generics.split_for_impl();
             quote! {
                 impl #impl_generics #trait_ for #ty #type_generics #where_clause
-            }
-        } else {
-            quote! {
-                impl #trait_ for #ty
             }
         }
     }
@@ -548,7 +546,7 @@ impl TypeDefinition {
             TypeMode::Subclass,
             TypeMode::Subclass,
             TypeContext::External,
-        )?;
+        );
         let defs = self.properties.iter().map(|p| p.definition(go));
         let extra = has_method.then(|| {
             quote_spanned! { Span::mixed_site() =>
@@ -585,12 +583,12 @@ impl TypeDefinition {
             return None;
         }
         let glib = self.glib();
-        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
+        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External);
         let sub_ty = self.type_(
             TypeMode::Subclass,
             TypeMode::Subclass,
             TypeContext::External,
-        )?;
+        );
         let defs = self
             .signals
             .iter()
@@ -633,29 +631,29 @@ impl TypeDefinition {
             .chain(self.virtual_methods.iter().map(|m| m.prototype(&glib)))
             .collect()
     }
-    pub(crate) fn method_path(&self, method: &str, from: TypeMode) -> Option<TokenStream> {
+    pub(crate) fn method_path(&self, method: &str, from: TypeMode) -> syn::ExprPath {
         let glib = self.glib();
-        let subclass_ty = self.type_(from, TypeMode::Subclass, TypeContext::External)?;
+        let subclass_ty = self.type_(from, TypeMode::Subclass, TypeContext::External);
         let method = format_ident!("{}", method);
-        Some(match self.base {
-            TypeBase::Class => quote! {
+        match self.base {
+            TypeBase::Class => parse_quote! {
                 <#subclass_ty as #glib::subclass::object::ObjectImpl>::#method
             },
-            TypeBase::Interface => quote! {
+            TypeBase::Interface => parse_quote! {
                 <#subclass_ty as #glib::subclass::prelude::ObjectInterface>::#method
             },
-        })
+        }
     }
     pub(crate) fn public_method_definitions(
         &self,
         final_: bool,
-    ) -> Option<impl Iterator<Item = TokenStream> + '_> {
-        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
+    ) -> impl Iterator<Item = TokenStream> + '_ {
+        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External);
 
         let properties = {
             let go = self.crate_path.clone();
             let ty = ty.clone();
-            let properties_path = self.method_path("properties", TypeMode::Subclass)?;
+            let properties_path = self.method_path("properties", TypeMode::Subclass);
             self.properties.iter().enumerate().flat_map(move |(i, p)| {
                 p.method_definitions(i, &ty, self.concurrency, &properties_path, &go)
             })
@@ -673,7 +671,7 @@ impl TypeDefinition {
                 TypeMode::Subclass,
                 TypeMode::Subclass,
                 TypeContext::External,
-            )?;
+            );
             self.public_methods
                 .iter()
                 .filter_map(move |m| m.definition(&ty, &sub_ty, false, final_, &glib))
@@ -684,127 +682,77 @@ impl TypeDefinition {
                 .iter()
                 .map(move |m| m.definition(&ty, &glib))
         };
-        Some(
-            properties
-                .chain(signals)
-                .chain(public_methods)
-                .chain(virtual_methods),
-        )
+        properties
+            .chain(signals)
+            .chain(public_methods)
+            .chain(virtual_methods)
     }
     pub(crate) fn public_methods(&self, trait_name: Option<&syn::Ident>) -> Option<TokenStream> {
         let go = &self.crate_path;
         let glib = self.glib();
         let final_ = trait_name.is_none();
-        let mut items = self.public_method_definitions(final_)?.peekable();
-        let name = self.name.as_ref()?;
+        let mut items = self.public_method_definitions(final_).peekable();
+        let name = &self.name;
         let type_ident = format_ident!("____Object");
         let vis = &self.inner_vis;
-        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
+        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External);
         let sub_ty = self.type_(
             TypeMode::Subclass,
             TypeMode::Subclass,
             TypeContext::External,
-        )?;
+        );
         let mut statics = self
             .public_methods
             .iter()
             .filter_map(|m| m.definition(&ty, &sub_ty, true, final_, &glib))
             .peekable();
-        let mut generated_subclass = self
+        let mut subclass_statics = self
             .public_methods
             .iter()
             .filter_map(|m| m.generated_definition(TypeMode::Subclass, &ty, &glib))
             .peekable();
-        let mut generated_wrapper = self
+        let mut wrapper_statics = self
             .public_methods
             .iter()
             .filter_map(|m| m.generated_definition(TypeMode::Wrapper, &ty, &glib))
             .peekable();
-        let has_wrapper_statics = statics.peek().is_some() || generated_wrapper.peek().is_some();
-        let has_subclass_statics = generated_subclass.peek().is_some();
+        let has_wrapper_statics = statics.peek().is_some() || wrapper_statics.peek().is_some();
+        let has_subclass_statics = subclass_statics.peek().is_some();
         let async_trait = match self.concurrency {
             Concurrency::None => quote! { #[#go::async_trait::async_trait(?Send)] },
             Concurrency::SendSync => quote! { #[#go::async_trait::async_trait] },
         };
-        if let Some(generics) = self.generics.as_ref() {
-            let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
-            if let Some(trait_name) = trait_name {
-                let items = items.peek().is_some().then(|| {
-                    let mut generics = generics.clone();
-                    let param =
-                        parse_quote! { #type_ident: #glib::IsA<super::#name #type_generics> };
-                    generics.params.push(param);
-                    let (impl_generics, _, _) = generics.split_for_impl();
-                    let protos = self.public_method_prototypes();
-                    quote! {
-                        #async_trait
-                        #vis trait #trait_name: 'static {
-                            #(#protos;)*
-                        }
-                        #async_trait
-                        impl #impl_generics #trait_name for #type_ident #where_clause {
-                            #(#items)*
-                        }
-                    }
-                });
-                let wrapper_statics = has_wrapper_statics.then(|| {
-                    quote! {
-                        impl #impl_generics super::#name #type_generics #where_clause {
-                            #(pub #statics)*
-                            #(#generated_wrapper)*
-                        }
-                    }
-                });
-                let subclass_statics = has_subclass_statics.then(|| {
-                    quote! {
-                        impl #impl_generics #name #type_generics #where_clause {
-                            #(#generated_subclass)*
-                        }
-                    }
-                });
-                Some(quote! {
-                    #items
-                    #wrapper_statics
-                    #subclass_statics
-                })
-            } else {
-                Some(quote! {
-                    impl #impl_generics super::#name #type_generics #where_clause {
-                        #(pub #items)*
-                        #(pub #statics)*
-                        #(#generated_wrapper)*
-                    }
-                    impl #impl_generics #name #type_generics #where_clause {
-                        #(#generated_subclass)*
-                    }
-                })
-            }
-        } else if let Some(trait_name) = trait_name {
-            let protos = self.public_method_prototypes();
+        let (impl_generics, type_generics, where_clause) = self.generics.split_for_impl();
+        if let Some(trait_name) = trait_name {
             let items = items.peek().is_some().then(|| {
+                let mut generics = self.generics.clone();
+                let param = parse_quote! { #type_ident: #glib::IsA<super::#name #type_generics> };
+                generics.params.push(param);
+                let (impl_generics, _, _) = generics.split_for_impl();
+                let protos = self.public_method_prototypes();
                 quote! {
                     #async_trait
                     #vis trait #trait_name: 'static {
                         #(#protos;)*
                     }
                     #async_trait
-                    impl<#type_ident: #glib::IsA<super::#name>> #trait_name for #type_ident {
+                    impl #impl_generics #trait_name for #type_ident #where_clause {
                         #(#items)*
                     }
                 }
             });
             let wrapper_statics = has_wrapper_statics.then(|| {
                 quote! {
-                    impl super::#name {
+                    impl #impl_generics super::#name #type_generics #where_clause {
                         #(pub #statics)*
-                        #(#generated_wrapper)*
+                        #(#wrapper_statics)*
                     }
                 }
             });
             let subclass_statics = has_subclass_statics.then(|| {
                 quote! {
-                    impl #name {
-                        #(#generated_subclass)*
+                    impl #impl_generics #name #type_generics #where_clause {
+                        #(#subclass_statics)*
                     }
                 }
             });
@@ -815,41 +763,39 @@ impl TypeDefinition {
             })
         } else {
             Some(quote! {
-                impl super::#name {
+                impl #impl_generics super::#name #type_generics #where_clause {
                     #(pub #items)*
                     #(pub #statics)*
-                    #(#generated_wrapper)*
+                    #(#wrapper_statics)*
                 }
-                impl #name {
-                    #(#generated_subclass)*
+                impl #impl_generics #name #type_generics #where_clause {
+                    #(#subclass_statics)*
                 }
             })
         }
     }
     #[inline]
-    fn default_vtable_assignments(&self, class_ident: &TokenStream) -> Option<TokenStream> {
+    fn default_vtable_assignments(&self, class_ident: &syn::Ident) -> Option<TokenStream> {
         if self.virtual_methods.is_empty() {
             return None;
         }
         let glib = self.glib();
-        let name = self.name.as_ref()?;
-        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
+        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External);
         let ty = parse_quote! { #ty };
         Some(FromIterator::from_iter(self.virtual_methods.iter().map(
-            |m| m.set_default_trampoline(name, &ty, class_ident, &glib),
+            |m| m.set_default_trampoline(&self.name, &ty, class_ident, &glib),
         )))
     }
-    pub(crate) fn type_init_body(&self, class_ident: &TokenStream) -> Option<TokenStream> {
+    pub(crate) fn type_init_body(&self, class_ident: &syn::Ident) -> Option<TokenStream> {
         let glib = self.glib();
-        let wrapper_ty =
-            self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External)?;
+        let wrapper_ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External);
         let sub_ty = self.type_(
             TypeMode::Subclass,
             TypeMode::Subclass,
             TypeContext::External,
-        )?;
+        );
         let set_vtable = self.default_vtable_assignments(class_ident);
-        let object_class = quote_spanned! { Span::mixed_site() => ____object_class };
+        let object_class = syn::Ident::new("____object_class", Span::mixed_site());
         let overrides = self
             .signals
             .iter()
@@ -885,7 +831,7 @@ impl TypeDefinition {
             return None;
         }
         let glib = self.glib();
-        let ty = self.type_(TypeMode::Wrapper, TypeMode::Wrapper, TypeContext::External)?;
+        let ty = self.type_(TypeMode::Wrapper, TypeMode::Wrapper, TypeContext::External);
         let ty = parse_quote! { #ty };
         Some(FromIterator::from_iter(self.virtual_methods.iter().map(
             |m| m.set_subclassed_trampoline(&ty, trait_name, type_ident, class_ident, &glib),
@@ -900,11 +846,7 @@ impl TypeDefinition {
         self.subclassed_vtable_assignments(type_ident, class_ident, trait_name)
     }
     pub(crate) fn type_struct_fields(&self) -> Vec<TokenStream> {
-        let ty = unwrap_or_return!(
-            self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External),
-            Vec::new()
-        );
-        let ty = parse_quote! { #ty };
+        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External);
         self.virtual_methods
             .iter()
             .map(|method| method.vtable_field(&ty))
@@ -944,8 +886,7 @@ impl TypeDefinition {
             return None;
         }
         let glib = self.glib();
-        let ty = self.type_(TypeMode::Wrapper, TypeMode::Wrapper, TypeContext::External)?;
-        let ty = parse_quote! { #ty };
+        let ty = self.type_(TypeMode::Wrapper, TypeMode::Wrapper, TypeContext::External);
         let type_ident = syn::Ident::new("____Object", Span::mixed_site());
         let vis = &self.vis;
         let parent_method_protos = self
@@ -995,12 +936,9 @@ impl TypeDefinition {
     pub(crate) fn extra_private_items(&self) -> Vec<TokenStream> {
         let mut items = Vec::new();
 
-        let name = unwrap_or_return!(self.name.as_ref(), items);
+        let name = &self.name;
         let glib = self.glib();
-        let wrapper_ty = unwrap_or_return!(
-            self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External),
-            items
-        );
+        let wrapper_ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External);
 
         for signal in &self.signals {
             items.push(signal.signal_id_cell_definition(&wrapper_ty, &glib));
@@ -1009,12 +947,8 @@ impl TypeDefinition {
         let private_methods = self.private_methods(TypeMode::Subclass);
 
         if !private_methods.is_empty() {
-            let head = if let Some(generics) = self.generics.as_ref() {
-                let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
-                quote! { impl #impl_generics #name #type_generics #where_clause }
-            } else {
-                quote! { impl #name }
-            };
+            let (impl_generics, type_generics, where_clause) = self.generics.split_for_impl();
+            let head = quote! { impl #impl_generics #name #type_generics #where_clause };
             items.push(quote! {
                 #head {
                     #(#private_methods)*
@@ -1025,12 +959,8 @@ impl TypeDefinition {
         let private_methods = self.private_methods(TypeMode::Wrapper);
 
         if !private_methods.is_empty() {
-            let head = if let Some(generics) = self.generics.as_ref() {
-                let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
-                quote! { impl #impl_generics super::#name #type_generics #where_clause }
-            } else {
-                quote! { impl super::#name }
-            };
+            let (impl_generics, type_generics, where_clause) = self.generics.split_for_impl();
+            let head = quote! { impl #impl_generics super::#name #type_generics #where_clause };
             items.push(quote! {
                 #head {
                     #(#private_methods)*

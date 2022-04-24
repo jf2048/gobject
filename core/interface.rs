@@ -6,7 +6,7 @@ use darling::{util::PathList, FromMeta};
 use heck::ToUpperCamelCase;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
-use syn::{parse_quote, parse_quote_spanned, spanned::Spanned};
+use syn::{parse_quote, parse_quote_spanned};
 
 #[derive(Debug, Default, FromMeta)]
 #[darling(default)]
@@ -34,9 +34,9 @@ impl InterfaceOptions {
 pub struct InterfaceDefinition {
     pub inner: TypeDefinition,
     pub ns: Option<syn::Ident>,
-    pub ext_trait: Option<syn::Ident>,
-    pub impl_trait: Option<syn::Ident>,
-    pub impl_ext_trait: Option<syn::Ident>,
+    pub ext_trait: syn::Ident,
+    pub impl_trait: syn::Ident,
+    pub impl_ext_trait: syn::Ident,
     pub parent_trait: Option<syn::Path>,
     pub wrapper: bool,
     pub requires: Vec<syn::Path>,
@@ -55,31 +55,22 @@ impl InterfaceDefinition {
             TypeDefinition::parse(module, TypeBase::Interface, attrs.name, crate_path, errors);
 
         let name = inner.name.clone();
-        let iface = Self {
+        Self {
             inner,
             ns: attrs.ns,
             ext_trait: attrs
                 .ext_trait
-                .or_else(|| name.as_ref().map(|n| format_ident!("{}Ext", n))),
+                .unwrap_or_else(|| format_ident!("{}Ext", name)),
             impl_trait: attrs
                 .impl_trait
-                .or_else(|| name.as_ref().map(|n| format_ident!("{}Impl", n))),
+                .unwrap_or_else(|| format_ident!("{}Impl", name)),
             impl_ext_trait: attrs
                 .impl_ext_trait
-                .or_else(|| name.as_ref().map(|n| format_ident!("{}ImplExt", n))),
+                .unwrap_or_else(|| format_ident!("{}ImplExt", name)),
             parent_trait: attrs.parent_trait,
             wrapper: attrs.wrapper.unwrap_or(true),
             requires: (*attrs.requires).clone(),
-        };
-
-        if iface.inner.name.is_none() {
-            errors.push(
-                iface.inner.span(),
-                "Interface must have a `name = \"...\"` parameter, a struct, or an impl",
-            );
         }
-
-        iface
     }
     pub fn add_private_items(&mut self, errors: &Errors) {
         let extra = self.extra_private_items();
@@ -116,9 +107,9 @@ impl InterfaceDefinition {
             .into_iter()
             .chain(
                 [
-                    self.object_interface_impl(),
+                    Some(self.object_interface_impl()),
                     self.interface_struct_definition(),
-                    self.inner.public_methods(self.ext_trait.as_ref()),
+                    self.inner.public_methods(Some(&self.ext_trait)),
                 ]
                 .into_iter()
                 .flatten(),
@@ -136,9 +127,9 @@ impl InterfaceDefinition {
             quote! { @requires #(#prerequisites),* }
         });
         let mod_name = &self.inner.module.ident;
-        let name = self.inner.name.as_ref()?;
+        let name = &self.inner.name;
         let glib = self.inner.glib();
-        let generics = self.inner.generics.as_ref();
+        let generics = &self.inner.generics;
         let vis = &self.inner.vis;
         Some(quote! {
             #glib::wrapper! {
@@ -147,7 +138,8 @@ impl InterfaceDefinition {
         })
     }
     fn interface_init_method(&self) -> Option<TokenStream> {
-        let body = self.inner.type_init_body(&quote! { self });
+        let self_ident = syn::Ident::new("self", Span::call_site());
+        let body = self.inner.type_init_body(&self_ident);
         let custom = self
             .inner
             .has_method(TypeMode::Subclass, "interface_init")
@@ -171,8 +163,8 @@ impl InterfaceDefinition {
             return None;
         }
         let fields = self.inner.type_struct_fields();
-        let name = self.inner.name.as_ref()?;
-        let generics = self.inner.generics.as_ref()?;
+        let name = &self.inner.name;
+        let generics = &self.inner.generics;
         let glib = self.inner.glib();
         let vis = &self.inner.inner_vis;
         Some(quote! {
@@ -184,13 +176,13 @@ impl InterfaceDefinition {
             }
         })
     }
-    pub fn prerequisites_alias(&self) -> Option<syn::Ident> {
-        Some(format_ident!("_{}Prerequisites", self.inner.name.as_ref()?))
+    pub fn prerequisites_alias(&self) -> syn::Ident {
+        format_ident!("_{}Prerequisites", self.inner.name)
     }
     #[inline]
-    fn object_interface_impl(&self) -> Option<TokenStream> {
+    fn object_interface_impl(&self) -> TokenStream {
         let glib = self.inner.glib();
-        let name = self.inner.name.as_ref()?;
+        let name = &self.inner.name;
         let head = self.inner.trait_head(
             &parse_quote! { #name },
             quote! {
@@ -203,7 +195,7 @@ impl InterfaceDefinition {
             name.to_string()
         }
         .to_upper_camel_case();
-        let prerequisites = self.prerequisites_alias()?;
+        let prerequisites = self.prerequisites_alias();
         let interface_init = self.interface_init_method();
         let properties = self.inner.properties_method();
         let signals = self.inner.signals_method();
@@ -212,7 +204,7 @@ impl InterfaceDefinition {
                 fn #ident(type_: &mut #glib::subclass::types::InitializingType<Self>)
             }
         });
-        Some(quote! {
+        quote! {
             const _: () = {
                 #[allow(unused_imports)]
                 use #glib;
@@ -226,37 +218,30 @@ impl InterfaceDefinition {
                     #type_init
                 }
             };
-        })
+        }
     }
     #[inline]
-    fn is_implementable_impl(&self) -> Option<TokenStream> {
+    fn is_implementable_impl(&self) -> TokenStream {
         let glib = self.inner.glib();
-        let name = self.inner.name.as_ref()?;
-        let trait_name = self.impl_trait.as_ref()?;
+        let name = &self.inner.name;
+        let trait_name = &self.impl_trait;
         let type_ident = syn::Ident::new("____Object", Span::mixed_site());
 
         let param = syn::parse_quote! { #type_ident: #trait_name };
         let pred = syn::parse_quote! {
             <#type_ident as #glib::subclass::types::ObjectSubclass>::Type: #glib::IsA<#glib::Object>
         };
-        let head = if let Some(generics) = &self.inner.generics {
-            let (_, type_generics, _) = generics.split_for_impl();
-            let mut generics = generics.clone();
-            generics.params.push(param);
-            {
-                let where_clause = generics.make_where_clause();
-                where_clause.predicates.push(pred);
-            }
-            let (impl_generics, _, where_clause) = generics.split_for_impl();
-            quote! {
-                unsafe impl #impl_generics #glib::subclass::types::IsImplementable<#type_ident>
-                    for #name #type_generics #where_clause
-            }
-        } else {
-            quote! {
-                unsafe impl<#param> #glib::subclass::types::IsImplementable<#type_ident> for #name
-                where #pred
-            }
+        let (_, type_generics, _) = self.inner.generics.split_for_impl();
+        let mut generics = self.inner.generics.clone();
+        generics.params.push(param);
+        {
+            let where_clause = generics.make_where_clause();
+            where_clause.predicates.push(pred);
+        }
+        let (impl_generics, _, where_clause) = generics.split_for_impl();
+        let head = quote! {
+            unsafe impl #impl_generics #glib::subclass::types::IsImplementable<#type_ident>
+                for #name #type_generics #where_clause
         };
         let iface_ident = syn::Ident::new("____iface", Span::mixed_site());
         let interface_init = self
@@ -270,11 +255,11 @@ impl InterfaceDefinition {
                     }
                 }
             });
-        Some(quote! {
+        quote! {
             #head {
                 #interface_init
             }
-        })
+        }
     }
 }
 
@@ -284,33 +269,28 @@ impl ToTokens for InterfaceDefinition {
 
         let wrapper = self.wrapper();
         let is_implementable = self.is_implementable_impl();
-        let use_trait = self.ext_trait.as_ref().and_then(|ext| {
-            self.inner
-                .public_method_definitions(false)
-                .and_then(|mut i| i.next())
-                .is_some()
-                .then(|| {
-                    let mod_name = &module.ident;
-                    let vis = &self.inner.vis;
-                    quote! {
-                        #[allow(unused_imports)]
-                        #vis use #mod_name::#ext;
-                    }
-                })
-        });
+        let ext = &self.ext_trait;
+        let use_trait = self
+            .inner
+            .public_method_definitions(false)
+            .next()
+            .is_some()
+            .then(|| {
+                let mod_name = &module.ident;
+                let vis = &self.inner.vis;
+                quote! {
+                    #[allow(unused_imports)]
+                    #vis use #mod_name::#ext;
+                }
+            });
         let parent_trait = self.parent_trait.as_ref().map(|p| quote! { #p });
         let virtual_traits = self.inner.virtual_traits(
-            self.impl_trait.as_ref(),
-            self.impl_ext_trait.as_ref(),
+            Some(&self.impl_trait),
+            Some(&self.impl_ext_trait),
             parent_trait,
         );
-        let requires = self.prerequisites_alias().map(|ident| {
-            let requires = &self.requires;
-            quote! {
-                #[doc(hidden)]
-                type #ident = (#(#requires,)*);
-            }
-        });
+        let requires_ident = self.prerequisites_alias();
+        let requires = &self.requires;
 
         let iface = quote! {
             #module
@@ -318,7 +298,8 @@ impl ToTokens for InterfaceDefinition {
             #is_implementable
             #use_trait
             #virtual_traits
-            #requires
+            #[doc(hidden)]
+            type #requires_ident = (#(#requires,)*);
         };
         iface.to_tokens(tokens);
     }
