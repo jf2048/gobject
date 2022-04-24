@@ -114,14 +114,17 @@
 
 #[doc(hidden)]
 pub use async_trait;
-#[doc(hidden)]
 #[cfg(feature = "use_gio")]
+#[doc(hidden)]
 pub use gio;
 #[doc(hidden)]
 pub use glib;
 #[doc(hidden)]
 #[cfg(feature = "use_gtk4")]
 pub use gtk4;
+#[cfg(all(feature = "use_gtk4", not(feature = "use_gio")))]
+#[doc(hidden)]
+pub use gtk4::gio;
 #[doc(hidden)]
 #[cfg(feature = "use_serde")]
 pub use serde;
