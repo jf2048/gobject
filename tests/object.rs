@@ -30,18 +30,18 @@ mod obj_derivable {
         fn abc(&self) {}
     }
     impl super::ObjDerivable {
-        #[constructor(infallible)]
-        pub fn new(my_prop: u64) -> Self {}
+        #[constructor]
+        pub fn new(my_prop: u64) -> Result<Self, glib::BoolError> {}
         #[constructor(infallible)]
         pub fn with_prop_plus_one(my_prop: u64) -> Self {
-            Self::new(my_prop + 1)
+            Self::new(my_prop + 1).unwrap()
         }
     }
 }
 
 #[test]
 fn object_derivable() {
-    let obj = ObjDerivable::new(22);
+    let obj = ObjDerivable::new(22).unwrap();
     assert_eq!(obj.my_prop(), 22);
     obj.set_my_prop(52);
     assert_eq!(obj.my_prop(), 52);
