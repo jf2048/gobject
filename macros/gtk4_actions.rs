@@ -253,14 +253,11 @@ pub(crate) fn extend_widget_actions(def: &mut ClassDefinition, errors: &Errors) 
                         let param = handler
                             .parameter_index
                             .map(|(_, span)| {
+                                let glib = quote! { #go::glib };
                                 let param_ident = syn::Ident::new("param", Span::mixed_site());
                                 let param = handler
-                                    .param_needs_convert(action)
-                                    .then(|| {
-                                        quote_spanned! { handler.sig.span() =>
-                                            #go::glib::ToVariant::to_variant(&#param_ident)
-                                        }
-                                    })
+                                    .parameter_to(action, &glib)
+                                    .map(|path| quote_spanned! { path.span() => #path(&#param_ident) })
                                     .unwrap_or_else(|| quote! { #param_ident });
                                 quote_spanned! { span => ::std::option::Option::Some(&#param) }
                             })

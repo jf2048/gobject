@@ -446,7 +446,7 @@ impl TypeDefinition {
     pub fn public_method(&self, mode: TypeMode, ident: &syn::Ident) -> Option<&PublicMethod> {
         self.public_methods
             .iter()
-            .find(|pm| pm.mode == mode && pm.sig.ident == *ident)
+            .find(|pm| pm.matches(mode, ident))
     }
     #[inline]
     pub fn public_method_mut(
@@ -456,7 +456,7 @@ impl TypeDefinition {
     ) -> Option<&mut PublicMethod> {
         self.public_methods
             .iter_mut()
-            .find(|pm| pm.mode == mode && pm.sig.ident == *ident)
+            .find(|pm| pm.matches(mode, ident))
     }
     pub fn add_custom_stmt(&self, name: &str, stmt: syn::Stmt) {
         let mut stmts = self.custom_stmts.borrow_mut();

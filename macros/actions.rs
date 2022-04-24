@@ -104,11 +104,66 @@ pub(crate) fn validate_actions(actions: &[Action], errors: &Errors) {
 struct ActionAttrs {
     name: Option<syn::LitStr>,
     parameter_type: Option<SpannedValue<ParameterType>>,
+    parameter_type_str: Option<syn::LitStr>,
     change_state: SpannedValue<Flag>,
-    default: Option<SpannedValue<syn::Expr>>,
-    default_variant: Option<SpannedValue<syn::Expr>>,
-    hint: Option<SpannedValue<syn::Expr>>,
+    default: Option<syn::Expr>,
+    default_variant: Option<syn::Expr>,
+    hint: Option<syn::Expr>,
     disabled: SpannedValue<Flag>,
+    with: Option<syn::Path>,
+    state_with: Option<syn::Path>,
+    state_to: Option<syn::Path>,
+    state_from: Option<syn::Path>,
+    parameter_to: Option<syn::Path>,
+    parameter_from: Option<syn::Path>,
+    parameter_with: Option<syn::Path>,
+}
+
+impl ActionAttrs {
+    #[inline]
+    fn validate(&self, errors: &Errors) {
+        let parameter_type = (
+            "parameter_type",
+            validations::check_spanned(&self.parameter_type),
+        );
+        let parameter_type_str = (
+            "parameter_type_str",
+            validations::check_spanned(&self.parameter_type_str),
+        );
+        let parameter_with = (
+            "parameter_with",
+            validations::check_spanned(&self.parameter_with),
+        );
+        let parameter_to = (
+            "parameter_to",
+            validations::check_spanned(&self.parameter_to),
+        );
+        let parameter_from = (
+            "parameter_from",
+            validations::check_spanned(&self.parameter_from),
+        );
+        let state_with = ("state_with", validations::check_spanned(&self.state_with));
+        let state_to = ("state_to", validations::check_spanned(&self.state_to));
+        let state_from = ("state_from", validations::check_spanned(&self.state_from));
+        let default_state = ("default_state", validations::check_spanned(&self.default));
+        let default_state_variant = (
+            "default_state_variant",
+            validations::check_spanned(&self.default_variant),
+        );
+
+        validations::only_one([&parameter_type, &parameter_type_str], errors);
+        validations::only_one([&parameter_with, &parameter_to], errors);
+        validations::only_one([&parameter_with, &parameter_from], errors);
+        validations::only_one([&parameter_type_str, &parameter_with], errors);
+        validations::only_one([&parameter_type_str, &parameter_to], errors);
+        validations::only_one([&parameter_type_str, &parameter_from], errors);
+        validations::only_one([&state_with, &state_to], errors);
+        validations::only_one([&state_with, &state_from], errors);
+        validations::only_one([&default_state, &default_state_variant], errors);
+        validations::only_one([&default_state_variant, &state_with], errors);
+        validations::only_one([&default_state_variant, &state_to], errors);
+        validations::only_one([&default_state_variant, &state_from], errors);
+    }
 }
 
 #[derive(Eq, PartialEq, Ord, PartialOrd, Copy, Clone)]
@@ -198,10 +253,8 @@ impl ActionHandler {
         }
         handler
     }
-    fn parameter_type(&self, action: &Action) -> Option<&syn::Type> {
-        if self.ty != HandlerType::Activate
-            && !matches!(&action.parameter_type, ParameterType::Inferred)
-        {
+    fn parameter_type(&self) -> Option<&syn::Type> {
+        if self.ty != HandlerType::Activate {
             return None;
         }
         self.parameter_index.and_then(|(index, _)| {
@@ -212,35 +265,28 @@ impl ActionHandler {
             }
         })
     }
-    fn state_type(&self, go: &syn::Ident) -> Option<Cow<'_, syn::Type>> {
-        (self.ty == HandlerType::ChangeState)
-            .then(|| {
-                self.parameter_index.and_then(|(index, _)| {
-                    let param = self.sig.inputs.iter().nth(index);
-                    match param {
-                        Some(syn::FnArg::Typed(p)) => Some(Cow::Borrowed(&*p.ty)),
-                        _ => None,
-                    }
+    fn state_type(&self, go: &syn::Ident) -> Option<Cow<syn::Type>> {
+        if self.ty == HandlerType::ChangeState {
+            self.parameter_index.and_then(|(index, _)| {
+                let param = self.sig.inputs.iter().nth(index);
+                match param {
+                    Some(syn::FnArg::Typed(p)) => Some(Cow::Borrowed(&*p.ty)),
+                    _ => None,
+                }
+            })
+        } else if let Some((index, _)) = self.state_index {
+            let param = self.sig.inputs.iter().nth(index);
+            match param {
+                Some(syn::FnArg::Typed(p)) => Some(Cow::Borrowed(&*p.ty)),
+                _ => None,
+            }
+        } else {
+            self.return_type().map(|ty| {
+                Cow::Owned(parse_quote_spanned! { ty.span() =>
+                    <#ty as #go::ActionStateReturn>::ReturnType
                 })
             })
-            .flatten()
-            .or_else(|| {
-                self.state_index
-                    .and_then(|(index, _)| {
-                        let param = self.sig.inputs.iter().nth(index);
-                        match param {
-                            Some(syn::FnArg::Typed(p)) => Some(Cow::Borrowed(&*p.ty)),
-                            _ => None,
-                        }
-                    })
-                    .or_else(|| {
-                        self.return_type().map(|ty| {
-                            Cow::Owned(parse_quote_spanned! { ty.span() =>
-                                <#ty as #go::ActionStateReturn>::ReturnType
-                            })
-                        })
-                    })
-            })
+        }
     }
     fn return_type(&self) -> Option<&syn::Type> {
         match &self.sig.output {
@@ -248,10 +294,54 @@ impl ActionHandler {
             _ => None,
         }
     }
-    pub(crate) fn param_needs_convert(&self, action: &Action) -> bool {
+    pub(crate) fn parameter_from<'a>(
+        &'a self,
+        action: &'a Action,
+        glib: &TokenStream,
+    ) -> Option<Cow<'a, syn::Path>> {
         match self.ty {
-            HandlerType::Activate => matches!(&action.parameter_type, ParameterType::Inferred),
-            HandlerType::ChangeState => !action.state_variant,
+            HandlerType::Activate => {
+                if let Some(from) = &action.parameter_from {
+                    Some(Cow::Borrowed(from))
+                } else if action.parameter_type.needs_convert() {
+                    Some(Cow::Owned(
+                        parse_quote! { #glib::FromVariant::from_variant },
+                    ))
+                } else {
+                    None
+                }
+            }
+            HandlerType::ChangeState => (!action.state_variant).then(|| {
+                if let Some(from) = &action.state_from {
+                    Cow::Borrowed(from)
+                } else {
+                    Cow::Owned(parse_quote! { #glib::FromVariant::from_variant })
+                }
+            }),
+        }
+    }
+    pub(crate) fn parameter_to<'a>(
+        &'a self,
+        action: &'a Action,
+        glib: &TokenStream,
+    ) -> Option<Cow<'a, syn::Path>> {
+        match self.ty {
+            HandlerType::Activate => {
+                if let Some(to) = &action.parameter_to {
+                    Some(Cow::Borrowed(to))
+                } else if action.parameter_type.needs_convert() {
+                    Some(Cow::Owned(parse_quote! { #glib::ToVariant::to_variant }))
+                } else {
+                    None
+                }
+            }
+            HandlerType::ChangeState => (!action.state_variant).then(|| {
+                if let Some(to) = &action.state_to {
+                    Cow::Borrowed(to)
+                } else {
+                    Cow::Owned(parse_quote! { #glib::ToVariant::to_variant })
+                }
+            }),
         }
     }
     fn to_signal_closure(
@@ -262,11 +352,11 @@ impl ActionHandler {
         go: &syn::Ident,
     ) -> TokenStream {
         let glib = quote! { #go::glib };
-        let self_ty = match self.mode {
-            TypeMode::Subclass => quote! { Self },
-            TypeMode::Wrapper => quote! {
+        let self_ty = match (self.mode, is_object) {
+            (TypeMode::Wrapper, true) => quote! {
                 <Self as #go::glib::subclass::types::ObjectSubclass>::Type
             },
+            _ => quote! { Self },
         };
         let param_ident = syn::Ident::new("param", Span::mixed_site());
         let action_ident = syn::Ident::new("action", Span::mixed_site());
@@ -318,24 +408,25 @@ impl ActionHandler {
                 .and(self.parameter_index)
                 .map(|(_, span)| {
                     let param_ty = match self.ty {
-                        HandlerType::Activate => action.parameter_type().map(Cow::Borrowed),
+                        HandlerType::Activate => action.parameter_convert_type().map(Cow::Borrowed),
                         HandlerType::ChangeState => action.state_type(go),
                     };
                     let cast_ty = param_ty.map(|param_ty| quote_spanned! { span =>
                         let #param_ident: #param_ty = #param_ident;
                     });
-                    let convert = self.param_needs_convert(action).then(|| quote_spanned! { span =>
-                        let #param_ident = #glib::FromVariant::from_variant(&#param_ident)
-                            .expect("Invalid type passed for action parameter");
-                    });
+                    let convert = self.parameter_from(action, &glib)
+                        .map(|path| quote_spanned! { path.span() =>
+                            let #param_ident = #path(&#param_ident)
+                                .expect("Invalid type passed for action parameter");
+                            });
                     quote_spanned! { span =>
                         #convert
                         #cast_ty
                     }
                 }),
             self.state_index.map(|(_, span)| {
-                let unwrap = (!action.state_variant).then(|| quote_spanned! { span =>
-                    let #state_ident = #glib::FromVariant::from_variant(&#state_ident)
+                let unwrap = action.state_from(&glib).map(|path| quote_spanned! { path.span() =>
+                    let #state_ident = #path(&#state_ident)
                         .expect("Invalid state type stored in action");
                 });
                 let cast_ty = action.state_type(go).map(|state_ty| {
@@ -361,13 +452,9 @@ impl ActionHandler {
         ].into_iter().flatten();
         let after = self.return_type().map(|ty| {
             let state = action
-                .state_variant
-                .then(|| quote! { #ret_ident })
-                .unwrap_or_else(|| {
-                    quote_spanned! { ty.span() =>
-                        #glib::ToVariant::to_variant(&#ret_ident)
-                    }
-                });
+                .state_to(&glib)
+                .map(|path| quote_spanned! { path.span() => #path(&#ret_ident) })
+                .unwrap_or_else(|| quote! { #ret_ident });
             let call = match self.ty {
                 HandlerType::Activate => {
                     let ref_ = action_ref.is_none().then(|| quote! { & });
@@ -431,6 +518,74 @@ impl ActionHandler {
         gobject_core::closure_expr(&mut closure, go, &Errors::default());
         quote_spanned! { self.span => #closure }
     }
+    #[inline]
+    fn to_public_method_noninline_expr(
+        &self,
+        action: &Action,
+        wrapper_ty: &TokenStream,
+        bind_expr: Option<&syn::Expr>,
+        go: &syn::Ident,
+    ) -> syn::Expr {
+        let glib = quote! { #go::glib };
+        let name = &action.name;
+        let self_ident = syn::Ident::new("self", Span::mixed_site());
+        let action_group = bind_expr
+            .map(|expr| {
+                let group_ident = syn::Ident::new("group", Span::mixed_site());
+                quote_spanned! { expr.span() =>
+                    &match #go::ParamStoreReadOptional::get_owned_optional(
+                        &#glib::subclass::prelude::ObjectSubclassIsExt::imp(#self_ident).#expr,
+                    ) {
+                        ::std::option::Option::Some(#group_ident) => #group_ident,
+                        _ => return,
+                    }
+                }
+            })
+            .unwrap_or_else(|| {
+                quote! {
+                    #glib::Cast::upcast_ref::<#wrapper_ty>(#self_ident)
+                }
+            });
+        match self.ty {
+            HandlerType::Activate => {
+                let param = self
+                    .parameter_index
+                    .map(|(_, span)| {
+                        let param_ident = syn::Ident::new("param", Span::mixed_site());
+                        let param = self
+                            .parameter_to(action, &glib)
+                            .map(|path| quote_spanned! { path.span() => #path(&#param_ident) })
+                            .unwrap_or_else(|| quote! { #param_ident });
+                        quote_spanned! { span => ::std::option::Option::Some(&#param) }
+                    })
+                    .unwrap_or_else(|| quote! { ::std::option::Option::None });
+                return parse_quote_spanned! { self.sig.span() => {
+                    #go::gio::prelude::ActionGroupExt::activate_action(
+                        #action_group,
+                        #name,
+                        #param,
+                    );
+                }};
+            }
+            HandlerType::ChangeState => {
+                if self.parameter_index.is_none() {
+                    return parse_quote! {{}};
+                }
+                let param_ident = syn::Ident::new("param", Span::mixed_site());
+                let param = self
+                    .parameter_to(action, &glib)
+                    .map(|path| quote_spanned! { path.span() => #path(&#param_ident) })
+                    .unwrap_or_else(|| quote! { #param_ident });
+                return parse_quote_spanned! { self.sig.span() => {
+                    #go::gio::prelude::ActionGroupExt::change_action_state(
+                        #action_group,
+                        #name,
+                        &#param,
+                    );
+                }};
+            }
+        }
+    }
     fn to_public_method_expr(
         &self,
         action: &Action,
@@ -439,60 +594,14 @@ impl ActionHandler {
         bind_expr: Option<&syn::Expr>,
         go: &syn::Ident,
     ) -> syn::Expr {
-        let glib = quote! { #go::glib };
-        let ident = &self.sig.ident;
-        let self_ident = syn::Ident::new("self", Span::mixed_site());
-        let name = &action.name;
         let recv = match self.sig.receiver() {
             Some(recv) => recv,
-            None => match self.ty {
-                HandlerType::Activate => {
-                    let param = self
-                        .parameter_index
-                        .map(|(_, span)| {
-                            let param_ident = syn::Ident::new("param", Span::mixed_site());
-                            let param = self
-                                .param_needs_convert(action)
-                                .then(|| {
-                                    quote_spanned! { self.sig.span() =>
-                                        #go::glib::ToVariant::to_variant(&#param_ident)
-                                    }
-                                })
-                                .unwrap_or_else(|| quote! { #param_ident });
-                            quote_spanned! { span => ::std::option::Option::Some(&#param) }
-                        })
-                        .unwrap_or_else(|| quote! { ::std::option::Option::None });
-                    return parse_quote_spanned! { self.sig.span() => {
-                        #go::gio::prelude::ActionGroupExt::activate_action(
-                            #self_ident
-                            #name,
-                            #param,
-                        );
-                    }};
-                }
-                HandlerType::ChangeState => {
-                    if self.parameter_index.is_none() {
-                        return parse_quote! {{}};
-                    }
-                    let param_ident = syn::Ident::new("param", Span::mixed_site());
-                    let param = self
-                        .param_needs_convert(action)
-                        .then(|| {
-                            quote_spanned! { self.sig.span() =>
-                                #go::glib::ToVariant::to_variant(&#param_ident)
-                            }
-                        })
-                        .unwrap_or_else(|| quote! { #param_ident });
-                    return parse_quote_spanned! { self.sig.span() => {
-                        #go::gio::prelude::ActionGroupExt::change_action_state(
-                            #self_ident
-                            #name,
-                            &#param,
-                        );
-                    }};
-                }
-            },
+            None => return self.to_public_method_noninline_expr(action, wrapper_ty, bind_expr, go),
         };
+        let glib = quote! { #go::glib };
+        let ident = &self.sig.ident;
+        let name = &action.name;
+        let self_ident = syn::Ident::new("self", Span::mixed_site());
         let this_ident = syn::Ident::new("obj", Span::mixed_site());
         let param_ident = syn::Ident::new("param", Span::mixed_site());
         let action_ident = syn::Ident::new("action", Span::mixed_site());
@@ -508,7 +617,7 @@ impl ActionHandler {
             (!matches!(&action.parameter_type, ParameterType::Empty))
                 .then(|| ())
                 .and_then(|_| self.parameter_index.zip(match self.ty {
-                    HandlerType::Activate => action.parameter_type().map(Cow::Borrowed),
+                    HandlerType::Activate => action.parameter_convert_type().map(Cow::Borrowed),
                     HandlerType::ChangeState => action.state_type(go),
                 }))
                 .map(|((_, span), param_ty)| quote_spanned! { span =>
@@ -521,8 +630,8 @@ impl ActionHandler {
                 }
             }),
             self.state_index.map(|(_, span)| {
-                let unwrap = (!action.state_variant).then(|| quote_spanned! { span =>
-                    let #state_ident = #glib::FromVariant::from_variant(&#state_ident)
+                let unwrap = action.state_from(&glib).map(|path| quote_spanned! { path.span() =>
+                    let #state_ident = #path(&#state_ident)
                         .expect("Invalid state type stored in action");
                 });
                 let cast_ty = action.state_type(go).map(|state_ty| {
@@ -547,13 +656,9 @@ impl ActionHandler {
         ].into_iter().flatten();
         let after = self.return_type().map(|ty| {
             let state = action
-                .state_variant
-                .then(|| quote! { #ret_ident })
-                .unwrap_or_else(|| {
-                    quote_spanned! { ty.span() =>
-                        #glib::ToVariant::to_variant(&#ret_ident)
-                    }
-                });
+                .state_to(&glib)
+                .map(|path| quote_spanned! { path.span() => #path(&#ret_ident) })
+                .unwrap_or_else(|| quote! { #ret_ident });
             let call = match self.ty {
                 HandlerType::Activate => quote_spanned! { ty.span() =>
                     #go::gio::prelude::ActionExt::change_state(&#action_ident, &#state);
@@ -640,6 +745,7 @@ impl Spanned for ActionHandler {
 pub(crate) enum ParameterType {
     Empty,
     Inferred,
+    Path(syn::Path),
     String(syn::LitStr),
 }
 
@@ -649,10 +755,38 @@ impl Default for ParameterType {
     }
 }
 
+impl ParameterType {
+    fn needs_convert(&self) -> bool {
+        matches!(self, Self::Inferred | Self::Path(_))
+    }
+    fn type_expr(&self, action: &Action, glib: &TokenStream) -> Option<syn::Expr> {
+        match self {
+            Self::Empty => None,
+            Self::Inferred => action.parameter_convert_type().map(|ty| {
+                parse_quote_spanned! { ty.span() =>
+                    &*<#ty as #glib::StaticVariantType>::static_variant_type()
+                }
+            }),
+            Self::Path(path) => {
+                let ty_ident = syn::Ident::new("ty", Span::mixed_site());
+                Some(parse_quote_spanned! { path.span() =>
+                    &*{
+                        let #ty_ident: ::std::borrow::Cow<'static, #glib::VariantTy> = #path();
+                        #ty_ident
+                    }
+                })
+            }
+            Self::String(vty) => Some(parse_quote_spanned! { vty.span() =>
+                #glib::VariantTy::new(#vty).unwrap()
+            }),
+        }
+    }
+}
+
 impl darling::FromMeta for ParameterType {
     fn from_value(lit: &syn::Lit) -> darling::Result<Self> {
         match lit {
-            syn::Lit::Str(lit) => Ok(Self::String(lit.clone())),
+            syn::Lit::Str(lit) => Ok(Self::Path(lit.parse()?)),
             syn::Lit::Bool(syn::LitBool { value, .. }) => {
                 if *value {
                     Ok(Self::Inferred)
@@ -674,6 +808,10 @@ pub(crate) struct Action {
     pub default_state: Option<syn::Expr>,
     pub default_hint: Option<syn::Expr>,
     pub disabled: bool,
+    pub state_to: Option<syn::Path>,
+    pub state_from: Option<syn::Path>,
+    pub parameter_to: Option<syn::Path>,
+    pub parameter_from: Option<syn::Path>,
 }
 
 impl Action {
@@ -687,6 +825,7 @@ impl Action {
             if let syn::ImplItem::Method(method) = item {
                 if let Some(attrs) = util::extract_attrs(&mut method.attrs, "action") {
                     let attr = util::parse_attributes::<ActionAttrs>(&attrs, errors);
+                    attr.validate(errors);
                     Self::from_method(method, attr, mode, actions, errors);
                 }
             }
@@ -718,6 +857,10 @@ impl Action {
                 default_state: None,
                 default_hint: None,
                 disabled: false,
+                state_to: None,
+                state_from: None,
+                parameter_to: None,
+                parameter_from: None,
             };
             actions.push(action);
             actions.last_mut().unwrap()
@@ -743,6 +886,7 @@ impl Action {
                 errors,
             ));
         }
+
         if let Some(parameter_type) = attr.parameter_type {
             if !matches!(action.parameter_type, ParameterType::Inferred) {
                 errors.push(
@@ -752,34 +896,148 @@ impl Action {
             } else {
                 action.parameter_type = (*parameter_type).clone();
             }
+        } else if let Some(parameter_type_str) = attr.parameter_type_str {
+            if !matches!(action.parameter_type, ParameterType::Inferred) {
+                errors.push(
+                    parameter_type_str.span(),
+                    "Conflicting `parameter_type_str` attribute",
+                );
+            } else {
+                action.parameter_type = ParameterType::String(parameter_type_str);
+            }
+        } else if let Some(path) = &attr.parameter_with {
+            if !matches!(action.parameter_type, ParameterType::Inferred) {
+                errors.push(path.span(), "Conflicting `parameter_with` attribute");
+            } else {
+                action.parameter_type = ParameterType::Path(parse_quote_spanned! { path.span() =>
+                    #path::static_variant_type
+                });
+            }
+        } else if let Some(path) = &attr.with {
+            if !matches!(action.parameter_type, ParameterType::Inferred) {
+                errors.push(path.span(), "Conflicting `with` attribute");
+            } else {
+                action.parameter_type = ParameterType::Path(parse_quote_spanned! { path.span() =>
+                    #path::static_variant_type
+                });
+            }
         }
-        validations::only_one(
-            [
-                &("default_state", validations::check_spanned(&attr.default)),
-                &(
-                    "default_state_variant",
-                    validations::check_spanned(&attr.default_variant),
-                ),
-            ],
-            errors,
-        );
+
+        if let Some(path) = attr.parameter_to {
+            if action.parameter_to.is_some() {
+                errors.push(path.span(), "Conflicting `parameter_to` attribute");
+            } else {
+                action.parameter_to = Some(path);
+            }
+        } else if let Some(path) = &attr.parameter_with {
+            if action.parameter_to.is_some() {
+                errors.push(path.span(), "Conflicting `parameter_with` attribute");
+            } else {
+                action.parameter_to = Some(parse_quote_spanned! { path.span() =>
+                    #path::to_variant
+                });
+            }
+        } else if let Some(path) = &attr.with {
+            if action.parameter_to.is_some() {
+                errors.push(path.span(), "Conflicting `with` attribute");
+            } else {
+                action.parameter_to = Some(parse_quote_spanned! { path.span() =>
+                    #path::to_variant
+                });
+            }
+        }
+
+        if let Some(path) = attr.parameter_from {
+            if action.parameter_from.is_some() {
+                errors.push(path.span(), "Conflicting `parameter_from` attribute");
+            } else {
+                action.parameter_from = Some(path);
+            }
+        } else if let Some(path) = &attr.parameter_with {
+            if action.parameter_from.is_some() {
+                errors.push(path.span(), "Conflicting `parameter_with` attribute");
+            } else {
+                action.parameter_from = Some(parse_quote_spanned! { path.span() =>
+                    #path::from_variant
+                });
+            }
+        } else if let Some(path) = &attr.with {
+            if action.parameter_from.is_some() {
+                errors.push(path.span(), "Conflicting `with` attribute");
+            } else {
+                action.parameter_from = Some(parse_quote_spanned! { path.span() =>
+                    #path::from_variant
+                });
+            }
+        }
+
+        if let Some(path) = attr.state_to {
+            if action.state_to.is_some() {
+                errors.push(path.span(), "Conflicting `state_to` attribute");
+            } else {
+                action.state_to = Some(path);
+            }
+        } else if let Some(path) = &attr.state_with {
+            if action.state_to.is_some() {
+                errors.push(path.span(), "Conflicting `state_with` attribute");
+            } else {
+                action.state_to = Some(parse_quote_spanned! { path.span() =>
+                    #path::to_variant
+                });
+            }
+        } else if let Some(path) = &attr.with {
+            if action.state_to.is_some() {
+                errors.push(path.span(), "Conflicting `with` attribute");
+            } else {
+                action.state_to = Some(parse_quote_spanned! { path.span() =>
+                    #path::to_variant
+                });
+            }
+        }
+
+        if let Some(path) = attr.state_from {
+            if action.state_from.is_some() {
+                errors.push(path.span(), "Conflicting `state_from` attribute");
+            } else {
+                action.state_from = Some(path);
+            }
+        } else if let Some(path) = &attr.state_with {
+            if action.state_from.is_some() {
+                errors.push(path.span(), "Conflicting `state_with` attribute");
+            } else {
+                action.state_from = Some(parse_quote_spanned! { path.span() =>
+                    #path::from_variant
+                });
+            }
+        } else if let Some(path) = &attr.with {
+            if action.state_from.is_some() {
+                errors.push(path.span(), "Conflicting `with` attribute");
+            } else {
+                action.state_from = Some(parse_quote_spanned! { path.span() =>
+                    #path::from_variant
+                });
+            }
+        }
+
         if let Some(default_state) = attr.default {
             if action.default_state.is_none() {
-                action.default_state = Some((*default_state).clone());
+                action.default_state = Some(default_state);
             }
         } else if let Some(default_state_variant) = attr.default_variant {
             if action.default_state.is_none() {
-                action.default_state = Some((*default_state_variant).clone());
+                action.default_state = Some(default_state_variant);
                 action.state_variant = true;
             }
         }
+
         if let Some(default_hint) = attr.hint {
             if action.default_hint.is_some() {
                 errors.push(default_hint.span(), "Duplicate `default_hint` attribute");
             } else {
-                action.default_hint = Some((*default_hint).clone());
+                action.default_hint = Some(default_hint);
             }
         }
+
         if attr.disabled.is_some() {
             if action.disabled {
                 errors.push(attr.disabled.span(), "Duplicate `disabled` attribute");
@@ -788,21 +1046,35 @@ impl Action {
             }
         }
     }
-    fn parameter_type(&self) -> Option<&syn::Type> {
-        self.activate
-            .as_ref()
-            .and_then(|h| h.parameter_type(self))
-            .or_else(|| {
-                self.change_state
-                    .as_ref()
-                    .and_then(|h| h.parameter_type(self))
-            })
+    fn parameter_convert_type(&self) -> Option<&syn::Type> {
+        if !self.parameter_type.needs_convert() {
+            return None;
+        }
+        self.activate.as_ref().and_then(|h| h.parameter_type())
     }
     fn state_type(&self, go: &syn::Ident) -> Option<Cow<'_, syn::Type>> {
         self.activate
             .as_ref()
             .and_then(|h| h.state_type(go))
             .or_else(|| self.change_state.as_ref().and_then(|h| h.state_type(go)))
+    }
+    pub(crate) fn state_from(&self, glib: &TokenStream) -> Option<Cow<syn::Path>> {
+        (!self.state_variant).then(|| {
+            if let Some(from) = &self.state_from {
+                Cow::Borrowed(from)
+            } else {
+                Cow::Owned(parse_quote! { #glib::FromVariant::from_variant })
+            }
+        })
+    }
+    pub(crate) fn state_to(&self, glib: &TokenStream) -> Option<Cow<syn::Path>> {
+        (!self.state_variant).then(|| {
+            if let Some(to) = &self.state_to {
+                Cow::Borrowed(to)
+            } else {
+                Cow::Owned(parse_quote! { #glib::ToVariant::to_variant })
+            }
+        })
     }
     pub(crate) fn override_public_methods(
         &self,
@@ -834,7 +1106,7 @@ impl Action {
         if handler.mode == TypeMode::Wrapper
             && !matches!(
                 &public_method.constructor,
-                Some(gobject_core::ConstructorType::Auto(_, _))
+                Some(gobject_core::ConstructorType::Auto { .. })
             )
             && public_method.target.is_none()
             && final_
@@ -844,6 +1116,7 @@ impl Action {
                 "action using #[public] on wrapper type for final class must be renamed with #[public(name = \"...\")]",
             );
         }
+        public_method.mode = TypeMode::Wrapper;
         public_method.sig.output = syn::ReturnType::Default;
         public_method.sig.inputs = handler
             .sig
@@ -932,17 +1205,7 @@ impl Action {
         let gio = quote! { #go::gio };
         let action_ident = syn::Ident::new("action", Span::mixed_site());
         let name = &self.name;
-        let parameter_type = match &self.parameter_type {
-            ParameterType::Empty => None,
-            ParameterType::Inferred => self.parameter_type().map(|ty| {
-                quote_spanned! { ty.span() =>
-                    &*<#ty as #glib::StaticVariantType>::static_variant_type()
-                }
-            }),
-            ParameterType::String(vty) => Some(quote_spanned! { vty.span() =>
-                #glib::VariantTy::new(#vty).unwrap()
-            }),
-        };
+        let parameter_type = self.parameter_type.type_expr(self, &glib);
         let type_option = parameter_type
             .as_ref()
             .map(|ty| quote! { ::std::option::Option::Some(#ty) })
@@ -973,13 +1236,9 @@ impl Action {
                 })
                 .unwrap_or_else(|| expr);
             let default_state = self
-                .state_variant
-                .then(|| quote! { #expr })
-                .unwrap_or_else(|| {
-                    quote! {
-                        #glib::ToVariant::to_variant(&#expr)
-                    }
-                });
+                .state_to(&glib)
+                .map(|path| quote_spanned! { path.span() => #path(&#expr) })
+                .unwrap_or_else(|| quote! { #expr });
             quote_spanned! { expr.span() =>
                 new_stateful(#name, #type_option, &#default_state)
             }
@@ -1010,9 +1269,9 @@ impl Action {
         });
         let set_state_hint = self.default_hint.as_ref().map(|hint| {
             let hint = self
-                .state_variant
-                .then(|| quote! { #hint })
-                .unwrap_or_else(|| quote! { glib::ToVariant::to_variant(&#hint) });
+                .state_to(&glib)
+                .map(|path| quote_spanned! { path.span() => #path(&#hint) })
+                .unwrap_or_else(|| quote! { #hint });
             quote_spanned! { hint.span() =>
                 #action_ident.set_state_hint(Some(&#hint));
             }

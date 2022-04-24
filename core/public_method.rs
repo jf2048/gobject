@@ -190,6 +190,15 @@ impl PublicMethod {
         })
     }
     #[inline]
+    pub fn matches(&self, mode: TypeMode, ident: &syn::Ident) -> bool {
+        self.mode == mode
+            && if let Some(target) = &self.target {
+                target == ident
+            } else {
+                &self.sig.ident == ident
+            }
+    }
+    #[inline]
     pub fn is_static(&self) -> bool {
         self.constructor.is_some() || self.sig.receiver().is_none()
     }
