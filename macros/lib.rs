@@ -166,6 +166,15 @@ pub fn gtk4_widget(attr: TokenStream, item: TokenStream) -> TokenStream {
             let go = crate_path();
             let mut class = ClassDefinition::parse(module, opts, go.clone(), &errors);
             class.extends.push(syn::parse_quote! { #go::gtk4::Widget });
+            class
+                .inherits
+                .push(syn::parse_quote! { #go::gtk4::Accessible });
+            class
+                .inherits
+                .push(syn::parse_quote! { #go::gtk4::Buildable });
+            class
+                .inherits
+                .push(syn::parse_quote! { #go::gtk4::ConstraintTarget });
             if class.parent_trait.is_none() {
                 class.parent_trait = Some(syn::parse_quote! {
                     #go::gtk4::subclass::prelude::WidgetImpl
