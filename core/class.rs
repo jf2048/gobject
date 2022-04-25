@@ -181,16 +181,13 @@ impl ClassDefinition {
             let extends = &self.extends;
             params.push(quote! { @extends #(#extends),* });
         }
-        if !self.implements.is_empty() {
-            let implements = &self.implements;
+        let mut implements = self
+            .implements
+            .iter()
+            .chain(self.inherits.iter())
+            .peekable();
+        if implements.peek().is_some() {
             params.push(quote! { @implements #(#implements),* });
-            if !self.inherits.is_empty() {
-                let inherits = &self.inherits;
-                params.push(quote! { , #(#inherits),* });
-            }
-        } else if !self.inherits.is_empty() {
-            let inherits = &self.inherits;
-            params.push(quote! { @implements #(#inherits),* });
         }
         let mod_name = &self.inner.module.ident;
         let name = &self.inner.name;
