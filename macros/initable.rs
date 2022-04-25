@@ -34,12 +34,12 @@ fn extend_initable(def: &mut gobject_core::ClassDefinition, errors: &Errors) {
         quote! { #go::gio::subclass::prelude::InitableImpl },
     );
     let self_ident = syn::Ident::new("self", Span::mixed_site());
-    let this_ident = syn::Ident::new("_obj", Span::mixed_site());
+    let obj_ident = syn::Ident::new("_obj", Span::mixed_site());
     let cancellable_ident = syn::Ident::new("____cancellable", Span::mixed_site());
     let has_cancellable = arg_count > 2;
     let args = [
         Some(&self_ident),
-        (arg_count > 1).then(|| &this_ident),
+        (arg_count > 1).then(|| &obj_ident),
         has_cancellable.then(|| &cancellable_ident),
     ]
     .into_iter()
@@ -53,7 +53,7 @@ fn extend_initable(def: &mut gobject_core::ClassDefinition, errors: &Errors) {
             #head {
                 fn init(
                     &#self_ident,
-                    #this_ident: &<Self as #go::glib::subclass::types::ObjectSubclass>::Type,
+                    #obj_ident: &<Self as #go::glib::subclass::types::ObjectSubclass>::Type,
                     #cancellable_ident: ::std::option::Option<&#go::gio::Cancellable>
                 ) -> ::std::result::Result<(), #go::glib::Error> {
                     #name::init(#(#args),*)
@@ -112,15 +112,15 @@ fn extend_initable(def: &mut gobject_core::ClassDefinition, errors: &Errors) {
                 }
             });
             let ret = fallible
-                .then(|| quote! { ::std::result::Result::Ok(#this_ident) })
-                .unwrap_or_else(|| quote! { #this_ident });
+                .then(|| quote! { ::std::result::Result::Ok(#obj_ident) })
+                .unwrap_or_else(|| quote! { #obj_ident });
             pm.custom_body = Some((
                 String::from("Initable"),
                 Box::new(parse_quote_spanned! { span => {
-                    let #this_ident = #dest::#target(#(#args),*) #construct_try;
+                    let #obj_ident = #dest::#target(#(#args),*) #construct_try;
                     unsafe {
                         #go::gio::prelude::InitableExt::init(
-                            &#this_ident,
+                            &#obj_ident,
                             #cancellable
                         )
                     } #init_try;
@@ -138,8 +138,13 @@ fn extend_initable(def: &mut gobject_core::ClassDefinition, errors: &Errors) {
 
 #[inline]
 fn extend_async_initable(def: &mut gobject_core::ClassDefinition, errors: &Errors) {
-    let (arg_count, span) = match def.inner.find_method(TypeMode::Subclass, "init_future") {
-        Some(method) => (method.sig.inputs.len(), method.span()),
+    let (arg_count, is_async, span) = match def.inner.find_method(TypeMode::Subclass, "init_future")
+    {
+        Some(method) => (
+            method.sig.inputs.len(),
+            method.sig.asyncness.is_some(),
+            method.span(),
+        ),
         None => return,
     };
     let name = &def.inner.name;
@@ -159,16 +164,30 @@ fn extend_async_initable(def: &mut gobject_core::ClassDefinition, errors: &Error
         quote! { #go::gio::subclass::prelude::AsyncInitableImpl },
     );
     let self_ident = syn::Ident::new("self", Span::mixed_site());
-    let this_ident = syn::Ident::new("_obj", Span::mixed_site());
+    let this_ident = syn::Ident::new("this", Span::mixed_site());
+    let obj_ident = syn::Ident::new("_obj", Span::mixed_site());
     let priority_ident = syn::Ident::new("____priority", Span::mixed_site());
     let has_priority = arg_count > 2;
     let args = [
-        Some(&self_ident),
-        (arg_count > 1).then(|| &this_ident),
+        Some(&this_ident),
+        (arg_count > 1).then(|| &obj_ident),
         has_priority.then(|| &priority_ident),
     ]
     .into_iter()
     .flatten();
+    let call = quote_spanned! { span => {
+        let #obj_ident = #go::glib::subclass::types::ObjectSubclassExt::instance(#self_ident);
+        async move {
+            let #obj_ident = &#obj_ident;
+            let #this_ident = #go::glib::subclass::prelude::ObjectSubclassIsExt::imp(#obj_ident);
+            #name::init_future(#(#args),*).await
+        }
+    } };
+    let call = if is_async {
+        quote_spanned! { span => ::std::boxed::Box::pin(#call) }
+    } else {
+        call
+    };
     def.inner
         .module
         .content
@@ -178,10 +197,10 @@ fn extend_async_initable(def: &mut gobject_core::ClassDefinition, errors: &Error
             #head {
                 fn init_future(
                     &#self_ident,
-                    #this_ident: &<Self as #go::glib::subclass::types::ObjectSubclass>::Type,
+                    #obj_ident: &<Self as #go::glib::subclass::types::ObjectSubclass>::Type,
                     #priority_ident: #go::glib::Priority,
                 ) -> ::std::pin::Pin<::std::boxed::Box<dyn ::std::future::Future<Output = ::std::result::Result<(), #go::glib::Error>> + 'static>> {
-                    #name::init_future(#(#args),*)
+                    #call
                 }
             }
         }));
@@ -261,15 +280,15 @@ fn extend_async_initable(def: &mut gobject_core::ClassDefinition, errors: &Error
                 }
             });
             let ret = fallible
-                .then(|| quote! { ::std::result::Result::Ok(#this_ident) })
-                .unwrap_or_else(|| quote! { #this_ident });
+                .then(|| quote! { ::std::result::Result::Ok(#obj_ident) })
+                .unwrap_or_else(|| quote! { #obj_ident });
             pm.custom_body = Some((
                 String::from("Initable"),
                 Box::new(parse_quote_spanned! { span => {
-                    let #this_ident = #dest::#target(#(#args),*) #construct_try;
+                    let #obj_ident = #dest::#target(#(#args),*) #construct_try;
                     unsafe {
                         #go::gio::prelude::AsyncInitableExt::init_future(
-                            &#this_ident,
+                            &#obj_ident,
                             #priority
                         )
                     }.await #init_try;
