@@ -388,10 +388,10 @@ where
 }
 impl<T> ParamStoreReadValue for OnceBox<T>
 where
-    T: ValueType,
+    T: ValueTypeOptional,
 {
     fn get_value(&self) -> glib::Value {
-        self.borrow().to_value()
+        self.get().to_value()
     }
 }
 impl<T> ParamStoreReadOptional for OnceBox<T>
