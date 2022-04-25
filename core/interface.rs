@@ -16,7 +16,7 @@ struct Attrs {
     pub ext_trait: Option<syn::Ident>,
     pub impl_trait: Option<syn::Ident>,
     pub impl_ext_trait: Option<syn::Ident>,
-    pub parent_trait: Option<syn::Path>,
+    pub parent_trait: Option<syn::Type>,
     pub wrapper: Option<bool>,
     pub requires: PathList,
 }
@@ -37,7 +37,7 @@ pub struct InterfaceDefinition {
     pub ext_trait: syn::Ident,
     pub impl_trait: syn::Ident,
     pub impl_ext_trait: syn::Ident,
-    pub parent_trait: Option<syn::Path>,
+    pub parent_trait: Option<syn::Type>,
     pub wrapper: bool,
     pub requires: Vec<syn::Path>,
 }
@@ -109,6 +109,12 @@ impl InterfaceDefinition {
                 [
                     Some(self.object_interface_impl()),
                     self.interface_struct_definition(),
+                    Some(self.is_implementable_impl()),
+                    self.inner.virtual_traits(
+                        Some(&self.impl_trait),
+                        Some(&self.impl_ext_trait),
+                        self.parent_trait.as_ref(),
+                    ),
                     self.inner.public_methods(Some(&self.ext_trait)),
                 ]
                 .into_iter()
@@ -241,7 +247,7 @@ impl InterfaceDefinition {
         let (impl_generics, _, where_clause) = generics.split_for_impl();
         let head = quote! {
             unsafe impl #impl_generics #glib::subclass::types::IsImplementable<#type_ident>
-                for #name #type_generics #where_clause
+                for super::#name #type_generics #where_clause
         };
         let iface_ident = syn::Ident::new("____iface", Span::mixed_site());
         let interface_init = self
@@ -265,39 +271,41 @@ impl InterfaceDefinition {
 
 impl ToTokens for InterfaceDefinition {
     fn to_tokens(&self, tokens: &mut TokenStream) {
+        let vis = &self.inner.vis;
         let module = &self.inner.module;
+        let mod_name = &module.ident;
 
         let wrapper = self.wrapper();
-        let is_implementable = self.is_implementable_impl();
         let ext = &self.ext_trait;
-        let use_trait = self
+        let use_ext = self
             .inner
             .public_method_definitions(false)
             .next()
             .is_some()
             .then(|| {
-                let mod_name = &module.ident;
-                let vis = &self.inner.vis;
                 quote! {
                     #[allow(unused_imports)]
                     #vis use #mod_name::#ext;
                 }
             });
-        let parent_trait = self.parent_trait.as_ref().map(|p| quote! { #p });
-        let virtual_traits = self.inner.virtual_traits(
-            Some(&self.impl_trait),
-            Some(&self.impl_ext_trait),
-            parent_trait,
-        );
+        let impl_ = &self.impl_trait;
+        let use_impl_ext = (!self.inner.virtual_methods.is_empty()).then(|| {
+            let impl_ext = &self.impl_ext_trait;
+            quote! {
+                #[allow(unused_imports)]
+                #vis use #mod_name::#impl_ext;
+            }
+        });
         let requires_ident = self.prerequisites_alias();
         let requires = &self.requires;
 
         let iface = quote! {
             #module
             #wrapper
-            #is_implementable
-            #use_trait
-            #virtual_traits
+            #use_ext
+            #[allow(unused_imports)]
+            #vis use #mod_name::#impl_;
+            #use_impl_ext
             #[doc(hidden)]
             type #requires_ident = (#(#requires,)*);
         };

@@ -831,7 +831,7 @@ impl TypeDefinition {
             return None;
         }
         let glib = self.glib();
-        let ty = self.type_(TypeMode::Wrapper, TypeMode::Wrapper, TypeContext::External);
+        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External);
         let ty = parse_quote! { #ty };
         Some(FromIterator::from_iter(self.virtual_methods.iter().map(
             |m| m.set_subclassed_trampoline(&ty, trait_name, type_ident, class_ident, &glib),
@@ -857,14 +857,12 @@ impl TypeDefinition {
         &self,
         trait_name: &syn::Ident,
         ext_trait_name: &syn::Ident,
-        parent_trait: Option<TokenStream>,
+        parent_trait: Option<&syn::Type>,
     ) -> Option<TokenStream> {
         let glib = self.glib();
-        let vis = &self.vis;
-        let parent_trait = parent_trait.unwrap_or_else(|| {
-            quote! {
-                #glib::subclass::object::ObjectImpl
-            }
+        let vis = &self.inner_vis;
+        let parent_trait = parent_trait.map(|p| quote! { #p }).unwrap_or_else(|| {
+            quote! { #glib::subclass::object::ObjectImpl }
         });
         let virtual_methods_default = self
             .virtual_methods
@@ -886,9 +884,9 @@ impl TypeDefinition {
             return None;
         }
         let glib = self.glib();
-        let ty = self.type_(TypeMode::Wrapper, TypeMode::Wrapper, TypeContext::External);
+        let ty = self.type_(TypeMode::Subclass, TypeMode::Wrapper, TypeContext::External);
         let type_ident = syn::Ident::new("____Object", Span::mixed_site());
-        let vis = &self.vis;
+        let vis = &self.inner_vis;
         let parent_method_protos = self
             .virtual_methods
             .iter()
@@ -910,7 +908,7 @@ impl TypeDefinition {
         &self,
         trait_name: Option<&syn::Ident>,
         ext_trait_name: Option<&syn::Ident>,
-        parent_trait: Option<TokenStream>,
+        parent_trait: Option<&syn::Type>,
     ) -> Option<TokenStream> {
         let trait_name = trait_name?;
         let ext_trait_name = ext_trait_name?;

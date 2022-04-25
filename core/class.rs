@@ -20,7 +20,7 @@ struct Attrs {
     pub ext_trait: Option<syn::Ident>,
     pub impl_trait: Option<syn::Ident>,
     pub impl_ext_trait: Option<syn::Ident>,
-    pub parent_trait: Option<syn::Path>,
+    pub parent_trait: Option<syn::Type>,
     pub wrapper: Option<bool>,
     #[darling(rename = "abstract")]
     pub abstract_: SpannedValue<Flag>,
@@ -58,7 +58,7 @@ pub struct ClassDefinition {
     pub ext_trait: Option<syn::Ident>,
     pub impl_trait: Option<syn::Ident>,
     pub impl_ext_trait: Option<syn::Ident>,
-    pub parent_trait: Option<syn::Path>,
+    pub parent_trait: Option<syn::Type>,
     pub wrapper: bool,
     pub abstract_: bool,
     pub final_: bool,
@@ -148,6 +148,12 @@ impl ClassDefinition {
                     Some(self.object_subclass_impl()),
                     Some(self.object_impl_impl()),
                     self.class_struct_definition(),
+                    self.is_subclassable_impl(),
+                    self.inner.virtual_traits(
+                        self.impl_trait.as_ref(),
+                        self.impl_ext_trait.as_ref(),
+                        self.parent_trait.as_ref(),
+                    ),
                     self.inner.public_methods(self.ext_trait.as_ref()),
                 ]
                 .into_iter()
@@ -562,7 +568,7 @@ impl ClassDefinition {
         let trait_name = self.impl_trait.as_ref()?;
         let type_ident = syn::Ident::new("____Object", Span::mixed_site());
         let head = self.inner.trait_head_with_params(
-            &parse_quote! { #name },
+            &parse_quote! { super::#name },
             quote! { #glib::subclass::types::IsSubclassable<#type_ident> },
             Some([parse_quote! { #type_ident: #trait_name }]),
         );
@@ -591,30 +597,37 @@ impl ClassDefinition {
 
 impl ToTokens for ClassDefinition {
     fn to_tokens(&self, tokens: &mut TokenStream) {
+        let vis = &self.inner.vis;
         let module = &self.inner.module;
+        let mod_name = &module.ident;
 
         let wrapper = self.wrapper();
-        let is_subclassable = self.is_subclassable_impl();
-        let use_trait = self.ext_trait.as_ref().and_then(|ext| {
+        let use_ext = self.ext_trait.as_ref().and_then(|ext| {
             self.inner
                 .public_method_definitions(self.final_)
                 .next()
                 .is_some()
                 .then(|| {
-                    let mod_name = &module.ident;
-                    let vis = &self.inner.vis;
                     quote! {
                         #[allow(unused_imports)]
                         #vis use #mod_name::#ext;
                     }
                 })
         });
-        let parent_trait = self.parent_trait.as_ref().map(|p| quote! { #p });
-        let virtual_traits = self.inner.virtual_traits(
-            self.impl_trait.as_ref(),
-            self.impl_ext_trait.as_ref(),
-            parent_trait,
-        );
+        let use_impl = self.impl_trait.as_ref().map(|impl_| {
+            quote! {
+                #[allow(unused_imports)]
+                #vis use #mod_name::#impl_;
+            }
+        });
+        let use_impl_ext = self.impl_ext_trait.as_ref().and_then(|impl_ext| {
+            (!self.inner.virtual_methods.is_empty()).then(|| {
+                quote! {
+                    #[allow(unused_imports)]
+                    #vis use #mod_name::#impl_ext;
+                }
+            })
+        });
         let parent_type_ident = self.parent_type_alias();
         let parent_type = self.parent_type();
         let interfaces_ident = self.interfaces_alias();
@@ -623,9 +636,9 @@ impl ToTokens for ClassDefinition {
         let class = quote! {
             #module
             #wrapper
-            #is_subclassable
-            #use_trait
-            #virtual_traits
+            #use_ext
+            #use_impl
+            #use_impl_ext
             #[doc(hidden)]
             type #parent_type_ident = #parent_type;
             #[doc(hidden)]

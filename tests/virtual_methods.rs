@@ -16,6 +16,10 @@ mod obj_abstract {
         fn virtual_concat(&self, a: &str, b: &str) -> String {
             format!("{} {} {}", self.instance().my_prop(), a, b)
         }
+        #[virt]
+        fn virtual_method(&self, implementor: &super::Implementor) -> String {
+            glib::ObjectExt::type_(implementor).name().to_owned()
+        }
     }
 }
 
@@ -43,7 +47,7 @@ mod obj_implementor {
     }
 }
 
-#[gobject::class(extends(ObjAbstract), parent_trait = "ObjAbstractImpl")]
+#[gobject::class(extends(ObjAbstract), parent_trait = "super::ObjAbstractImpl")]
 mod obj_derivable {
     use super::ObjAbstractImplExt;
     use std::cell::Cell;
