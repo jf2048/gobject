@@ -481,10 +481,10 @@ where
 }
 impl<T> ParamStoreReadValue for ConstructCell<T>
 where
-    T: ValueType,
+    T: ValueTypeOptional,
 {
     fn get_value(&self) -> glib::Value {
-        self.borrow().to_value()
+        (*(**self).borrow()).to_value()
     }
 }
 impl<T> ParamStoreReadOptional for ConstructCell<T>
