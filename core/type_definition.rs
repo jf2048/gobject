@@ -857,7 +857,7 @@ impl TypeDefinition {
         &self,
         trait_name: &syn::Ident,
         ext_trait_name: &syn::Ident,
-        parent_trait: Option<&syn::Type>,
+        parent_trait: Option<&syn::TypePath>,
     ) -> Option<TokenStream> {
         let glib = self.glib();
         let vis = &self.inner_vis;
@@ -908,7 +908,7 @@ impl TypeDefinition {
         &self,
         trait_name: Option<&syn::Ident>,
         ext_trait_name: Option<&syn::Ident>,
-        parent_trait: Option<&syn::Type>,
+        parent_trait: Option<&syn::TypePath>,
     ) -> Option<TokenStream> {
         let trait_name = trait_name?;
         let ext_trait_name = ext_trait_name?;

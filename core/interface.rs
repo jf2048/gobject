@@ -16,7 +16,7 @@ struct Attrs {
     pub ext_trait: Option<syn::Ident>,
     pub impl_trait: Option<syn::Ident>,
     pub impl_ext_trait: Option<syn::Ident>,
-    pub parent_trait: Option<syn::Type>,
+    pub parent_trait: Option<syn::TypePath>,
     pub wrapper: Option<bool>,
     pub requires: PathList,
 }
@@ -37,7 +37,7 @@ pub struct InterfaceDefinition {
     pub ext_trait: syn::Ident,
     pub impl_trait: syn::Ident,
     pub impl_ext_trait: syn::Ident,
-    pub parent_trait: Option<syn::Type>,
+    pub parent_trait: Option<syn::TypePath>,
     pub wrapper: bool,
     pub requires: Vec<syn::Path>,
 }

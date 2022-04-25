@@ -20,7 +20,7 @@ struct Attrs {
     pub ext_trait: Option<syn::Ident>,
     pub impl_trait: Option<syn::Ident>,
     pub impl_ext_trait: Option<syn::Ident>,
-    pub parent_trait: Option<syn::Type>,
+    pub parent_trait: Option<syn::TypePath>,
     pub wrapper: Option<bool>,
     #[darling(rename = "abstract")]
     pub abstract_: SpannedValue<Flag>,
@@ -58,7 +58,7 @@ pub struct ClassDefinition {
     pub ext_trait: Option<syn::Ident>,
     pub impl_trait: Option<syn::Ident>,
     pub impl_ext_trait: Option<syn::Ident>,
-    pub parent_trait: Option<syn::Type>,
+    pub parent_trait: Option<syn::TypePath>,
     pub wrapper: bool,
     pub abstract_: bool,
     pub final_: bool,
