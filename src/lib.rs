@@ -135,7 +135,9 @@ pub use gobject_macros::actions;
 pub use gobject_macros::gtk4_widget;
 #[cfg(feature = "use_serde")]
 pub use gobject_macros::serde_cast;
-pub use gobject_macros::{class, clone_block, interface, variant_cast, Properties};
+#[cfg(feature = "variant")]
+pub use gobject_macros::variant_cast;
+pub use gobject_macros::{class, clone_block, interface, Properties};
 
 #[cfg(feature = "use_gio")]
 mod action;
