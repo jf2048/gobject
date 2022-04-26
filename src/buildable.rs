@@ -1,4 +1,4 @@
-use crate::{ConstructCell, DowngradeCell, OnceBool, OnceBox, OnceCell, SyncOnceCell, WeakCell};
+use crate::{OnceBool, OnceBox, OnceCell, SyncOnceCell};
 
 pub trait ParamSpecBuildable {
     type ParamSpec;
@@ -101,15 +101,6 @@ impl<T: ParamSpecBuildable> ParamSpecBuildable for std::sync::Mutex<T> {
     type ParamSpec = T::ParamSpec;
 }
 impl<T: ParamSpecBuildable> ParamSpecBuildable for std::sync::RwLock<T> {
-    type ParamSpec = T::ParamSpec;
-}
-impl<T: ParamSpecBuildable> ParamSpecBuildable for ConstructCell<T> {
-    type ParamSpec = T::ParamSpec;
-}
-impl<T: ParamSpecBuildable + glib::ObjectType> ParamSpecBuildable for WeakCell<T> {
-    type ParamSpec = T::ParamSpec;
-}
-impl<T: ParamSpecBuildable + glib::clone::Downgrade> ParamSpecBuildable for DowngradeCell<T> {
     type ParamSpec = T::ParamSpec;
 }
 impl<T: ParamSpecBuildable> ParamSpecBuildable for OnceCell<T> {

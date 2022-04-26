@@ -1,4 +1,4 @@
-use crate::{ConstructCell, DowngradeCell, OnceBool, OnceBox, OnceCell, SyncOnceCell, WeakCell};
+use crate::{OnceBool, OnceBox, OnceCell, SyncOnceCell};
 use glib::{
     value::{
         FromValue, ValueType, ValueTypeChecker, ValueTypeMismatchOrNoneError, ValueTypeOptional,
@@ -11,15 +11,11 @@ pub trait ParamStore {
     type Type: ValueType;
 }
 pub trait ParamStoreRead: ParamStore {
-    fn get_owned(&self) -> <Self as ParamStore>::Type;
-}
-pub trait ParamStoreReadValue: ParamStore {
-    fn get_value(&self) -> glib::Value;
-}
-pub trait ParamStoreReadOptional: ParamStore {
-    type OptionalType;
-
-    fn get_owned_optional(&self) -> Option<Self::OptionalType>;
+    type ReadType: ToValue;
+    fn get_owned(&self) -> Self::ReadType;
+    fn get_value(&self) -> glib::Value {
+        self.get_owned().to_value()
+    }
 }
 pub trait ParamStoreBorrow<'a>: ParamStore {
     type BorrowType;
@@ -27,13 +23,14 @@ pub trait ParamStoreBorrow<'a>: ParamStore {
     fn borrow(&'a self) -> Self::BorrowType;
 }
 pub trait ParamStoreWrite<'a>: ParamStore {
-    fn set_owned(&'a self, value: <Self as ParamStore>::Type);
+    type WriteType: FromValue<'a>;
+    fn set_owned(&'a self, value: Self::WriteType);
     fn set_value(&'a self, value: &'a Value) {
         self.set_owned(value.get().expect("invalid value for property"));
     }
 }
 pub trait ParamStoreWriteChanged<'a>: ParamStoreWrite<'a> {
-    fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool;
+    fn set_owned_checked(&'a self, value: Self::WriteType) -> bool;
 }
 
 impl<T: ValueType> ParamStore for std::cell::Cell<T> {
@@ -43,33 +40,17 @@ impl<T> ParamStoreRead for std::cell::Cell<T>
 where
     T: ValueType + Copy,
 {
-    fn get_owned(&self) -> <Self as ParamStore>::Type {
+    type ReadType = T;
+    fn get_owned(&self) -> Self::ReadType {
         std::cell::Cell::get(self)
-    }
-}
-impl<T> ParamStoreReadValue for std::cell::Cell<T>
-where
-    T: ValueType + Copy,
-{
-    fn get_value(&self) -> glib::Value {
-        self.get_owned().to_value()
-    }
-}
-impl<T> ParamStoreReadOptional for std::cell::Cell<T>
-where
-    T: ValueType + Copy,
-{
-    type OptionalType = T;
-
-    fn get_owned_optional(&self) -> Option<Self::OptionalType> {
-        Some(self.get_owned())
     }
 }
 impl<'a, T> ParamStoreWrite<'a> for std::cell::Cell<T>
 where
     T: ValueType,
 {
-    fn set_owned(&'a self, value: <Self as ParamStore>::Type) {
+    type WriteType = T;
+    fn set_owned(&'a self, value: Self::WriteType) {
         self.replace(value);
     }
 }
@@ -77,7 +58,7 @@ impl<'a, T> ParamStoreWriteChanged<'a> for std::cell::Cell<T>
 where
     T: ValueType + PartialEq + Copy,
 {
-    fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool {
+    fn set_owned_checked(&'a self, value: Self::WriteType) -> bool {
         let old = self.replace(value);
         old != self.get()
     }
@@ -90,26 +71,12 @@ impl<T> ParamStoreRead for std::cell::RefCell<T>
 where
     T: ValueType + Clone,
 {
-    fn get_owned(&self) -> <Self as ParamStore>::Type {
+    type ReadType = T;
+    fn get_owned(&self) -> Self::ReadType {
         self.borrow().clone()
     }
-}
-impl<T> ParamStoreReadValue for std::cell::RefCell<T>
-where
-    T: ValueType,
-{
     fn get_value(&self) -> glib::Value {
         self.borrow().to_value()
-    }
-}
-impl<T> ParamStoreReadOptional for std::cell::RefCell<T>
-where
-    T: ValueType + Clone,
-{
-    type OptionalType = T;
-
-    fn get_owned_optional(&self) -> Option<Self::OptionalType> {
-        self.try_borrow().ok().map(|v| (*v).clone())
     }
 }
 impl<'a, T> ParamStoreBorrow<'a> for std::cell::RefCell<T>
@@ -126,7 +93,8 @@ impl<'a, T> ParamStoreWrite<'a> for std::cell::RefCell<T>
 where
     T: ValueType,
 {
-    fn set_owned(&'a self, value: <Self as ParamStore>::Type) {
+    type WriteType = T;
+    fn set_owned(&'a self, value: Self::WriteType) {
         self.replace(value);
     }
 }
@@ -134,7 +102,7 @@ impl<'a, T> ParamStoreWriteChanged<'a> for std::cell::RefCell<T>
 where
     T: ValueType + PartialEq,
 {
-    fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool {
+    fn set_owned_checked(&'a self, value: Self::WriteType) -> bool {
         let mut storage = self.borrow_mut();
         let old = std::mem::replace(storage.deref_mut(), value);
         old != *storage
@@ -148,26 +116,12 @@ impl<T> ParamStoreRead for std::sync::Mutex<T>
 where
     T: ValueType + Clone,
 {
-    fn get_owned(&self) -> <Self as ParamStore>::Type {
+    type ReadType = T;
+    fn get_owned(&self) -> Self::ReadType {
         self.borrow().clone()
     }
-}
-impl<T> ParamStoreReadValue for std::sync::Mutex<T>
-where
-    T: ValueType,
-{
     fn get_value(&self) -> glib::Value {
         self.borrow().to_value()
-    }
-}
-impl<T> ParamStoreReadOptional for std::sync::Mutex<T>
-where
-    T: ValueType + Clone,
-{
-    type OptionalType = T;
-
-    fn get_owned_optional(&self) -> Option<Self::OptionalType> {
-        self.try_lock().ok().map(|v| (*v).clone())
     }
 }
 impl<'a, T> ParamStoreBorrow<'a> for std::sync::Mutex<T>
@@ -184,7 +138,8 @@ impl<'a, T> ParamStoreWrite<'a> for std::sync::Mutex<T>
 where
     T: ValueType,
 {
-    fn set_owned(&'a self, value: <Self as ParamStore>::Type) {
+    type WriteType = T;
+    fn set_owned(&'a self, value: Self::WriteType) {
         *self.lock().unwrap() = value;
     }
 }
@@ -192,7 +147,7 @@ impl<'a, T> ParamStoreWriteChanged<'a> for std::sync::Mutex<T>
 where
     T: ValueType + PartialEq,
 {
-    fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool {
+    fn set_owned_checked(&'a self, value: Self::WriteType) -> bool {
         let mut storage = self.lock().unwrap();
         let old = std::mem::replace(storage.deref_mut(), value);
         old != *storage
@@ -206,26 +161,12 @@ impl<T> ParamStoreRead for std::sync::RwLock<T>
 where
     T: ValueType + Clone,
 {
-    fn get_owned(&self) -> <Self as ParamStore>::Type {
+    type ReadType = T;
+    fn get_owned(&self) -> Self::ReadType {
         self.borrow().clone()
     }
-}
-impl<T> ParamStoreReadValue for std::sync::RwLock<T>
-where
-    T: ValueType,
-{
     fn get_value(&self) -> glib::Value {
         self.borrow().to_value()
-    }
-}
-impl<T> ParamStoreReadOptional for std::sync::RwLock<T>
-where
-    T: ValueType + Clone,
-{
-    type OptionalType = T;
-
-    fn get_owned_optional(&self) -> Option<Self::OptionalType> {
-        self.try_read().ok().map(|v| (*v).clone())
     }
 }
 impl<'a, T> ParamStoreBorrow<'a> for std::sync::RwLock<T>
@@ -242,7 +183,8 @@ impl<'a, T> ParamStoreWrite<'a> for std::sync::RwLock<T>
 where
     T: ValueType,
 {
-    fn set_owned(&'a self, value: <Self as ParamStore>::Type) {
+    type WriteType = T;
+    fn set_owned(&'a self, value: Self::WriteType) {
         *self.write().unwrap() = value;
     }
 }
@@ -250,7 +192,7 @@ impl<'a, T> ParamStoreWriteChanged<'a> for std::sync::RwLock<T>
 where
     T: ValueType + PartialEq,
 {
-    fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool {
+    fn set_owned_checked(&'a self, value: Self::WriteType) -> bool {
         let mut storage = self.write().unwrap();
         let old = std::mem::replace(storage.deref_mut(), value);
         old != *storage
@@ -264,26 +206,12 @@ impl<T> ParamStoreRead for OnceCell<T>
 where
     T: ValueType + Clone,
 {
-    fn get_owned(&self) -> <Self as ParamStore>::Type {
+    type ReadType = T;
+    fn get_owned(&self) -> Self::ReadType {
         self.borrow().clone()
     }
-}
-impl<T> ParamStoreReadValue for OnceCell<T>
-where
-    T: ValueType,
-{
     fn get_value(&self) -> glib::Value {
         self.borrow().to_value()
-    }
-}
-impl<T> ParamStoreReadOptional for OnceCell<T>
-where
-    T: ValueType + Clone,
-{
-    type OptionalType = T;
-
-    fn get_owned_optional(&self) -> Option<Self::OptionalType> {
-        self.get().cloned()
     }
 }
 impl<'a, T> ParamStoreBorrow<'a> for OnceCell<T>
@@ -301,7 +229,8 @@ impl<'a, T> ParamStoreWrite<'a> for OnceCell<T>
 where
     T: ValueType,
 {
-    fn set_owned(&'a self, value: <Self as ParamStore>::Type) {
+    type WriteType = T;
+    fn set_owned(&'a self, value: Self::WriteType) {
         self.set(value)
             .unwrap_or_else(|_| panic!("set() called on initialized OnceCell"));
     }
@@ -310,7 +239,7 @@ impl<'a, T> ParamStoreWriteChanged<'a> for OnceCell<T>
 where
     T: ValueType + PartialEq + Copy,
 {
-    fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool {
+    fn set_owned_checked(&'a self, value: Self::WriteType) -> bool {
         self.set_owned(value);
         true
     }
@@ -323,26 +252,12 @@ impl<T> ParamStoreRead for SyncOnceCell<T>
 where
     T: ValueType + Clone,
 {
-    fn get_owned(&self) -> <Self as ParamStore>::Type {
+    type ReadType = T;
+    fn get_owned(&self) -> Self::ReadType {
         self.borrow().clone()
     }
-}
-impl<T> ParamStoreReadValue for SyncOnceCell<T>
-where
-    T: ValueType,
-{
     fn get_value(&self) -> glib::Value {
         self.borrow().to_value()
-    }
-}
-impl<T> ParamStoreReadOptional for SyncOnceCell<T>
-where
-    T: ValueType + Clone,
-{
-    type OptionalType = T;
-
-    fn get_owned_optional(&self) -> Option<Self::OptionalType> {
-        self.get().cloned()
     }
 }
 impl<'a, T> ParamStoreBorrow<'a> for SyncOnceCell<T>
@@ -360,7 +275,8 @@ impl<'a, T> ParamStoreWrite<'a> for SyncOnceCell<T>
 where
     T: ValueType,
 {
-    fn set_owned(&'a self, value: <Self as ParamStore>::Type) {
+    type WriteType = T;
+    fn set_owned(&'a self, value: Self::WriteType) {
         self.set(value)
             .unwrap_or_else(|_| panic!("set() called on initialized OnceCell"));
     }
@@ -369,7 +285,7 @@ impl<'a, T> ParamStoreWriteChanged<'a> for SyncOnceCell<T>
 where
     T: ValueType + PartialEq + Copy,
 {
-    fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool {
+    fn set_owned_checked(&'a self, value: Self::WriteType) -> bool {
         self.set_owned(value);
         true
     }
@@ -380,28 +296,14 @@ impl<T: ValueType> ParamStore for OnceBox<T> {
 }
 impl<T> ParamStoreRead for OnceBox<T>
 where
-    T: ValueType + Clone,
+    T: ValueTypeOptional + Clone,
 {
-    fn get_owned(&self) -> <Self as ParamStore>::Type {
+    type ReadType = T;
+    fn get_owned(&self) -> Self::ReadType {
         self.borrow().clone()
     }
-}
-impl<T> ParamStoreReadValue for OnceBox<T>
-where
-    T: ValueTypeOptional,
-{
     fn get_value(&self) -> glib::Value {
         self.get().to_value()
-    }
-}
-impl<T> ParamStoreReadOptional for OnceBox<T>
-where
-    T: ValueType + Clone,
-{
-    type OptionalType = T;
-
-    fn get_owned_optional(&self) -> Option<Self::OptionalType> {
-        self.get().cloned()
     }
 }
 impl<'a, T> ParamStoreBorrow<'a> for OnceBox<T>
@@ -419,7 +321,8 @@ impl<'a, T> ParamStoreWrite<'a> for OnceBox<T>
 where
     T: ValueType,
 {
-    fn set_owned(&'a self, value: <Self as ParamStore>::Type) {
+    type WriteType = T;
+    fn set_owned(&'a self, value: Self::WriteType) {
         self.set(Box::new(value))
             .unwrap_or_else(|_| panic!("set() called on initialized OnceBox"));
     }
@@ -428,7 +331,7 @@ impl<'a, T> ParamStoreWriteChanged<'a> for OnceBox<T>
 where
     T: ValueType + PartialEq + Copy,
 {
-    fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool {
+    fn set_owned_checked(&'a self, value: Self::WriteType) -> bool {
         self.set_owned(value);
         true
     }
@@ -438,198 +341,23 @@ impl ParamStore for OnceBool {
     type Type = bool;
 }
 impl ParamStoreRead for OnceBool {
-    fn get_owned(&self) -> <Self as ParamStore>::Type {
+    type ReadType = bool;
+    fn get_owned(&self) -> bool {
         self.get()
             .unwrap_or_else(|| panic!("`get()` called on uninitialized OnceBool"))
     }
 }
-impl ParamStoreReadValue for OnceBool {
-    fn get_value(&self) -> glib::Value {
-        self.get_owned().to_value()
-    }
-}
-impl ParamStoreReadOptional for OnceBool {
-    type OptionalType = bool;
-
-    fn get_owned_optional(&self) -> Option<Self::OptionalType> {
-        self.get()
-    }
-}
 impl<'a> ParamStoreWrite<'a> for OnceBool {
-    fn set_owned(&'a self, value: <Self as ParamStore>::Type) {
+    type WriteType = bool;
+    fn set_owned(&'a self, value: Self::WriteType) {
         self.set(value)
             .unwrap_or_else(|_| panic!("set() called on initialized OnceBool"));
     }
 }
 impl<'a> ParamStoreWriteChanged<'a> for OnceBool {
-    fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool {
+    fn set_owned_checked(&'a self, value: Self::WriteType) -> bool {
         self.set_owned(value);
         true
-    }
-}
-
-impl<T: ValueType> ParamStore for ConstructCell<T> {
-    type Type = T;
-}
-impl<T> ParamStoreRead for ConstructCell<T>
-where
-    T: ValueType + Clone,
-{
-    fn get_owned(&self) -> <Self as ParamStore>::Type {
-        self.borrow().clone()
-    }
-}
-impl<T> ParamStoreReadValue for ConstructCell<T>
-where
-    T: ValueTypeOptional,
-{
-    fn get_value(&self) -> glib::Value {
-        (*(**self).borrow()).to_value()
-    }
-}
-impl<T> ParamStoreReadOptional for ConstructCell<T>
-where
-    T: ValueType + Clone,
-{
-    type OptionalType = T;
-
-    fn get_owned_optional(&self) -> Option<Self::OptionalType> {
-        self.try_borrow().ok().and_then(|v| (*v).clone())
-    }
-}
-impl<'a, T> ParamStoreBorrow<'a> for ConstructCell<T>
-where
-    T: ValueType + 'a,
-{
-    type BorrowType = std::cell::Ref<'a, T>;
-
-    fn borrow(&'a self) -> Self::BorrowType {
-        std::cell::Ref::map((**self).borrow(), |r| {
-            r.as_ref().expect("ConstructCell borrowed before write")
-        })
-    }
-}
-impl<'a, T> ParamStoreWrite<'a> for ConstructCell<T>
-where
-    T: ValueType,
-{
-    fn set_owned(&'a self, value: <Self as ParamStore>::Type) {
-        self.replace(Some(value));
-    }
-}
-impl<'a, T> ParamStoreWriteChanged<'a> for ConstructCell<T>
-where
-    T: ValueType + PartialEq,
-{
-    fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool {
-        let mut storage = self.borrow_mut();
-        let old = std::mem::replace(storage.deref_mut(), Some(value));
-        old != *storage
-    }
-}
-
-impl<T: ObjectType> ParamStore for WeakCell<T> {
-    type Type = T;
-}
-impl<T> ParamStoreRead for WeakCell<T>
-where
-    T: ObjectType,
-{
-    fn get_owned(&self) -> <Self as ParamStore>::Type {
-        self.upgrade().expect("Failed to upgrade WeakRef")
-    }
-}
-impl<T> ParamStoreReadValue for WeakCell<T>
-where
-    T: ObjectType,
-{
-    fn get_value(&self) -> glib::Value {
-        self.get_owned().to_value()
-    }
-}
-impl<T> ParamStoreReadOptional for WeakCell<T>
-where
-    T: ObjectType,
-{
-    type OptionalType = T;
-
-    fn get_owned_optional(&self) -> Option<Self::OptionalType> {
-        self.upgrade()
-    }
-}
-impl<'a, T> ParamStoreWrite<'a> for WeakCell<T>
-where
-    T: ObjectType,
-{
-    fn set_owned(&'a self, value: <Self as ParamStore>::Type) {
-        self.set(Some(&value));
-    }
-}
-impl<'a, T> ParamStoreWriteChanged<'a> for WeakCell<T>
-where
-    T: ObjectType + PartialEq,
-{
-    fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool {
-        let old = self.get_owned();
-        self.set(Some(&value));
-        old != value
-    }
-}
-
-impl<T> ParamStore for DowngradeCell<T>
-where
-    T: ValueType + glib::clone::Downgrade,
-    <T as glib::clone::Downgrade>::Weak: glib::clone::Upgrade<Strong = T>,
-{
-    type Type = T;
-}
-impl<T> ParamStoreRead for DowngradeCell<T>
-where
-    T: ValueType + glib::clone::Downgrade,
-    <T as glib::clone::Downgrade>::Weak: glib::clone::Upgrade<Strong = T>,
-{
-    fn get_owned(&self) -> <Self as ParamStore>::Type {
-        glib::clone::Upgrade::upgrade(&*self.borrow()).expect("Failed to upgrade weak reference")
-    }
-}
-impl<T> ParamStoreReadValue for DowngradeCell<T>
-where
-    T: ValueType + glib::clone::Downgrade,
-    <T as glib::clone::Downgrade>::Weak: glib::clone::Upgrade<Strong = T>,
-{
-    fn get_value(&self) -> glib::Value {
-        self.get_owned().to_value()
-    }
-}
-impl<T> ParamStoreReadOptional for DowngradeCell<T>
-where
-    T: ValueType + glib::clone::Downgrade,
-    <T as glib::clone::Downgrade>::Weak: glib::clone::Upgrade<Strong = T>,
-{
-    type OptionalType = T;
-
-    fn get_owned_optional(&self) -> Option<Self::OptionalType> {
-        glib::clone::Upgrade::upgrade(&*self.borrow())
-    }
-}
-impl<'a, T> ParamStoreWrite<'a> for DowngradeCell<T>
-where
-    T: ValueType + glib::clone::Downgrade,
-    <T as glib::clone::Downgrade>::Weak: glib::clone::Upgrade<Strong = T>,
-{
-    fn set_owned(&'a self, value: <Self as ParamStore>::Type) {
-        self.replace(glib::clone::Downgrade::downgrade(&value));
-    }
-}
-impl<'a, T> ParamStoreWriteChanged<'a> for DowngradeCell<T>
-where
-    T: ValueType + glib::clone::Downgrade + PartialEq,
-    <T as glib::clone::Downgrade>::Weak: glib::clone::Upgrade<Strong = T>,
-{
-    fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool {
-        let old = self.get_owned();
-        self.replace(glib::clone::Downgrade::downgrade(&value));
-        old != value
     }
 }
 
@@ -639,29 +367,19 @@ macro_rules! atomic_type {
             type Type = $inner;
         }
         impl ParamStoreRead for $ty {
-            fn get_owned(&self) -> <Self as ParamStore>::Type {
+            type ReadType = $inner;
+            fn get_owned(&self) -> $inner {
                 self.load(Ordering::Acquire)
             }
         }
-        impl ParamStoreReadValue for $ty {
-            fn get_value(&self) -> glib::Value {
-                self.get_owned().to_value()
-            }
-        }
-        impl ParamStoreReadOptional for $ty {
-            type OptionalType = $inner;
-
-            fn get_owned_optional(&self) -> Option<Self::OptionalType> {
-                Some(self.get_owned())
-            }
-        }
         impl<'a> ParamStoreWrite<'a> for $ty {
-            fn set_owned(&'a self, value: <Self as ParamStore>::Type) {
+            type WriteType = $inner;
+            fn set_owned(&'a self, value: Self::WriteType) {
                 self.store(value, Ordering::Release);
             }
         }
         impl<'a> ParamStoreWriteChanged<'a> for $ty {
-            fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool {
+            fn set_owned_checked(&'a self, value: Self::WriteType) -> bool {
                 let old = self.swap(value, Ordering::Release);
                 old != value
             }
@@ -681,29 +399,19 @@ impl<T> ParamStore for std::sync::atomic::AtomicPtr<T> {
     type Type = glib::Pointer;
 }
 impl<T> ParamStoreRead for std::sync::atomic::AtomicPtr<T> {
-    fn get_owned(&self) -> <Self as ParamStore>::Type {
+    type ReadType = glib::Pointer;
+    fn get_owned(&self) -> Self::ReadType {
         self.load(Ordering::Acquire) as glib::Pointer
     }
 }
-impl<T> ParamStoreReadValue for std::sync::atomic::AtomicPtr<T> {
-    fn get_value(&self) -> glib::Value {
-        self.get_owned().to_value()
-    }
-}
-impl<T> ParamStoreReadOptional for std::sync::atomic::AtomicPtr<T> {
-    type OptionalType = glib::Pointer;
-
-    fn get_owned_optional(&self) -> Option<Self::OptionalType> {
-        Some(self.get_owned())
-    }
-}
 impl<'a, T> ParamStoreWrite<'a> for std::sync::atomic::AtomicPtr<T> {
-    fn set_owned(&'a self, value: <Self as ParamStore>::Type) {
+    type WriteType = glib::Pointer;
+    fn set_owned(&'a self, value: Self::WriteType) {
         self.store(value as *mut T, Ordering::Release);
     }
 }
 impl<'a, T> ParamStoreWriteChanged<'a> for std::sync::atomic::AtomicPtr<T> {
-    fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool {
+    fn set_owned_checked(&'a self, value: Self::WriteType) -> bool {
         let value = value as *mut T;
         let old = self.swap(value, Ordering::Release);
         old != value
@@ -725,48 +433,18 @@ where
 impl<T, C, E> ParamStoreRead for glib::WeakRef<T>
 where
     T: ObjectType
-        + for<'a> FromValue<'a, Checker = C>
+        + for<'b> FromValue<'b, Checker = C>
         + ValueTypeOptional
         + glib::StaticType
         + 'static,
     C: ValueTypeChecker<Error = ValueTypeMismatchOrNoneError<E>>,
     E: std::error::Error + Send + Sized + 'static,
 {
-    fn get_owned(&self) -> <Self as ParamStore>::Type {
+    type ReadType = Option<T>;
+    fn get_owned(&self) -> Self::ReadType {
         self.upgrade()
     }
 }
-impl<T, C, E> ParamStoreReadOptional for glib::WeakRef<T>
-where
-    T: ObjectType
-        + for<'a> FromValue<'a, Checker = C>
-        + ValueTypeOptional
-        + glib::StaticType
-        + 'static,
-    C: ValueTypeChecker<Error = ValueTypeMismatchOrNoneError<E>>,
-    E: std::error::Error + Send + Sized + 'static,
-{
-    type OptionalType = T;
-
-    fn get_owned_optional(&self) -> Option<Self::OptionalType> {
-        self.get_owned()
-    }
-}
-impl<T, C, E> ParamStoreReadValue for glib::WeakRef<T>
-where
-    T: ObjectType
-        + for<'a> FromValue<'a, Checker = C>
-        + ValueTypeOptional
-        + glib::StaticType
-        + 'static,
-    C: ValueTypeChecker<Error = ValueTypeMismatchOrNoneError<E>>,
-    E: std::error::Error + Send + Sized + 'static,
-{
-    fn get_value(&self) -> glib::Value {
-        self.upgrade().to_value()
-    }
-}
-
 impl<'a, T, C, E> ParamStoreWrite<'a> for glib::WeakRef<T>
 where
     T: ObjectType
@@ -777,7 +455,8 @@ where
     C: ValueTypeChecker<Error = ValueTypeMismatchOrNoneError<E>>,
     E: std::error::Error + Send + Sized + 'static,
 {
-    fn set_owned(&'a self, value: <Self as ParamStore>::Type) {
+    type WriteType = Option<T>;
+    fn set_owned(&'a self, value: Self::WriteType) {
         self.set(value.as_ref());
     }
 }
@@ -792,7 +471,7 @@ where
     C: ValueTypeChecker<Error = ValueTypeMismatchOrNoneError<E>>,
     E: std::error::Error + Send + Sized + 'static,
 {
-    fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool {
+    fn set_owned_checked(&'a self, value: Self::WriteType) -> bool {
         let old = self.upgrade();
         self.set(value.as_ref());
         old != value
@@ -806,25 +485,8 @@ impl<T> ParamStoreRead for std::marker::PhantomData<T>
 where
     T: ValueType,
 {
-    fn get_owned(&self) -> <Self as ParamStore>::Type {
-        unimplemented!("get() called on abstract property");
-    }
-}
-impl<T> ParamStoreReadValue for std::marker::PhantomData<T>
-where
-    T: ValueType,
-{
-    fn get_value(&self) -> glib::Value {
-        self.get_owned().to_value()
-    }
-}
-impl<T> ParamStoreReadOptional for std::marker::PhantomData<T>
-where
-    T: ValueType,
-{
-    type OptionalType = T;
-
-    fn get_owned_optional(&self) -> Option<Self::OptionalType> {
+    type ReadType = T;
+    fn get_owned(&self) -> Self::ReadType {
         unimplemented!("get() called on abstract property");
     }
 }
@@ -832,7 +494,8 @@ impl<'a, T> ParamStoreWrite<'a> for std::marker::PhantomData<T>
 where
     T: ValueType,
 {
-    fn set_owned(&'a self, _value: <Self as ParamStore>::Type) {
+    type WriteType = T;
+    fn set_owned(&'a self, _value: Self::WriteType) {
         unimplemented!("set() called on abstract property");
     }
 }
@@ -840,7 +503,7 @@ impl<'a, T> ParamStoreWriteChanged<'a> for std::marker::PhantomData<T>
 where
     T: ValueType + PartialEq,
 {
-    fn set_owned_checked(&'a self, value: <Self as ParamStore>::Type) -> bool {
+    fn set_owned_checked(&'a self, value: Self::WriteType) -> bool {
         self.set_owned(value);
         false
     }
@@ -856,30 +519,16 @@ where
 #[cfg(feature = "use_gtk4")]
 impl<T> ParamStoreRead for gtk4::TemplateChild<T>
 where
-    T: glib::ObjectType + glib::translate::FromGlibPtrNone<*mut <T as glib::ObjectType>::GlibType>,
+    T: glib::ObjectType
+        + ValueTypeOptional
+        + glib::translate::FromGlibPtrNone<*mut <T as glib::ObjectType>::GlibType>,
 {
-    fn get_owned(&self) -> <Self as ParamStore>::Type {
+    type ReadType = T;
+    fn get_owned(&self) -> Self::ReadType {
         gtk4::TemplateChild::get(self)
     }
-}
-#[cfg(feature = "use_gtk4")]
-impl<T> ParamStoreReadValue for gtk4::TemplateChild<T>
-where
-    T: glib::ObjectType + glib::translate::FromGlibPtrNone<*mut <T as glib::ObjectType>::GlibType>,
-{
     fn get_value(&self) -> glib::Value {
-        self.get_owned().to_value()
-    }
-}
-#[cfg(feature = "use_gtk4")]
-impl<T> ParamStoreReadOptional for gtk4::TemplateChild<T>
-where
-    T: glib::ObjectType + glib::translate::FromGlibPtrNone<*mut <T as glib::ObjectType>::GlibType>,
-{
-    type OptionalType = T;
-
-    fn get_owned_optional(&self) -> Option<Self::OptionalType> {
-        gtk4::TemplateChild::try_get(self)
+        gtk4::TemplateChild::try_get(self).to_value()
     }
 }
 #[cfg(feature = "use_gtk4")]

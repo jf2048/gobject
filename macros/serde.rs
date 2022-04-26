@@ -141,7 +141,7 @@ pub(crate) fn extend_serde(
                 .cloned()
                 .collect::<Vec<_>>();
             let name = prop.getter_name();
-            let inner_ty = prop.inner_type(&def.crate_path);
+            let inner_ty = prop.store_read_type(&def.crate_path);
             if !attrs.iter().any(|a| has_meta(a, "getter")) {
                 let getter = match &prop.get {
                     PropertyPermission::Allow | PropertyPermission::AllowCustomDefault => {
@@ -303,7 +303,7 @@ pub(crate) fn extend_serde(
                 .iter()
                 .filter(|a| a.path.is_ident("serde"));
             let name = prop.getter_name();
-            let ty = prop.inner_type(&def.crate_path);
+            let ty = prop.store_type(&def.crate_path);
             Some(quote! { #(#attrs)* #name: #ty })
         });
         let reader_struct = quote! {

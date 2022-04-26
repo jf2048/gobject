@@ -761,7 +761,7 @@ impl Property {
         let nick = self.nick.clone().unwrap_or_else(|| name.clone());
         let blurb = self.blurb.clone().unwrap_or_else(|| name.clone());
         let flags = self.flags.tokens(&glib);
-        let ty = self.inner_type(go);
+        let ty = self.store_type(go);
         let props = self
             .buildable_props
             .iter()
@@ -778,9 +778,21 @@ impl Property {
             .build()
         }
     }
-    pub fn inner_type(&self, go: &syn::Path) -> syn::Type {
+    pub fn store_type(&self, go: &syn::Path) -> syn::Type {
         let ty = &self.field.ty;
         parse_quote_spanned! { ty.span() => <#ty as #go::ParamStore>::Type }
+    }
+    pub fn store_read_type(&self, go: &syn::Path) -> syn::Type {
+        let ty = &self.field.ty;
+        parse_quote_spanned! { ty.span() => <#ty as #go::ParamStoreRead>::ReadType }
+    }
+    pub fn store_write_type(&self, go: &syn::Path) -> syn::Type {
+        let ty = &self.field.ty;
+        parse_quote_spanned! { ty.span() => <#ty as #go::ParamStoreWrite<'_>>::WriteType }
+    }
+    pub fn store_borrow_type(&self, go: &syn::Path) -> syn::Type {
+        let ty = &self.field.ty;
+        parse_quote_spanned! { ty.span() => <#ty as #go::ParamStoreBorrow<'_>>::BorrowType }
     }
     fn field_storage(&self, object_type: Option<&syn::Type>, go: &syn::Path) -> TokenStream {
         let self_ident = syn::Ident::new("self", Span::mixed_site());
@@ -911,7 +923,7 @@ impl Property {
                 quote_spanned! { self.span() => #glib::ToValue::to_value(&#call) }
             } else {
                 let field = self.field_storage(None, go);
-                quote_spanned! { self.span() => #go::ParamStoreReadValue::get_value(&#field) }
+                quote_spanned! { self.span() => #go::ParamStoreRead::get_value(&#field) }
             };
             quote_spanned! { self.span() =>
                 if #cmp {
@@ -923,7 +935,7 @@ impl Property {
     fn getter_prototype(&self, go: &syn::Path) -> Option<TokenStream> {
         (!self.is_inherited() && matches!(self.get, PropertyPermission::Allow)).then(|| {
             let method_name = self.getter_name();
-            let ty = self.inner_type(go);
+            let ty = self.store_read_type(go);
             quote_spanned! { Span::mixed_site() => fn #method_name(&self) -> #ty }
         })
     }
@@ -954,13 +966,7 @@ impl Property {
     fn borrow_prototype(&self, go: &syn::Path) -> Option<TokenStream> {
         self.borrow.then(|| {
             let method_name = self.borrow_name();
-            let ty = if self.is_abstract() {
-                let ty = self.inner_type(go);
-                quote! { #ty }
-            } else {
-                let ty = &self.field.ty;
-                quote_spanned! { ty.span() => <#ty as #go::ParamStoreBorrow<'_>>::BorrowType }
-            };
+            let ty = self.store_borrow_type(go);
             quote_spanned! { Span::mixed_site() => fn #method_name(&self) -> #ty }
         })
     }
@@ -1018,7 +1024,7 @@ impl Property {
         (self.set.is_allowed() && !self.is_abstract()).then(|| {
             let glib: syn::Path = parse_quote! { #go::glib };
             let cmp = self.pspec_cmp(index);
-            let ty = self.inner_type(go);
+            let ty = self.store_write_type(go);
             let value_ident = syn::Ident::new("value", Span::mixed_site());
             let body = if let Some(call) = self.custom_call(Some(&ty), method, &glib) {
                 quote! { #call; }
@@ -1036,7 +1042,6 @@ impl Property {
                     }),
                     go
                 );
-                let ty = self.inner_type(go);
                 quote! {
                     let #value_ident = #value_ident.get::<#ty>().unwrap();
                     #body
@@ -1066,7 +1071,7 @@ impl Property {
         };
         (allowed && !construct_only && !self.is_inherited()).then(|| {
             let method_name = self.setter_name();
-            let ty = self.inner_type(go);
+            let ty = self.store_write_type(go);
             quote_spanned! { Span::mixed_site() => fn #method_name(&self, value: #ty) }
         })
     }

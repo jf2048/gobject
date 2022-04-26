@@ -205,7 +205,7 @@ pub(crate) fn extend_variant(
                     #ty_ident
                 }).as_str() }
             } else {
-                let ty = prop.inner_type(go);
+                let ty = prop.store_type(go);
                 quote_spanned! { prop.span() =>
                     <#ty as #glib::StaticVariantType>::static_variant_type().as_str()
                 }
@@ -415,7 +415,7 @@ pub(crate) fn extend_variant(
                 return None;
             }
             let name = prop.name.to_string();
-            let ty = prop.inner_type(go);
+            let ty = prop.store_write_type(go);
             let convert = if let Some(with) = &attrs.with {
                 quote_spanned! { with.span() => #with::from_variant }
             } else if let Some(from_variant) = &attrs.from {
