@@ -49,16 +49,24 @@ mod basic {
         #[property(computed, get, set, explicit_notify)]
         my_computed_prop: PhantomData<i32>,
         #[property(get, set, storage = "inner.my_bool")]
-        my_delegate: Cell<bool>,
+        my_delegate: PhantomData<bool>,
+        #[property(get, set, lax_validation, storage("inner2", "my_int"))]
+        my_delegate_field: PhantomData<i32>,
         #[property(get, set, notify = false, connect_notify = false)]
         my_no_defaults: Cell<u64>,
 
         inner: BasicPropsInner,
+        inner2: RefCell<BasicPropsInner2>,
     }
 
     #[derive(Default)]
     struct BasicPropsInner {
         my_bool: Cell<bool>,
+    }
+
+    #[derive(Default)]
+    struct BasicPropsInner2 {
+        my_int: i32,
     }
 
     impl BasicProps {
@@ -95,8 +103,8 @@ fn basic_properties() {
     use glib::subclass::prelude::ObjectImpl;
 
     let props = glib::Object::new::<BasicProps>(&[]).unwrap();
-    assert_eq!(<basic::BasicProps as ObjectImpl>::properties().len(), 16);
-    assert_eq!(props.list_properties().len(), 16);
+    assert_eq!(<basic::BasicProps as ObjectImpl>::properties().len(), 17);
+    assert_eq!(props.list_properties().len(), 17);
     props.connect_my_i32_notify(|props| props.set_my_str("Updated".into()));
     assert_eq!(props.my_str(), "");
     props.set_my_i32(5);

@@ -1,6 +1,6 @@
 use crate::{
-    OnceCell, ParamSpecBuildable, ParamStore, ParamStoreBorrow, ParamStoreRead, ParamStoreWrite,
-    ParamStoreWriteChanged,
+    OnceCell, ParamSpecBuildable, ParamStore, ParamStoreBorrow, ParamStoreBorrowMut,
+    ParamStoreRead, ParamStoreWrite, ParamStoreWriteChanged,
 };
 use glib::{
     clone::Downgrade,
@@ -63,7 +63,7 @@ where
 }
 impl<'a, T> ParamStoreBorrow<'a> for ConstructCell<T>
 where
-    T: ValueType + 'a,
+    T: 'a,
 {
     type BorrowType = std::cell::Ref<'a, T>;
 
@@ -87,9 +87,21 @@ where
     T: ValueType + PartialEq,
 {
     fn set_owned_checked(&'a self, value: Self::WriteType) -> bool {
-        let mut storage = self.borrow_mut();
+        let mut storage = (**self).borrow_mut();
         let old = std::mem::replace(storage.deref_mut(), Some(value));
         old != *storage
+    }
+}
+impl<'a, T> ParamStoreBorrowMut<'a> for ConstructCell<T>
+where
+    T: 'a,
+{
+    type BorrowMutType = std::cell::RefMut<'a, T>;
+
+    fn borrow_mut(&'a self) -> Self::BorrowMutType {
+        std::cell::RefMut::map((**self).borrow_mut(), |r| {
+            r.as_mut().expect("ConstructCell borrowed before write")
+        })
     }
 }
 
@@ -142,7 +154,7 @@ where
 }
 impl<'a, T> ParamStoreBorrow<'a> for ConstructDefaultCell<T>
 where
-    T: ValueType + 'a,
+    T: 'a,
 {
     type BorrowType = std::cell::Ref<'a, T>;
 
@@ -183,6 +195,16 @@ where
         let mut storage = self.borrow_mut();
         let old = std::mem::replace(storage.deref_mut(), value);
         old != *storage
+    }
+}
+impl<'a, T> ParamStoreBorrowMut<'a> for ConstructDefaultCell<T>
+where
+    T: 'a,
+{
+    type BorrowMutType = std::cell::RefMut<'a, T>;
+
+    fn borrow_mut(&'a self) -> Self::BorrowMutType {
+        (**self).borrow_mut()
     }
 }
 
@@ -237,7 +259,7 @@ where
 }
 impl<'a, T> ParamStoreBorrow<'a> for ConstructOnlyCell<T>
 where
-    T: ValueType + 'a,
+    T: 'a,
 {
     type BorrowType = &'a T;
 
@@ -319,7 +341,7 @@ where
 }
 impl<'a, T> ParamStoreBorrow<'a> for ConstructOnlyDefaultCell<T>
 where
-    T: ValueType + 'a,
+    T: 'a,
 {
     type BorrowType = &'a T;
 

@@ -17,7 +17,7 @@ pub trait ParamStoreRead: ParamStore {
         self.get_owned().to_value()
     }
 }
-pub trait ParamStoreBorrow<'a>: ParamStore {
+pub trait ParamStoreBorrow<'a> {
     type BorrowType;
 
     fn borrow(&'a self) -> Self::BorrowType;
@@ -31,6 +31,11 @@ pub trait ParamStoreWrite<'a>: ParamStore {
 }
 pub trait ParamStoreWriteChanged<'a>: ParamStoreWrite<'a> {
     fn set_owned_checked(&'a self, value: Self::WriteType) -> bool;
+}
+pub trait ParamStoreBorrowMut<'a> {
+    type BorrowMutType;
+
+    fn borrow_mut(&'a self) -> Self::BorrowMutType;
 }
 
 impl<T: ValueType> ParamStore for std::cell::Cell<T> {
@@ -81,7 +86,7 @@ where
 }
 impl<'a, T> ParamStoreBorrow<'a> for std::cell::RefCell<T>
 where
-    T: ValueType + 'a,
+    T: 'a,
 {
     type BorrowType = std::cell::Ref<'a, T>;
 
@@ -108,6 +113,16 @@ where
         old != *storage
     }
 }
+impl<'a, T> ParamStoreBorrowMut<'a> for std::cell::RefCell<T>
+where
+    T: 'a,
+{
+    type BorrowMutType = std::cell::RefMut<'a, T>;
+
+    fn borrow_mut(&'a self) -> Self::BorrowMutType {
+        std::cell::RefCell::borrow_mut(self)
+    }
+}
 
 impl<T: ValueType> ParamStore for std::sync::Mutex<T> {
     type Type = T;
@@ -126,7 +141,7 @@ where
 }
 impl<'a, T> ParamStoreBorrow<'a> for std::sync::Mutex<T>
 where
-    T: ValueType + 'a,
+    T: 'a,
 {
     type BorrowType = std::sync::MutexGuard<'a, T>;
 
@@ -153,6 +168,16 @@ where
         old != *storage
     }
 }
+impl<'a, T> ParamStoreBorrowMut<'a> for std::sync::Mutex<T>
+where
+    T: 'a,
+{
+    type BorrowMutType = std::sync::MutexGuard<'a, T>;
+
+    fn borrow_mut(&'a self) -> Self::BorrowMutType {
+        self.lock().unwrap()
+    }
+}
 
 impl<T: ValueType> ParamStore for std::sync::RwLock<T> {
     type Type = T;
@@ -171,7 +196,7 @@ where
 }
 impl<'a, T> ParamStoreBorrow<'a> for std::sync::RwLock<T>
 where
-    T: ValueType + 'a,
+    T: 'a,
 {
     type BorrowType = std::sync::RwLockReadGuard<'a, T>;
 
@@ -198,6 +223,16 @@ where
         old != *storage
     }
 }
+impl<'a, T> ParamStoreBorrowMut<'a> for std::sync::RwLock<T>
+where
+    T: 'a,
+{
+    type BorrowMutType = std::sync::RwLockWriteGuard<'a, T>;
+
+    fn borrow_mut(&'a self) -> Self::BorrowMutType {
+        self.write().unwrap()
+    }
+}
 
 impl<T: ValueType> ParamStore for OnceCell<T> {
     type Type = T;
@@ -216,7 +251,7 @@ where
 }
 impl<'a, T> ParamStoreBorrow<'a> for OnceCell<T>
 where
-    T: ValueType + 'a,
+    T: 'a,
 {
     type BorrowType = &'a T;
 
@@ -262,7 +297,7 @@ where
 }
 impl<'a, T> ParamStoreBorrow<'a> for SyncOnceCell<T>
 where
-    T: ValueType + 'a,
+    T: 'a,
 {
     type BorrowType = &'a T;
 
@@ -308,7 +343,7 @@ where
 }
 impl<'a, T> ParamStoreBorrow<'a> for OnceBox<T>
 where
-    T: ValueType + 'a,
+    T: 'a,
 {
     type BorrowType = &'a T;
 

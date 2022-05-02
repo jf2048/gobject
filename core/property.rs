@@ -141,7 +141,10 @@ impl PropertyAttrs {
         } else if self.abstract_.is_some() {
             PropertyStorage::Abstract
         } else if let Some(storage) = &self.storage {
-            PropertyStorage::Delegate(Box::new(storage.0.clone()))
+            PropertyStorage::Delegate {
+                storage: Box::new(storage.storage.clone()),
+                field: storage.field.clone().map(Box::new),
+            }
         } else if let Some(ident) = &self.ident {
             PropertyStorage::NamedField(ident.clone())
         } else {
@@ -268,7 +271,7 @@ impl PropertyAttrs {
             "override_iface",
             self.override_iface.as_ref().map(|o| o.span()),
         );
-        let storage = ("storage", self.storage.as_ref().map(|s| s.0.span()));
+        let storage = ("storage", self.storage.as_ref().map(|s| s.storage.span()));
         let abstract_ = ("abstract", check_flag(&self.abstract_));
         let computed = ("computed", check_flag(&self.computed));
         let write_only = (
@@ -376,12 +379,41 @@ impl PropertyAttrs {
 }
 
 #[derive(Debug)]
-struct PropertyStorageAttr(syn::Expr);
+struct PropertyStorageAttr {
+    storage: syn::Expr,
+    field: Option<syn::Expr>,
+}
 
 impl FromMeta for PropertyStorageAttr {
+    fn from_list(items: &[syn::NestedMeta]) -> darling::Result<Self> {
+        use darling::Error;
+
+        if items.is_empty() {
+            return Err(Error::unsupported_format("empty list"));
+        }
+        if items.len() > 2 {
+            return Err(Error::unsupported_format("list with length > 2"));
+        }
+        let storage = match items.get(0) {
+            Some(syn::NestedMeta::Lit(syn::Lit::Str(lit))) => lit.parse()?,
+            Some(syn::NestedMeta::Lit(lit)) => return Err(Error::unexpected_lit_type(lit)),
+            Some(syn::NestedMeta::Meta(_)) => return Err(Error::unsupported_format("nested meta")),
+            _ => return Err(Error::unsupported_format("nested meta")),
+        };
+        let field = match items.get(1) {
+            Some(syn::NestedMeta::Lit(syn::Lit::Str(lit))) => Some(lit.parse()?),
+            Some(syn::NestedMeta::Lit(lit)) => return Err(Error::unexpected_lit_type(lit)),
+            Some(syn::NestedMeta::Meta(_)) => return Err(Error::unsupported_format("nested meta")),
+            None => None,
+        };
+        Ok(Self { storage, field })
+    }
     fn from_value(lit: &syn::Lit) -> darling::Result<Self> {
         match lit {
-            syn::Lit::Str(lit) => Ok(Self(lit.parse()?)),
+            syn::Lit::Str(lit) => Ok(Self {
+                storage: lit.parse()?,
+                field: None,
+            }),
             _ => Err(darling::Error::unexpected_lit_type(lit)),
         }
     }
@@ -529,7 +561,10 @@ pub enum PropertyStorage {
     InterfaceAbstract,
     Abstract,
     Computed,
-    Delegate(Box<syn::Expr>),
+    Delegate {
+        storage: Box<syn::Expr>,
+        field: Option<Box<syn::Expr>>,
+    },
 }
 
 impl PropertyStorage {
@@ -794,7 +829,11 @@ impl Property {
         let ty = &self.field.ty;
         parse_quote_spanned! { ty.span() => <#ty as #go::ParamStoreBorrow<'_>>::BorrowType }
     }
-    fn field_storage(&self, object_type: Option<&syn::Type>, go: &syn::Path) -> TokenStream {
+    fn field_storage(
+        &self,
+        object_type: Option<&syn::Type>,
+        go: &syn::Path,
+    ) -> (TokenStream, Option<&syn::Expr>) {
         let self_ident = syn::Ident::new("self", Span::mixed_site());
         let recv = if let Some(object_type) = object_type {
             quote_spanned! { self.span() =>
@@ -805,14 +844,27 @@ impl Property {
         } else {
             quote_spanned! { self.span() => #self_ident }
         };
-        match &self.storage {
+        let storage = match &self.storage {
             PropertyStorage::NamedField(field) => quote_spanned! { field.span() => #recv.#field },
             PropertyStorage::UnnamedField(index) => quote_spanned! { self.span() => #recv.#index },
-            PropertyStorage::Delegate(delegate) => {
-                quote_spanned! { delegate.span() => #recv.#delegate }
+            PropertyStorage::Delegate {
+                storage,
+                field: None,
+            } => {
+                quote_spanned! { storage.span() => #recv.#storage }
+            }
+            PropertyStorage::Delegate {
+                storage,
+                field: Some(field),
+            } => {
+                return (
+                    quote_spanned! { storage.span() => #recv.#storage },
+                    Some(field.as_ref()),
+                );
             }
             _ => unreachable!("cannot get storage for interface/computed property"),
-        }
+        };
+        (storage, None)
     }
     fn is_inherited(&self) -> bool {
         self.override_.is_some()
@@ -922,8 +974,16 @@ impl Property {
             let body = if let Some(call) = self.custom_call(None, method, &glib) {
                 quote_spanned! { self.span() => #glib::ToValue::to_value(&#call) }
             } else {
-                let field = self.field_storage(None, go);
-                quote_spanned! { self.span() => #go::ParamStoreRead::get_value(&#field) }
+                let (storage, field) = self.field_storage(None, go);
+                if let Some(field) = field {
+                    quote_spanned! { self.span() =>
+                        #glib::ToValue::to_value(
+                            &#go::ParamStoreBorrow::borrow(&#storage).#field
+                        )
+                    }
+                } else {
+                    quote_spanned! { self.span() => #go::ParamStoreRead::get_value(&#storage) }
+                }
             };
             quote_spanned! { self.span() =>
                 if #cmp {
@@ -948,8 +1008,16 @@ impl Property {
                     <Self as #go::glib::object::ObjectExt>::property(#self_ident, #name)
                 }
             } else {
-                let field = self.field_storage(Some(object_type), go);
-                quote_spanned! { self.span() => #go::ParamStoreRead::get_owned(&#field) }
+                let (storage, field) = self.field_storage(Some(object_type), go);
+                if let Some(field) = field {
+                    quote_spanned! { self.span() =>
+                        ::std::clone::Clone::clone(
+                            &#go::ParamStoreBorrow::borrow(&#storage).#field
+                        )
+                    }
+                } else {
+                    quote_spanned! { self.span() => #go::ParamStoreRead::get_owned(&#storage) }
+                }
             };
             quote_spanned! { self.span() =>
                 #proto {
@@ -972,10 +1040,23 @@ impl Property {
     }
     fn borrow_definition(&self, object_type: &syn::Type, go: &syn::Path) -> Option<TokenStream> {
         self.borrow_prototype(go).map(|proto| {
-            let field = self.field_storage(Some(object_type), go);
+            let (storage, field) = self.field_storage(Some(object_type), go);
+            let body = if let Some(field) = field {
+                let field_ident = syn::Ident::new("f", Span::mixed_site());
+                quote_spanned! { self.span() =>
+                    #go::ParamStoreBorrow::BorrowType::map(
+                        #go::ParamStoreBorrow::borrow(&#storage),
+                        |#field_ident| &#field_ident.#field,
+                    )
+                }
+            } else {
+                quote_spanned! { self.span() =>
+                    #go::ParamStoreBorrow::borrow(&#storage)
+                }
+            };
             quote_spanned! { self.span() =>
                 #proto {
-                    #go::ParamStoreBorrow::borrow(&#field)
+                    #body
                 }
             }
         })
@@ -999,20 +1080,41 @@ impl Property {
         N: FnOnce() -> TokenStream,
     {
         let value_ident = syn::Ident::new("value", Span::mixed_site());
-        let field = self.field_storage(object_type, go);
+        let (storage, field) = self.field_storage(object_type, go);
         let construct_only = self.flags.contains(PropertyFlags::CONSTRUCT_ONLY);
         if self.get.is_allowed() && !construct_only {
             if let Some(notify) = notify {
                 let notify = notify();
-                return quote! {
-                    if #go::ParamStoreWriteChanged::set_owned_checked(&#field, #value_ident) {
-                        #notify
+                return if let Some(field) = field {
+                    let ref_mut_ident = syn::Ident::new("ref_mut", Span::mixed_site());
+                    let old_ident = syn::Ident::new("old", Span::mixed_site());
+                    quote_spanned! { self.span() =>
+                        {
+                            let mut #ref_mut_ident = #go::ParamStoreBorrowMut::borrow_mut(&#storage);
+                            let #old_ident = ::std::mem::replace(&mut #ref_mut_ident.#field, #value_ident);
+                            if &#old_ident != &#ref_mut_ident.#field {
+                                ::std::mem::drop(#ref_mut_ident);
+                                #notify
+                            }
+                        }
+                    }
+                } else {
+                    quote_spanned! { self.span() =>
+                        if #go::ParamStoreWriteChanged::set_owned_checked(&#storage, #value_ident) {
+                            #notify
+                        }
                     }
                 };
             }
         }
-        quote! {
-            #go::ParamStoreWrite::set_owned(&#field, #value_ident);
+        if let Some(field) = field {
+            quote_spanned! { self.span() =>
+                #go::ParamStoreBorrowMut::borrow_mut(&#storage).#field = #value_ident;
+            }
+        } else {
+            quote_spanned! { self.span() =>
+                #go::ParamStoreWrite::set_owned(&#storage, #value_ident);
+            }
         }
     }
     pub(crate) fn set_impl(
@@ -1047,9 +1149,15 @@ impl Property {
                     #body
                 }
             } else {
-                let field = self.field_storage(None, go);
-                quote! {
-                    #go::ParamStoreWrite::set_value(&#field, &#value_ident);
+                let (storage, field) = self.field_storage(None, go);
+                if let Some(field) = field {
+                    quote_spanned! { self.span() =>
+                        #go::ParamStoreBorrowMut::borrow_mut(&#storage).#field = #value_ident.get().unwrap();
+                    }
+                } else {
+                    quote_spanned! { self.span() =>
+                        #go::ParamStoreWrite::set_value(&#storage, &#value_ident);
+                    }
                 }
             };
             quote_spanned! { self.span() =>
