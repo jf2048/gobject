@@ -32,7 +32,7 @@ mod my_widget {
     "#)]
     pub struct MyWidget {
         #[property(get, set)]
-        #[action]
+        #[widget_action]
         my_string: std::cell::RefCell<String>,
         #[template_child]
         label: gtk4::TemplateChild<gtk4::Label>,
@@ -41,13 +41,14 @@ mod my_widget {
         label2: gtk4::TemplateChild<gtk4::Label>,
         #[template_child]
         button: gtk4::TemplateChild<gtk4::Button>,
-        #[action_group]
-        pad: gobject::WeakCell<gtk4::gio::SimpleActionGroup>,
     }
     impl MyWidget {
         fn constructed(&self, obj: &super::MyWidget) {
             self.parent_constructed(obj);
-            let pad = gtk4::PadController::new(&self.pad.upgrade().unwrap(), None);
+            let pad_group = gio::SimpleActionGroup::new();
+            obj.register_pad_actions(&pad_group);
+            obj.insert_action_group("pad", Some(&pad_group));
+            let pad = gtk4::PadController::new(&pad_group, None);
             pad.set_action(
                 gtk4::PadActionType::Button,
                 0,
@@ -80,11 +81,11 @@ mod my_widget {
             }
         }
     }
-    #[widget_actions(group = "pad")]
-    impl MyWidget {
-        #[widget_action]
+    #[gobject::group_actions(register = "register_pad_actions")]
+    impl super::MyWidget {
+        #[group_action]
         fn pad_button(&self) {
-            self.label.set_label("Pad button");
+            self.imp().label.set_label("Pad button");
         }
     }
     impl super::MyWidget {
@@ -107,6 +108,13 @@ fn widget() {
     assert_eq!(widget.my_string(), "hello");
     assert_eq!(widget.click_and_get_button_label().unwrap(), "Clicked");
 
+    widget.action_set_enabled("my-widget.my-string", false);
+    widget
+        .activate_action("my-widget.my-string", Some(&"world".to_variant()))
+        .unwrap();
+    assert_eq!(widget.my_string(), "hello");
+
+    widget.action_set_enabled("my-widget.my-string", true);
     widget
         .activate_action("my-widget.my-string", Some(&"world".to_variant()))
         .unwrap();
@@ -120,4 +128,31 @@ fn widget() {
     assert_eq!(widget.label(), "Pad button");
     widget.static_action();
     assert!(MY_FLAG.load(std::sync::atomic::Ordering::Acquire));
+}
+
+#[gobject::gtk4_widget(final)]
+mod action_widget {
+    #[derive(Default)]
+    pub struct ActionWidget {}
+    impl ActionWidget {
+        #[widget_action]
+        #[public]
+        fn action1() {}
+        #[widget_action(group = "stuff", name = "renamed-action2")]
+        #[public]
+        fn action2(&self) {}
+        #[widget_action(disabled)]
+        #[public]
+        fn action3(_param: i32) {}
+        #[widget_action]
+        #[public]
+        fn action4(&self, _param: i32) {}
+        #[widget_action]
+        #[public]
+        async fn action5(&self, _param: i32) {}
+        #[widget_action(type_str = "i")]
+        #[public]
+        fn action6(&self, _param: &glib::Variant) {}
+    }
+    impl gtk4::subclass::prelude::WidgetImpl for ActionWidget {}
 }

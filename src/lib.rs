@@ -130,7 +130,7 @@ pub use gtk4::gio;
 pub use serde;
 
 #[cfg(feature = "use_gio")]
-pub use gobject_macros::actions;
+pub use gobject_macros::group_actions;
 #[cfg(feature = "use_gtk4")]
 pub use gobject_macros::gtk4_widget;
 #[cfg(feature = "use_serde")]

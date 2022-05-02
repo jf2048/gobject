@@ -842,7 +842,7 @@ pub struct GroupContainer {
     log: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
 }
 
-#[gobject::actions]
+#[gobject::group_actions]
 impl GroupContainer {
     fn log(&self, msg: &str) {
         self.log.borrow_mut().push(msg.to_owned());
@@ -850,7 +850,7 @@ impl GroupContainer {
     fn take_log(&self) -> Vec<String> {
         self.log.take()
     }
-    #[action(with = "gobject::variant::glib::uri")]
+    #[group_action(with = "gobject::variant::glib::uri")]
     fn my_action(&self, uri: glib::Uri) {
         self.log(&format!("action {}", uri));
     }

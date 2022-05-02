@@ -43,7 +43,7 @@ pub(crate) fn extend_actions(def: &mut gobject_core::ClassDefinition, errors: &E
     );
 }
 
-pub fn impl_actions(
+pub(crate) fn impl_group_actions(
     mut impl_: syn::ItemImpl,
     attrs: TokenStream,
     go: &syn::Path,
@@ -61,7 +61,7 @@ pub fn impl_actions(
         &mut impl_.items,
         &mut actions,
         TypeMode::Wrapper,
-        "action",
+        "group_action",
         errors,
     );
     validate_actions(&actions, errors);
@@ -89,7 +89,7 @@ pub fn impl_actions(
     }
 }
 
-pub(crate) fn validate_actions(actions: &[Action], errors: &Errors) {
+fn validate_actions(actions: &[Action], errors: &Errors) {
     let go = parse_quote! { gobject };
     for action in actions {
         if let Some(change_state) = action.change_state.as_ref() {
@@ -104,7 +104,7 @@ pub(crate) fn validate_actions(actions: &[Action], errors: &Errors) {
 }
 
 #[derive(Default, FromAttributes)]
-#[darling(default, attributes(action, widget_action))]
+#[darling(default, attributes(action, group_action))]
 struct ActionAttrs {
     name: Option<syn::LitStr>,
     parameter_type: Option<SpannedValue<ParameterType>>,
@@ -171,19 +171,19 @@ impl ActionAttrs {
 }
 
 #[derive(Eq, PartialEq, Ord, PartialOrd, Copy, Clone)]
-pub(crate) enum HandlerType {
+enum HandlerType {
     Activate,
     ChangeState,
 }
 
-pub(crate) struct ActionHandler {
-    pub span: Span,
-    pub sig: syn::Signature,
-    pub mode: TypeMode,
-    pub ty: HandlerType,
-    pub parameter_index: Option<(usize, Span)>,
-    pub state_index: Option<(usize, Span)>,
-    pub action_index: Option<(usize, Span)>,
+struct ActionHandler {
+    span: Span,
+    sig: syn::Signature,
+    mode: TypeMode,
+    ty: HandlerType,
+    parameter_index: Option<(usize, Span)>,
+    state_index: Option<(usize, Span)>,
+    action_index: Option<(usize, Span)>,
 }
 
 impl ActionHandler {
@@ -298,7 +298,7 @@ impl ActionHandler {
             _ => None,
         }
     }
-    pub(crate) fn parameter_from<'a>(
+    fn parameter_from<'a>(
         &'a self,
         action: &'a Action,
         glib: &syn::Path,
@@ -324,7 +324,7 @@ impl ActionHandler {
             }),
         }
     }
-    pub(crate) fn parameter_to<'a>(
+    fn parameter_to<'a>(
         &'a self,
         action: &'a Action,
         glib: &syn::Path,
@@ -760,13 +760,17 @@ impl Default for ParameterType {
 }
 
 impl ParameterType {
-    fn needs_convert(&self) -> bool {
+    pub(crate) fn needs_convert(&self) -> bool {
         matches!(self, Self::Inferred | Self::Path(_))
     }
-    fn type_expr(&self, action: &Action, glib: &syn::Path) -> Option<syn::Expr> {
+    pub(crate) fn type_expr(
+        &self,
+        param_type: Option<&syn::Type>,
+        glib: &syn::Path,
+    ) -> Option<syn::Expr> {
         match self {
             Self::Empty => None,
-            Self::Inferred => action.parameter_convert_type().map(|ty| {
+            Self::Inferred => param_type.map(|ty| {
                 parse_quote_spanned! { ty.span() =>
                     &*<#ty as #glib::StaticVariantType>::static_variant_type()
                 }
@@ -803,23 +807,23 @@ impl darling::FromMeta for ParameterType {
     }
 }
 
-pub(crate) struct Action {
-    pub name: String,
-    pub parameter_type: ParameterType,
-    pub state_variant: bool,
-    pub activate: Option<ActionHandler>,
-    pub change_state: Option<ActionHandler>,
-    pub default_state: Option<syn::Expr>,
-    pub default_hint: Option<syn::Expr>,
-    pub disabled: bool,
-    pub state_to: Option<syn::Path>,
-    pub state_from: Option<syn::Path>,
-    pub parameter_to: Option<syn::Path>,
-    pub parameter_from: Option<syn::Path>,
+struct Action {
+    name: String,
+    parameter_type: ParameterType,
+    state_variant: bool,
+    activate: Option<ActionHandler>,
+    change_state: Option<ActionHandler>,
+    default_state: Option<syn::Expr>,
+    default_hint: Option<syn::Expr>,
+    disabled: bool,
+    state_to: Option<syn::Path>,
+    state_from: Option<syn::Path>,
+    parameter_to: Option<syn::Path>,
+    parameter_from: Option<syn::Path>,
 }
 
 impl Action {
-    pub(crate) fn many_from_items(
+    fn many_from_items(
         items: &mut [syn::ImplItem],
         actions: &mut Vec<Self>,
         mode: TypeMode,
@@ -1063,7 +1067,7 @@ impl Action {
             .and_then(|h| h.state_type(go))
             .or_else(|| self.change_state.as_ref().and_then(|h| h.state_type(go)))
     }
-    pub(crate) fn state_from(&self, glib: &syn::Path) -> Option<Cow<syn::Path>> {
+    fn state_from(&self, glib: &syn::Path) -> Option<Cow<syn::Path>> {
         (!self.state_variant).then(|| {
             if let Some(from) = &self.state_from {
                 Cow::Borrowed(from)
@@ -1072,7 +1076,7 @@ impl Action {
             }
         })
     }
-    pub(crate) fn state_to(&self, glib: &syn::Path) -> Option<Cow<syn::Path>> {
+    fn state_to(&self, glib: &syn::Path) -> Option<Cow<syn::Path>> {
         (!self.state_variant).then(|| {
             if let Some(to) = &self.state_to {
                 Cow::Borrowed(to)
@@ -1081,7 +1085,7 @@ impl Action {
             }
         })
     }
-    pub(crate) fn override_public_methods(
+    fn override_public_methods(
         &self,
         bind_expr: Option<&syn::Expr>,
         def: &mut gobject_core::ClassDefinition,
@@ -1095,7 +1099,7 @@ impl Action {
         self.override_public_method(Activate, &sub_ty, &wrapper_ty, bind_expr, def, errors);
         self.override_public_method(ChangeState, &sub_ty, &wrapper_ty, bind_expr, def, errors);
     }
-    pub(crate) fn prepare_public_method(
+    fn prepare_public_method(
         &self,
         handler: &ActionHandler,
         public_method: &mut PublicMethod,
@@ -1115,7 +1119,6 @@ impl Action {
                 "action using #[public] on wrapper type for final class must be renamed with #[public(name = \"...\")]",
             );
         }
-        public_method.mode = TypeMode::Wrapper;
         public_method.sig.output = syn::ReturnType::Default;
         public_method.sig.inputs = handler
             .sig
@@ -1194,7 +1197,7 @@ impl Action {
         ));
         Some(())
     }
-    pub(crate) fn to_token_stream(
+    fn to_token_stream(
         &self,
         this_ident: &syn::Ident,
         is_object: bool,
@@ -1204,7 +1207,9 @@ impl Action {
         let gio: syn::Path = parse_quote! { #go::gio };
         let action_ident = syn::Ident::new("action", Span::mixed_site());
         let name = &self.name;
-        let parameter_type = self.parameter_type.type_expr(self, &glib);
+        let parameter_type = self
+            .parameter_type
+            .type_expr(self.parameter_convert_type(), &glib);
         let type_option = parameter_type
             .as_ref()
             .map(|ty| quote! { ::std::option::Option::Some(#ty) })

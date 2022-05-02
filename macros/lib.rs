@@ -140,12 +140,12 @@ pub fn serde_cast(input: TokenStream) -> TokenStream {
 
 #[cfg(any(feature = "gtk4", feature = "gio"))]
 #[proc_macro_attribute]
-pub fn actions(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn group_actions(attr: TokenStream, item: TokenStream) -> TokenStream {
     let errors = Errors::new();
     let tokens = util::parse::<syn::ItemImpl>(item.into(), &errors)
         .map(|impl_| {
             let go = crate_path();
-            actions::impl_actions(impl_, attr.into(), &go, &errors)
+            actions::impl_group_actions(impl_, attr.into(), &go, &errors)
         })
         .unwrap_or_default();
     append_errors(tokens, errors)
