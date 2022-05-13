@@ -246,8 +246,8 @@ mod public_methods {
         }
         #[constructor(infallible)]
         fn new(number: u64, string: &str) -> Self {}
-        #[constructor(infallible)]
-        pub fn default() -> Self {
+        #[constructor(infallible, default)]
+        fn default() -> Self {
             Self::new(100, "100")
         }
         #[public]
@@ -295,8 +295,8 @@ mod public_methods_final {
         }
         #[constructor(infallible)]
         fn new(number: u64, string: &str) -> Self {}
-        #[constructor(infallible)]
-        pub fn default() -> Self {
+        #[constructor(infallible, default)]
+        fn default() -> Self {
             Self::new(100, "100")
         }
     }

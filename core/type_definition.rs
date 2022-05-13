@@ -716,6 +716,18 @@ impl TypeDefinition {
             .iter()
             .filter_map(|m| m.generated_definition(TypeMode::Wrapper, &ty, &glib))
             .peekable();
+        let default_impls = self.public_methods.iter().filter_map(|m| {
+            let def = m.default_impl(&ty, &sub_ty)?;
+            let head = self.trait_head(
+                &parse_quote! { super::#name },
+                quote! { ::std::default::Default },
+            );
+            Some(quote_spanned! { m.sig.span() =>
+                #head {
+                    #def
+                }
+            })
+        });
         let has_wrapper_statics = statics.peek().is_some() || wrapper_statics.peek().is_some();
         let has_subclass_statics = subclass_statics.peek().is_some();
         let async_trait = match self.concurrency {
@@ -760,6 +772,7 @@ impl TypeDefinition {
                 #items
                 #wrapper_statics
                 #subclass_statics
+                #(#default_impls)*
             })
         } else {
             Some(quote! {
@@ -771,6 +784,7 @@ impl TypeDefinition {
                 impl #impl_generics #name #type_generics #where_clause {
                     #(#subclass_statics)*
                 }
+                #(#default_impls)*
             })
         }
     }

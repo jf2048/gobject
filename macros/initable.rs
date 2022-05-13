@@ -229,6 +229,7 @@ fn extend_async_initable(def: &mut gobject_core::ClassDefinition, errors: &Error
                 pm.sig.ident = quote::format_ident!("{}_future", pm.sig.ident);
                 // don't generate another auto constructor
                 pm.constructor = Some(ConstructorType::Custom {
+                    default: constructor.is_default(),
                     fallible: constructor.fallible(),
                 });
                 if init_arg_count > 2 {

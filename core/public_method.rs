@@ -26,14 +26,22 @@ pub enum ConstructorType {
         vis: syn::Visibility,
         sig: Box<syn::Signature>,
         renames: HashMap<usize, String>,
+        default: bool,
         fallible: bool,
     },
     Custom {
+        default: bool,
         fallible: bool,
     },
 }
 
 impl ConstructorType {
+    pub fn is_default(&self) -> bool {
+        match self {
+            Self::Auto { default, .. } => *default,
+            Self::Custom { default, .. } => *default,
+        }
+    }
     pub fn fallible(&self) -> bool {
         match self {
             Self::Auto { fallible, .. } => *fallible,
@@ -52,6 +60,7 @@ struct PublicMethodAttrs {
 #[darling(default, attributes(constructor))]
 struct ConstructorAttrs {
     name: Option<syn::Ident>,
+    default: Flag,
     infallible: Flag,
 }
 
@@ -99,6 +108,7 @@ impl PublicMethod {
             if let Some(attrs) = util::extract_attrs(&mut method.attrs, "constructor") {
                 let attrs = util::parse_attributes::<ConstructorAttrs>(&attrs, errors);
                 name = attrs.name;
+                let default = attrs.default.is_some();
                 let fallible = attrs.infallible.is_none();
                 if let Some(recv) = method.sig.receiver() {
                     errors.push_spanned(recv, "`self` not allowed on constructor");
@@ -137,10 +147,11 @@ impl PublicMethod {
                         vis: method.vis.clone(),
                         sig: Box::new(sig),
                         renames,
+                        default,
                         fallible,
                     });
                 } else {
-                    constructor = Some(ConstructorType::Custom { fallible });
+                    constructor = Some(ConstructorType::Custom { default, fallible });
                 }
             }
         }
@@ -210,6 +221,30 @@ impl PublicMethod {
         self.generic_args.substitute(&mut sig, glib);
         Some(quote! { #sig })
     }
+    pub(crate) fn default_impl(
+        &self,
+        wrapper_ty: &syn::Type,
+        sub_ty: &syn::Type,
+    ) -> Option<TokenStream> {
+        let constructor = self.constructor.as_ref()?;
+        if !constructor.is_default() {
+            return None;
+        }
+        let ident = &self.sig.ident;
+        let unwrap = constructor.fallible().then(|| quote! { .unwrap() });
+        let args = self.sig.inputs.iter().map(|arg| {
+            quote_spanned! { arg.span() => ::std::default::Default::default() }
+        });
+        let dest = match self.mode {
+            TypeMode::Subclass => sub_ty,
+            TypeMode::Wrapper => wrapper_ty,
+        };
+        Some(quote_spanned! { self.sig.span() =>
+            fn default() -> Self {
+                #dest::#ident(#(#args),*) #unwrap
+            }
+        })
+    }
     pub(crate) fn generated_definition(
         &self,
         mode: TypeMode,
@@ -224,6 +259,7 @@ impl PublicMethod {
             sig: orig_sig,
             renames,
             fallible,
+            ..
         }) = self.constructor.as_ref()
         {
             let mut sig = util::external_sig(orig_sig);
