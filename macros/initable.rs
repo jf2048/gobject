@@ -227,6 +227,10 @@ fn extend_async_initable(def: &mut gobject_core::ClassDefinition, errors: &Error
             let pm = if let Some(init_arg_count) = init_arg_count {
                 let mut pm = pm.clone();
                 pm.sig.ident = quote::format_ident!("{}_future", pm.sig.ident);
+                // don't generate another auto constructor
+                pm.constructor = Some(ConstructorType::Custom {
+                    fallible: constructor.fallible(),
+                });
                 if init_arg_count > 2 {
                     // remove the cancellable argument
                     pm.sig.inputs.pop();
