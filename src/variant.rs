@@ -36,6 +36,8 @@ pub mod gio;
 pub mod glib;
 #[cfg(feature = "use_graphene")]
 pub mod graphene;
+#[cfg(feature = "use_gsk4")]
+pub mod gsk4;
 #[cfg(feature = "use_gtk4")]
 pub mod gtk4;
 
