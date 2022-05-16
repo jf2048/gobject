@@ -1,4 +1,4 @@
-use super::{VariantBuilder, VariantBuilderExt};
+use super::VariantBuilder;
 use glib::{ToVariant, Variant, VariantTy};
 use std::borrow::Cow;
 
@@ -53,7 +53,7 @@ pub mod region {
         Cow::Borrowed(unsafe { VariantTy::from_str_unchecked("a(iiii)") })
     }
     pub fn to_variant(r: &cairo::Region) -> Variant {
-        let builder = VariantBuilder::new(&static_variant_type());
+        let mut builder = VariantBuilder::new(&static_variant_type());
         let count = r.num_rectangles();
         let count = count.max(0);
         for i in 0..count {
@@ -80,7 +80,7 @@ pub mod path {
         Cow::Borrowed(unsafe { VariantTy::from_str_unchecked("a(sv)") })
     }
     pub fn to_variant(p: &cairo::Path) -> Variant {
-        let builder = VariantBuilder::new(&static_variant_type());
+        let mut builder = VariantBuilder::new(&static_variant_type());
         for seg in p.iter() {
             let r = super::path_segment::to_variant(&seg);
             unsafe {
@@ -277,7 +277,7 @@ pub mod linear_gradient {
         })
     }
     pub fn to_variant(g: &cairo::LinearGradient) -> Variant {
-        let builder = VariantBuilder::new(&static_variant_type());
+        let mut builder = VariantBuilder::new(&static_variant_type());
         unsafe {
             builder.add(&(cairo::ffi::cairo_extend_t::from(g.extend()) as i32));
             builder.add(&(cairo::ffi::cairo_filter_t::from(g.filter()) as i32));
@@ -285,7 +285,7 @@ pub mod linear_gradient {
             let (x0, y0, x1, y1) = g.linear_points().unwrap_or_default();
             builder.add(&(x0, y0));
             builder.add(&(x1, y1));
-            let stops = builder.open(VariantTy::from_str_unchecked("a(d(dddd))"));
+            let mut stops = builder.open(VariantTy::from_str_unchecked("a(d(dddd))"));
             let count = g.color_stop_count().unwrap_or_default();
             let count = count.max(0);
             for i in 0..count {
@@ -333,7 +333,7 @@ pub mod radial_gradient {
         })
     }
     pub fn to_variant(g: &cairo::RadialGradient) -> Variant {
-        let builder = VariantBuilder::new(&static_variant_type());
+        let mut builder = VariantBuilder::new(&static_variant_type());
         unsafe {
             builder.add(&(cairo::ffi::cairo_extend_t::from(g.extend()) as i32));
             builder.add(&(cairo::ffi::cairo_filter_t::from(g.filter()) as i32));
@@ -341,7 +341,7 @@ pub mod radial_gradient {
             let (x0, y0, r0, x1, y1, r1) = g.radial_circles().unwrap_or_default();
             builder.add(&((x0, y0), r0));
             builder.add(&((x1, y1), r1));
-            let stops = builder.open(VariantTy::from_str_unchecked("a(d(dddd))"));
+            let mut stops = builder.open(VariantTy::from_str_unchecked("a(d(dddd))"));
             let count = g.color_stop_count().unwrap_or_default();
             let count = count.max(0);
             for i in 0..count {
@@ -391,17 +391,17 @@ pub mod mesh {
         })
     }
     pub fn to_variant(m: &cairo::Mesh) -> Variant {
-        let builder = VariantBuilder::new(&static_variant_type());
+        let mut builder = VariantBuilder::new(&static_variant_type());
         unsafe {
             builder.add(&(cairo::ffi::cairo_extend_t::from(m.extend()) as i32));
             builder.add(&(cairo::ffi::cairo_filter_t::from(m.filter()) as i32));
             builder.add_value(&super::matrix::to_variant(&m.matrix()));
-            let patches = builder.open(VariantTy::from_str_unchecked(
+            let mut patches = builder.open(VariantTy::from_str_unchecked(
                 "a(((dd)(dddd))((dd)(dddd))((dd)(dddd))((dd)(dddd))a(sv))",
             ));
             let count = m.patch_count().unwrap_or_default();
             for i in 0..count {
-                let patch = patches.open(VariantTy::from_str_unchecked(
+                let mut patch = patches.open(VariantTy::from_str_unchecked(
                     "(((dd)(dddd))((dd)(dddd))((dd)(dddd))((dd)(dddd))a(sv))",
                 ));
                 for corner in 0..4 {

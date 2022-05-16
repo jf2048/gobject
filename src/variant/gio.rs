@@ -1,4 +1,4 @@
-use super::{VariantBuilder, VariantBuilderExt};
+use super::VariantBuilder;
 use gio::prelude::*;
 use glib::{IsA, ToVariant, Variant, VariantTy, VariantType};
 use std::{borrow::Cow, marker::PhantomData};
@@ -55,7 +55,7 @@ impl<O: IsA<glib::Object>> ListModel<O> {
         M: IsA<gio::ListModel>,
         O: glib::StaticVariantType + ToVariant,
     {
-        let builder = VariantBuilder::new(VariantTy::STRING_ARRAY);
+        let mut builder = VariantBuilder::new(VariantTy::STRING_ARRAY);
         let count = m.n_items();
         for i in 0..count {
             if let Some(o) = m.item(i).and_then(|o| o.downcast::<O>().ok()) {

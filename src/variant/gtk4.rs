@@ -1,4 +1,4 @@
-use super::{VariantBuilder, VariantBuilderExt};
+use super::VariantBuilder;
 use glib::{ToVariant, Variant, VariantTy};
 use gtk4::prelude::*;
 use std::borrow::Cow;
@@ -93,7 +93,7 @@ pub mod string_list {
         Cow::Borrowed(VariantTy::STRING_ARRAY)
     }
     pub fn to_variant(sl: &gtk4::StringList) -> Variant {
-        let builder = VariantBuilder::new(VariantTy::STRING_ARRAY);
+        let mut builder = VariantBuilder::new(VariantTy::STRING_ARRAY);
         let count = sl.n_items();
         for i in 0..count {
             if let Some(s) = sl.string(i) {

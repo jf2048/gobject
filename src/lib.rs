@@ -155,26 +155,9 @@ mod serde_traits;
 pub use serde_traits::*;
 #[cfg(feature = "variant")]
 pub mod variant;
+#[doc(hidden)]
+pub use variant::{FromParentVariant, ParentStaticVariantType, ToParentVariant};
 
 pub use glib::once_cell::race::{OnceBool, OnceBox};
 pub use glib::once_cell::sync::OnceCell as SyncOnceCell;
 pub use glib::once_cell::unsync::OnceCell;
-
-#[cfg(feature = "variant")]
-#[doc(hidden)]
-pub trait ParentStaticVariantType {
-    fn parent_static_variant_type() -> std::borrow::Cow<'static, glib::VariantTy>;
-}
-
-#[cfg(feature = "variant")]
-#[doc(hidden)]
-pub trait ToParentVariant {
-    fn to_parent_variant(&self) -> glib::Variant;
-}
-
-#[cfg(feature = "variant")]
-#[doc(hidden)]
-pub trait FromParentVariant: Sized {
-    fn from_parent_variant(variant: &glib::Variant) -> Option<Self>;
-    fn push_parent_values(variant: &glib::Variant, args: &mut Vec<(&'static str, glib::Value)>);
-}
