@@ -1223,7 +1223,6 @@ impl Property {
     fn notify_prototype(&self) -> Option<TokenStream> {
         (!self.is_inherited()
             && self.get.is_allowed()
-            && !self.flags.contains(PropertyFlags::CONSTRUCT_ONLY)
             && self.notify)
             .then(|| {
                 let method_name =
@@ -1257,7 +1256,6 @@ impl Property {
     ) -> Option<TokenStream> {
         (!self.is_inherited()
             && self.get.is_allowed()
-            && !self.flags.contains(PropertyFlags::CONSTRUCT_ONLY)
             && self.connect_notify)
             .then(|| {
                 let method_name = if local {

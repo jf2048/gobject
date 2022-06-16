@@ -95,6 +95,10 @@ mod basic {
                 self.notify_my_custom_accessors();
             }
         }
+        pub fn update_my_construct_only(&self) {
+            self.imp().my_construct_only.set(self.my_construct_only() - 50.0);
+            self.notify_my_construct_only();
+        }
     }
 }
 
@@ -119,6 +123,9 @@ fn basic_properties() {
     assert_eq!(props.property::<String>("my-str"), "Updated");
     assert_eq!(props.my_u8(), 19);
     assert_eq!(props.my_construct_only(), 100.0);
+    props.connect_my_construct_only_notify(|props| props.set_my_str("Updated again".into()));
+    props.update_my_construct_only();
+    assert_eq!(*props.borrow_my_str(), "Updated again");
 }
 
 #[gobject::class(abstract)]
