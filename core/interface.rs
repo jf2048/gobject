@@ -1,8 +1,8 @@
 use crate::{
     util::{self, Errors},
-    TypeBase, TypeDefinition, TypeMode,
+    Concurrency, TypeBase, TypeDefinition, TypeMode,
 };
-use darling::{util::PathList, FromMeta};
+use darling::{util::{PathList, Flag}, FromMeta};
 use heck::ToUpperCamelCase;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
@@ -19,6 +19,7 @@ struct Attrs {
     pub parent_trait: Option<syn::TypePath>,
     pub wrapper: Option<bool>,
     pub requires: PathList,
+    pub sync: Flag,
 }
 
 #[derive(Debug)]
@@ -51,8 +52,12 @@ impl InterfaceDefinition {
     ) -> Self {
         let attrs = opts.0;
 
-        let inner =
+        let mut inner =
             TypeDefinition::parse(module, TypeBase::Interface, attrs.name, crate_path, errors);
+
+        if attrs.sync.is_some() {
+            inner.concurrency = Concurrency::SendSync;
+        }
 
         let name = inner.name.clone();
         Self {
