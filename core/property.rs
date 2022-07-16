@@ -877,8 +877,8 @@ impl Property {
     }
     #[inline]
     fn pspec_cmp(&self, index: usize) -> TokenStream {
-        let index = index + 1;
-        quote_spanned! { Span::mixed_site() => id == #index }
+        let index = (index + 1) as i64;
+        quote_spanned! { Span::mixed_site() => generated_prop_id == #index}
     }
     pub fn custom_method_path(&self, set: bool) -> Option<Cow<syn::Ident>> {
         let perm = match set {
