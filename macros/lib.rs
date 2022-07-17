@@ -189,6 +189,25 @@ pub fn gtk4_widget(attr: TokenStream, item: TokenStream) -> TokenStream {
     append_errors(tokens, errors)
 }
 
+#[cfg(feature = "use_gst")]
+#[proc_macro_attribute]
+pub fn gst_element(attr: TokenStream, item: TokenStream) -> TokenStream {
+    use gobject_core::gst;
+
+    let errors = Errors::new();
+    let opts = gst::ElementOptions::parse(attr.into(), &errors);
+    let module = util::parse::<syn::ItemMod>(item.into(), &errors);
+    let tokens = module
+        .map(|module| {
+            let go = crate_path();
+            let element = gst::ElementDefinition::parse(module, opts, go, &errors);
+
+            element.to_token_stream()
+        })
+        .unwrap_or_default();
+    append_errors(tokens, errors)
+}
+
 #[inline]
 fn append_errors(mut tokens: proc_macro2::TokenStream, errors: Errors) -> TokenStream {
     if let Some(errors) = errors.into_compile_errors() {
