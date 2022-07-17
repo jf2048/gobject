@@ -17,3 +17,6 @@ pub use public_method::*;
 pub use signal::*;
 pub use type_definition::*;
 pub use virtual_method::*;
+
+#[cfg(feature = "use_gst")]
+pub mod gst;

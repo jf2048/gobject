@@ -79,6 +79,7 @@ impl Capture {
         Some(match self {
             Self::Strong { ident, from, .. } => {
                 let target = format_ident!("____strong{}", index, span = Span::mixed_site());
+
                 let input = from
                     .as_ref()
                     .map(|f| f.to_token_stream())

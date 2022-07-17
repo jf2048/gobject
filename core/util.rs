@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use syn::parse::{Parse, ParseStream, Parser};
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Errors {
     errors: RefCell<Vec<darling::Error>>,
 }

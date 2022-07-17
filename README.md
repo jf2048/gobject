@@ -10,6 +10,7 @@ mod obj {
         #[property(get, set)]
         my_prop: std::cell::Cell<u64>,
     }
+
     impl MyObj {
         #[signal]
         fn abc(&self) {}

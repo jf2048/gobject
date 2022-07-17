@@ -23,7 +23,112 @@
 //! # }
 //! ```
 //!
-//! ## `clone_block` macro
+//! ### `gst_element` macro
+//!
+//! ```
+//! use glib::StaticType;
+//!
+//! #[cfg(feature = "use_gst")]
+//! #[gobject::gst_element(
+//!     // see `gobject::class` for more details
+//!     class(final),
+//!
+//!     // Element factory metadata
+//!     // ----------------
+//!     //
+//!     // A public function is defined as part of the macro to register the element
+//!     // in the GStreamer registry (outside the module).
+//!     //
+//!     // The function has the following signature:
+//!     // ```
+//!     // pub fn register(plugin: Option<&gst::Plugin>) -> Result<(), glib::BoolError>;
+//!     // ```
+//!     factory_name = "myelement",
+//!     // See [GstRank] documentation
+//!     rank = "Primary",
+//!
+//!     // Element metadata
+//!     //-----------------
+//!     long_name = "My Element",
+//!     classification = "Video/Filter",
+//!     description = "My element as N sometimes sinkpads and one source pad",
+//!     author = "Thibault Saunier <tsaunier@igalia.com>",
+//!
+//!     // Element pad template
+//!     // --------------------
+//!     //
+//!     // NOTE: It is possible to define the pad templates by implementing the
+//!     // `fn pad_templates() -> &'static [gst::PadTemplate]` object method
+//!     //  if you can't use static templates.
+//!     pad_templates(
+//!         // `__` is transformed to `_%` as "%" is not a valid character
+//!         sink__u(
+//!             // See `gst::PadDirection`
+//!             direction = "Sink",
+//!             // See `gst::PadPresence`
+//!             presence = "Sometimes",
+//!             // Caps strings are verified at build time
+//!             caps = "video/x-raw",
+//!         ),
+//!
+//!         src(
+//!             // See [GstPadPresence]
+//!             presence = "Always",
+//!             // `caps` defaults to  "ANY"
+//!             // `direction` is inferred from the name (src), if the name
+//!             // starts with `sink` it would have been a sink pad template
+//!         ),
+//!     ),
+//!
+//!     // Debug log category:
+//!     // -------------------
+//!     /
+//!     // A [gst::DebugCategory] named `CAT` is declared by default inside the
+//!     // `imp` module. It uses the `factory_name` as a name and `description`
+//!     // as description.
+//!     // Optional:
+//!     debug_category_colors(gst::DebugColorFlags::FG_BLUE),
+//! )]
+//! mod imp {
+//!   use std::sync::Mutex;
+//!   use once_cell::sync::Lazy;
+//!   use std::str::FromStr;
+//!
+//!     #[derive(Default)]
+//!     struct MyElement {
+//!         #[property(get, set)]
+//!         uri: Mutex<String>,
+//!     }
+//!
+//!     // GObject implementation, see the `gobject::class` macro for more details
+//!     impl MyElement {
+//!         fn constructed(&self, obj: &super::MyElement) {
+//!             // We can use the category registered by the `gst_element` macro
+//!             gst::error!(CAT, "My element is constructed")
+//!         }
+//!
+//!         // Element implementation goes here
+//!     }
+//! }
+//!
+//! #[cfg(feature = "use_gst")]
+//! # fn main() {
+//!   use gst::prelude::*;
+//!
+//!   gst::init().unwrap();
+//!   register(None).unwrap();
+//!   let element = gst::ElementFactory::make("myelement", None)
+//!       .expect("myelement should have been registered");
+//! # }
+//!
+//! #[cfg(not(feature = "use_gst"))]
+//!
+//! # fn main() {
+//!     eprintln!("GStreamer support not activated");
+//! # }
+//! ```
+//!
+//!  ## `clone_block` macro
 //!
 //! ```
 //! #[gobject::clone_block]
@@ -120,6 +225,9 @@ pub use gio;
 #[doc(hidden)]
 pub use glib;
 #[doc(hidden)]
+#[cfg(feature = "use_gst")]
+pub use gst;
+#[doc(hidden)]
 #[cfg(feature = "use_gtk4")]
 pub use gtk4;
 #[cfg(all(feature = "use_gtk4", not(feature = "use_gio")))]
@@ -138,6 +246,9 @@ pub use gobject_macros::serde_cast;
 #[cfg(feature = "variant")]
 pub use gobject_macros::variant_cast;
 pub use gobject_macros::{class, clone_block, interface, Properties};
+
+#[cfg(feature = "use_gst")]
+pub use gobject_macros::gst_element;
 
 #[cfg(feature = "use_gio")]
 mod action;

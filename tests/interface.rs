@@ -93,10 +93,12 @@ fn interface() {
     assert_eq!(obj.my_virt2(1), 157);
 
     let called_signals: Arc<Mutex<Vec<String>>> = Default::default();
-    obj.connect_my_sig(glib::clone!(@strong called_signals => move |_obj: &Implementor2, v: u64| {
-        assert_eq!(v, 0);
-        called_signals.lock().unwrap().push("my".to_owned());
-    }));
+    obj.connect_my_sig(
+        glib::clone!(@strong called_signals => move |_obj: &Implementor2, v: u64| {
+            assert_eq!(v, 0);
+            called_signals.lock().unwrap().push("my".to_owned());
+        }),
+    );
     std::thread::spawn(glib::clone!(@strong obj => move || {
         obj.emit_my_sig(0);
     }))

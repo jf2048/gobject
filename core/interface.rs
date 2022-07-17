@@ -2,7 +2,10 @@ use crate::{
     util::{self, Errors},
     Concurrency, TypeBase, TypeDefinition, TypeMode,
 };
-use darling::{util::{PathList, Flag}, FromMeta};
+use darling::{
+    util::{Flag, PathList},
+    FromMeta,
+};
 use heck::ToUpperCamelCase;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};

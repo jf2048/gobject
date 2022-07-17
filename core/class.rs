@@ -11,9 +11,9 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned, ToTokens};
 use syn::{parse_quote, parse_quote_spanned, spanned::Spanned};
 
-#[derive(Debug, Default, FromMeta)]
+#[derive(Debug, Default, FromMeta, Clone)]
 #[darling(default)]
-struct Attrs {
+pub struct ClassAttrs {
     pub name: Option<syn::Ident>,
     pub ns: Option<syn::Ident>,
     pub class: Option<syn::Ident>,
@@ -32,7 +32,7 @@ struct Attrs {
     pub sync: Flag,
 }
 
-impl Attrs {
+impl ClassAttrs {
     fn validate(&self, errors: &Errors) {
         use crate::validations::*;
         let abstract_ = ("abstract", check_flag(&self.abstract_));
@@ -42,7 +42,7 @@ impl Attrs {
 }
 
 #[derive(Debug)]
-pub struct ClassOptions(Attrs);
+pub struct ClassOptions(pub ClassAttrs);
 
 impl ClassOptions {
     pub fn parse(tokens: TokenStream, errors: &Errors) -> Self {
@@ -380,7 +380,6 @@ impl ClassDefinition {
             quote_spanned! { Span::mixed_site() =>
                 let generated_prop_id = id as i64;
             }
-
         }
     }
     #[inline]
