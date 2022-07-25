@@ -11,9 +11,9 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned, ToTokens};
 use syn::{parse_quote, parse_quote_spanned, spanned::Spanned};
 
-#[derive(Debug, Default, FromMeta)]
+#[derive(Debug, Default, FromMeta, Clone)]
 #[darling(default)]
-struct Attrs {
+pub struct ClassAttrs {
     pub name: Option<syn::Ident>,
     pub ns: Option<syn::Ident>,
     pub class: Option<syn::Ident>,
@@ -32,7 +32,7 @@ struct Attrs {
     pub sync: Flag,
 }
 
-impl Attrs {
+impl ClassAttrs {
     fn validate(&self, errors: &Errors) {
         use crate::validations::*;
         let abstract_ = ("abstract", check_flag(&self.abstract_));
@@ -42,7 +42,7 @@ impl Attrs {
 }
 
 #[derive(Debug)]
-pub struct ClassOptions(Attrs);
+pub struct ClassOptions(pub ClassAttrs);
 
 impl ClassOptions {
     pub fn parse(tokens: TokenStream, errors: &Errors) -> Self {
@@ -371,14 +371,16 @@ impl ClassDefinition {
                 = #glib::once_cell::sync::OnceCell::new();
         })
     }
-    fn adjust_property_index(&self) -> Option<TokenStream> {
-        self.inner
-            .has_method(TypeMode::Subclass, "properties")
-            .then(|| {
-                quote_spanned! { Span::mixed_site() =>
-                    let id = id - self::_GENERATED_PROPERTIES_BASE_INDEX.get().unwrap();
-                }
-            })
+    fn adjust_property_index(&self) -> TokenStream {
+        if self.inner.has_method(TypeMode::Subclass, "properties") {
+            quote_spanned! { Span::mixed_site() =>
+                let generated_prop_id = id as i64 - *self::_GENERATED_PROPERTIES_BASE_INDEX.get().unwrap() as i64;
+            }
+        } else {
+            quote_spanned! { Span::mixed_site() =>
+                let generated_prop_id = id as i64;
+            }
+        }
     }
     #[inline]
     fn unimplemented_property(glib: &syn::Path) -> TokenStream {
