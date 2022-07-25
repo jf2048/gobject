@@ -151,3 +151,13 @@ where
 {
     type ParamSpec = T::ParamSpec;
 }
+
+#[cfg(feature = "use_gst")]
+impl ParamSpecBuildable for gst::Array {
+    type ParamSpec = gst::ParamSpecArray;
+}
+
+#[cfg(feature = "use_gst")]
+impl ParamSpecBuildable for gst::Fraction {
+    type ParamSpec = gst::ParamSpecFraction;
+}
