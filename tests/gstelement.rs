@@ -18,15 +18,30 @@ use glib::StaticType;
     debug_category_colors(gst::DebugColorFlags::FG_BLUE),
 )]
 mod imp {
-    use std::sync::Mutex;
-
     use once_cell::sync::Lazy;
     use std::str::FromStr;
+    use std::sync::Mutex;
 
-    #[derive(Default)]
     struct TestElement {
         #[property(get, set)]
         url: Mutex<String>,
+
+        #[property(get, set, blurb = "The names")]
+        names: Mutex<gst::Array>,
+
+        #[property(get, set, blurb = "The framerate")]
+        framerate: Mutex<gst::Fraction>,
+    }
+
+    impl Default for TestElement {
+        fn default() -> Self {
+            let values: Vec<String> = Default::default();
+            Self {
+                url: Default::default(),
+                names: Mutex::new(gst::Array::new(&values)),
+                framerate: Mutex::new(gst::Fraction::new(30, 1)),
+            }
+        }
     }
 
     impl TestElement {
@@ -40,6 +55,7 @@ mod imp {
 #[test]
 fn element() {
     use gst::prelude::*;
+    use std::cmp;
 
     gst::init().unwrap();
     register(None).unwrap();
@@ -55,5 +71,30 @@ fn element() {
     assert_eq!(
         template.caps().clone(),
         gst::Caps::new_simple("video/x-raw", &[])
+    );
+
+    let pspec = element.find_property("names").unwrap();
+    assert_eq!(pspec.blurb().unwrap(), "The names");
+
+    let names = element.property::<gst::Array>("names");
+    assert_eq!(names.len(), 0,);
+
+    element.set_property_from_str("names", "<first, second>");
+    let names = element.property::<gst::Array>("names");
+    let v = gst::Array::from_values(["first".into(), "second".into()]);
+    assert!(
+        names.to_value().compare(&v.to_value()) == Some(cmp::Ordering::Equal),
+        "{names:?} != {v:?}"
+    );
+
+    let pspec = element.find_property("framerate").unwrap();
+    assert_eq!(pspec.blurb().unwrap(), "The framerate");
+
+    let v = gst::Fraction::new(30, 1);
+    element.set_property("framerate", &v);
+    let framerate = element.property::<gst::Fraction>("framerate");
+    assert!(
+        framerate.to_value().compare(&v.to_value()) == Some(cmp::Ordering::Equal),
+        "{framerate:?} != {v:?}"
     );
 }

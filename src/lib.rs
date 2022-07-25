@@ -81,8 +81,6 @@
 //!     ),
 //!
 //!     // Debug log category:
-//!     // -------------------
-//!     /
 //!     // A [gst::DebugCategory] named `CAT` is declared by default inside the
 //!     // `imp` module. It uses the `factory_name` as a name and `description`
 //!     // as description.
