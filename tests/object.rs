@@ -102,7 +102,7 @@ mod obj_inner {
         }
 
         fn signals() -> Vec<glib::subclass::Signal> {
-            vec![glib::subclass::Signal::builder("xyz", &[], glib::Type::UNIT.into()).build()]
+            vec![glib::subclass::Signal::builder("xyz").build()]
         }
     }
 }
