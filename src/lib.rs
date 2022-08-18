@@ -156,6 +156,7 @@ pub use serde_traits::*;
 #[cfg(feature = "variant")]
 pub mod variant;
 #[doc(hidden)]
+#[cfg(feature = "variant")]
 pub use variant::{FromParentVariant, ParentStaticVariantType, ToParentVariant};
 
 pub use glib::once_cell::race::{OnceBool, OnceBox};
