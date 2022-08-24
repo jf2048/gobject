@@ -381,22 +381,32 @@ impl Signal {
 
         let sig = sig.as_ref()?;
         let inputs = self.inputs();
-        let input_static_types = inputs.skip(1).map(|input| {
-            let ty = match &input {
-                syn::FnArg::Typed(t) => &t.ty,
-                _ => unimplemented!(),
-            };
-            quote_spanned! { ty.span() =>
-                <#glib::subclass::SignalType as ::core::convert::From<#glib::Type>>::from(
+        let input_static_types = inputs
+            .skip(1)
+            .map(|input| {
+                let ty = match &input {
+                    syn::FnArg::Typed(t) => &t.ty,
+                    _ => unimplemented!(),
+                };
+                quote_spanned! { ty.span() =>
                     <#ty as #glib::types::StaticType>::static_type()
-                )
-            }
-        });
+                }
+            })
+            .collect::<Vec<TokenStream>>();
+        let builder = syn::Ident::new("builder", Span::mixed_site());
+        let params = if input_static_types.len() > 0 {
+            let param_types = syn::Ident::new("param_types", Span::mixed_site());
+            Some(quote! {
+                let #param_types = [#(#input_static_types),*];
+                let #builder = #builder.param_types(#param_types.into_iter());
+            })
+        } else {
+            None
+        };
         let dest = match self.mode {
             TypeMode::Subclass => sub_ty,
             TypeMode::Wrapper => wrapper_ty,
         };
-        let builder = syn::Ident::new("builder", Span::mixed_site());
         let class_handler = self.handler.then(|| {
             let arg_names = self.arg_names();
             let token_ident = syn::Ident::new("_token", Span::mixed_site());
@@ -420,8 +430,10 @@ impl Signal {
             }
         });
         let output = match &sig.output {
-            syn::ReturnType::Type(_, ty) => quote! { #ty },
-            _ => quote! { () },
+            syn::ReturnType::Type(_, ty) => {
+                Some(quote! {let #builder = #builder.return_type::<#ty>(); })
+            }
+            _ => None,
         };
         let accumulator = accumulator.as_ref().map(|sig| {
             let method_name = &sig.ident;
@@ -462,17 +474,13 @@ impl Signal {
             let flags = flags.tokens(glib);
             quote! { let #builder = #builder.flags(#flags); }
         });
-        let param_types = syn::Ident::new("param_types", Span::mixed_site());
         Some(quote_spanned! { sig.span() =>
             {
-                let #param_types = [#(#input_static_types),*];
                 let #builder = #glib::subclass::Signal::#builder(
                     #name,
-                    &#param_types,
-                    <#glib::subclass::SignalType as ::core::convert::From<#glib::Type>>::from(
-                        <#output as #glib::types::StaticType>::static_type()
-                    ),
                 );
+                #params
+                #output
                 #flags
                 #class_handler
                 #accumulator

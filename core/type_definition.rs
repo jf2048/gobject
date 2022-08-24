@@ -563,6 +563,7 @@ impl TypeDefinition {
         });
         Some(quote_spanned! { Span::mixed_site() =>
             fn properties() -> &'static [#glib::ParamSpec] {
+                use glib::ParamSpecBuilderExt;
                 static PROPS: #glib::once_cell::sync::Lazy<::std::vec::Vec<#glib::ParamSpec>> =
                     #glib::once_cell::sync::Lazy::new(|| {
                         let mut properties = ::std::vec::Vec::<#glib::ParamSpec>::new();
